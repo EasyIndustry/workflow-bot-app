@@ -184,7 +184,9 @@ PROVEEDORES: tuple[Proveedor, ...] = (
         doc="CLI oficial de OpenAI. En Windows se instala con winget (sin Node).",
         formato_config="toml",
         auto_registro=True,
-        # WinGet\Links es donde winget deja el alias de un paquete "portable".
+        # Un paquete "portable" de winget queda en WinGet\Packages\<id>_<fuente>\
+        # (con esa carpeta sumada al PATH del usuario, que acá se lee del
+        # registro) o, según la versión de winget, con un alias en WinGet\Links.
         rutas_probables=(
             r"%LOCALAPPDATA%\Microsoft\WinGet\Links\codex.exe",
             r"%LOCALAPPDATA%\Programs\OpenAI\Codex\bin\codex.exe",
