@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bot</title>
+<!-- El mismo grafo que la marca de la barra lateral. Va embebido: un
+     /favicon.ico que no existe es un 404 en la consola en cada carga. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M6 6v12'/><path d='M18 11c0 4-5 4-8 4'/><path d='M6 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z'/><path d='M6 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4z'/><path d='M18 7a2 2 0 1 0 0 4 2 2 0 0 0 0-4z'/></svg>">
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/base.css">
+<link rel="stylesheet" href="/static/css/shell.css">
+<link rel="stylesheet" href="/static/css/componentes.css">
+</head>
+<body>
+<!--
+  El único HTML de la app.
+
+  El shell (barra lateral y pestañas) sobrevive al cambio de vista: recargar la
+  página por vista volvería a pedir el catálogo cada vez y perdería el estado.
+  Cada vista es un módulo que se baja cuando se abre — ver js/router.js.
+-->
+<div id="app"></div>
+<script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

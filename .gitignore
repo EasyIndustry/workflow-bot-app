@@ -1,0 +1,22 @@
+# Secretos y datos de una instalación de desarrollo (data/ al lado del código)
+.env
+data/
+workspace/
+plugins/
+boot.env
+
+# Entorno
+.venv/
+__pycache__/
+*.py[cod]
+
+# Registro de la app corriendo desde el repo
+webapp.log
+webapp/logs/
+
+# Lo que construye installer/packaging/build_win.sh
+installer/build/
+
+# Editor
+.vscode/
+.idea/

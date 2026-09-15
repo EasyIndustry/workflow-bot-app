@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+websockets
+mcp
+tomli-w  # escribir .codex/config.toml al auto-registrar Codex — ver mcp_registration.py
+
+# Sólo Windows: sin esto, `agent_terminal.py` cae a pipes simples y un CLI que
+# es una TUI de verdad (Antigravity/agy, y potencialmente Codex) se queda
+# esperando un terminal que nunca llega, en silencio — ver el docstring de
+# ese archivo. POSIX ya tiene un pty real en la stdlib, no necesita esto.
+pywinpty; sys_platform == "win32"

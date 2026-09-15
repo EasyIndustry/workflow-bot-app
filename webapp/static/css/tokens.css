@@ -1,0 +1,55 @@
+/*
+  Los valores del diseño, en un solo lugar.
+
+  Salen del canvas (UI-DESING/). Si algo se ve distinto entre dos pantallas, es
+  porque alguien escribió un color a mano en vez de usar una de estas variables.
+*/
+:root {
+  --fuente: "Segoe UI", system-ui, Arial, sans-serif;
+  --mono: Consolas, "Courier New", monospace;
+
+  --texto: #202124;
+  --texto-2: #3c4043;
+  --texto-3: #5f6368;
+  --texto-4: #9aa0a6;
+
+  --azul: #1a73e8;
+  --azul-oscuro: #1765cc;
+  --azul-fondo: #f1f6fe;
+  --azul-borde: #c6dafc;
+
+  --borde: #dadce0;
+  --borde-2: #e8eaed;
+  --borde-3: #e4e6e8;
+  --borde-4: #f1f1f1;
+  --borde-fuerte: #9aa0a6;
+
+  --fondo: #fff;
+  --fondo-zebra: #fafafa;
+  --fondo-panel: #f8f9fa;
+  --fondo-cabecera: #f1f3f4;
+  --fondo-pestanas: #f6f7f8;
+
+  --verde: #146c2e;
+  --verde-fondo: #e6f4ea;
+  --verde-borde: #c8e6d0;
+
+  --ambar: #b06000;
+  --ambar-fondo: #fef7e0;
+  --ambar-borde: #f0d9a0;
+
+  --rojo: #c5221f;
+  --rojo-fondo: #fce8e6;
+  --rojo-borde: #f5c6c2;
+  --rojo-boton: #e04a3f;
+
+  --lateral: #1b1b1b;
+  --lateral-sel: #2f2f2f;
+  --lateral-hover: #262626;
+  --lateral-texto: #d6d6d6;
+  --lateral-apagado: #6b6b6b;
+  --lateral-borde: #2a2a2a;
+  --lateral-dashed: #3d3d3d;
+
+  --ancho-lateral: 212px;
+}

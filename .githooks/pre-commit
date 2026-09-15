@@ -1,0 +1,56 @@
+#!/bin/sh
+# backend/ se trae del último release de workflow-bot-core (Config ->
+# Actualizaciones en la webapp, o a mano con lo que imprime este mismo
+# hook) -- nunca se edita a mano desde esta rama. Un archivo de backend/
+# editado acá diverge de esa referencia, y el día que alguien traiga un
+# cambio nuevo del núcleo sobre ese mismo archivo, termina en un conflicto
+# de merge -- encontrado así, en vivo, mergeando una rama de core entera
+# contra web-app: los dos tienen árboles incompatibles (uno no tiene
+# webapp/ siquiera), así que ese merge completo rompe TODO lo tocado de los
+# dos lados, no sólo backend/.
+#
+# workflow-bot-core es un repo público aparte (EasyIndustry/workflow-bot-core).
+# Sigue su último tag `vX.Y.Z`; si todavía no tiene ninguno, cae a `main`.
+# Misma lógica que webapp/core_updates.py -- si cambia una, cambia la otra.
+#
+# Este hook no bloquea un commit que sincroniza backend/ tal cual está en
+# esa referencia -- ese es justo el flujo sano. Bloquea el que lo deja
+# distinto.
+
+archivos_backend=$(git diff --cached --name-only --diff-filter=ACMD -- backend/)
+[ -z "$archivos_backend" ] && exit 0
+
+git remote get-url core >/dev/null 2>&1 || \
+  git remote add core https://github.com/EasyIndustry/workflow-bot-core.git 2>/dev/null
+git fetch core "+refs/tags/*:refs/tags/core/*" --quiet 2>/dev/null
+
+ref=$(git tag --list "core/v*" --sort=-v:refname 2>/dev/null | head -1)
+etiqueta="$ref"
+if [ -z "$ref" ]; then
+  git fetch core main --quiet 2>/dev/null
+  ref="core/main"
+  etiqueta="core/main"
+fi
+
+divergentes=""
+for archivo in $archivos_backend; do
+  en_commit=$(git show ":$archivo" 2>/dev/null | git hash-object --stdin 2>/dev/null)
+  en_core=$(git cat-file -p "$ref:$archivo" 2>/dev/null | git hash-object --stdin 2>/dev/null)
+  if [ "$en_commit" != "$en_core" ]; then
+    divergentes="$divergentes  - $archivo
+"
+  fi
+done
+
+if [ -n "$divergentes" ]; then
+  echo "" >&2
+  echo "backend/ se trae de $etiqueta, no se edita a mano en esta rama:" >&2
+  printf '%s' "$divergentes" >&2
+  echo "" >&2
+  echo "Si es un cambio real del núcleo: hacelo en workflow-bot-core, y traelo acá" >&2
+  echo "con Config -> Actualizaciones (o \`git checkout $ref -- backend/\`)." >&2
+  echo "Si de verdad hace falta este commit tal cual, saltealo con --no-verify." >&2
+  exit 1
+fi
+
+exit 0

@@ -1,0 +1,353 @@
+/*
+  Las piezas que se repiten. Si una pantalla necesita algo que no está acá,
+  primero preguntarse si no es una de estas con otro contenido.
+*/
+
+/* ── Encabezado de pantalla ──────────────────────────────────────────── */
+
+.titulo { font-size: 19px; font-weight: 600; }
+.subtitulo {
+  font-size: 12px; color: var(--texto-3);
+  margin-top: 3px; line-height: 1.55; max-width: 800px;
+}
+.cabecera { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.cabecera__acciones { display: flex; gap: 7px; flex: 0 0 auto; }
+
+.chip-id {
+  font-size: 10px; font-family: var(--mono); color: var(--texto-3);
+  border: 1px solid var(--borde); background: var(--fondo); padding: 1px 5px;
+}
+
+/* ── Botones ─────────────────────────────────────────────────────────── */
+
+.btn {
+  padding: 6px 14px; font-size: 12px; cursor: pointer;
+  background: var(--fondo); border: 1px solid var(--borde); color: var(--texto);
+}
+.btn:hover { background: var(--fondo-cabecera); }
+.btn--primario { background: var(--azul); border-color: var(--azul); color: #fff; }
+.btn--primario:hover { background: var(--azul-oscuro); }
+.btn--azul { border-color: var(--azul); color: var(--azul); }
+.btn--azul:hover { background: var(--azul-fondo); }
+.btn--rojo { border-color: var(--rojo-boton); color: var(--rojo-boton); }
+.btn--rojo:hover { background: var(--rojo-fondo); }
+.btn:disabled { background: var(--fondo-panel); border-color: var(--borde-2); color: var(--texto-4); cursor: default; }
+.btn--chico { padding: 4px 10px; font-size: 11.5px; }
+
+/* ── Etiquetas de estado ─────────────────────────────────────────────── */
+
+.badge { font-size: 10px; padding: 1px 6px; border: 1px solid var(--borde); background: var(--fondo); color: var(--texto-3); }
+.badge--ok { border-color: var(--verde-borde); background: var(--verde-fondo); color: var(--verde); }
+.badge--falta { border-color: var(--ambar-borde); background: var(--ambar-fondo); color: var(--ambar); }
+.badge--error { border-color: var(--rojo-borde); background: var(--rojo-fondo); color: var(--rojo); }
+
+/* ── Barra de progreso de un run en vuelo (columna Log de la grilla) ──── */
+
+.progreso { cursor: pointer; }
+.progreso__pista { position: relative; height: 7px; border: 1px solid var(--azul); background: var(--fondo); overflow: hidden; }
+.progreso__relleno { height: 100%; background: var(--azul); transition: width .4s ease; }
+/* Sin pasos del núcleo no hay escala: la barra va y viene para decir "corriendo". */
+.progreso--sin-escala .progreso__relleno { width: 40%; animation: progreso-vaiven 1.1s ease-in-out infinite alternate; }
+@keyframes progreso-vaiven { from { margin-left: 0; } to { margin-left: 60%; } }
+.progreso__texto { font-size: 10px; color: var(--texto-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Tarjeta con cabecera ────────────────────────────────────────────── */
+
+/* Las vistas de formulario envuelven todo en .columna para que las reglas de
+   las secciones, las tarjetas y las tablas terminen en el mismo borde. Las
+   vistas con grilla de datos —Sources— no la usan y ocupan todo el ancho. */
+.columna { max-width: 900px; }
+
+.tarjeta { border: 1px solid var(--borde); margin-bottom: 16px; }
+/* La pila de nodos de Workflows con el filtro puesto y ninguna tarjeta que coincida. */
+.pila--sin-coincidencias::before {
+  content: "Ningún nodo coincide con el filtro."; display: block;
+  padding: 14px 12px; font-size: 12px; color: var(--texto-3);
+}
+.tarjeta__cabecera {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 13px; background: var(--fondo-cabecera); border-bottom: 1px solid var(--borde);
+  font-size: 11px; font-weight: 600; color: var(--texto-2); letter-spacing: .03em;
+}
+.tarjeta__pie { padding: 10px 13px; background: var(--fondo-panel); display: flex; gap: 8px; align-items: center; }
+
+.seccion {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 20px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--borde);
+  font-size: 12.5px; font-weight: 600; color: var(--texto-2);
+}
+.seccion__suave { font-weight: 400; color: var(--texto-3); }
+
+/* ── Campos de formulario ────────────────────────────────────────────── */
+
+.campo { display: flex; gap: 14px; padding: 11px 13px; border-bottom: 1px solid var(--borde-2); }
+.campo:last-child { border-bottom: none; }
+.campo--falta { background: var(--ambar-fondo); border-bottom-color: var(--ambar-borde); }
+.campo__etiqueta { width: 200px; flex: 0 0 200px; padding-top: 5px; }
+.campo__nombre { font-size: 12.5px; color: var(--texto-2); }
+.campo__clave { font-size: 10px; color: var(--texto-4); font-family: var(--mono); margin-top: 2px; }
+.campo__control { flex: 1; min-width: 0; }
+
+/* ── Acordeón (fila que expande un panel debajo) ────────────────────────
+   La fila y el panel viven en un wrapper propio para que el borde entre
+   items no dependa de `.campo:last-child` — con el panel siempre en el DOM
+   (sólo oculto con `hidden`), `.campo` deja de ser nunca el último hijo. */
+.acordeon { border-bottom: 1px solid var(--borde-2); }
+.acordeon:last-child { border-bottom: none; }
+.acordeon .campo { border-bottom: none; }
+.campo--clickeable { cursor: pointer; }
+.campo--clickeable:hover { background: var(--fondo-panel); }
+.acordeon__flecha {
+  flex: 0 0 auto; width: 12px; padding-top: 4px; color: var(--texto-4); font-size: 10px;
+}
+.acordeon__panel {
+  padding: 4px 13px 14px 39px; background: var(--fondo-panel); border-top: 1px dashed var(--borde-2);
+}
+.campo__ayuda { font-size: 11.5px; color: var(--texto-3); margin-top: 5px; line-height: 1.45; }
+.campo__error { font-size: 11px; color: var(--ambar); margin-top: 5px; }
+.requerido { color: var(--rojo); }
+
+.entrada {
+  width: 100%; font-size: 12.5px; padding: 6px 8px;
+  border: 1px solid var(--borde); background: var(--fondo); color: var(--texto);
+}
+.entrada:focus { outline: none; border-color: var(--azul); box-shadow: 0 0 0 1px var(--azul); }
+.entrada--mono { font-family: var(--mono); font-size: 12px; }
+.entrada--corta { width: 140px; }
+.entrada--area { min-height: 74px; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; resize: vertical; }
+.entrada--falta { border-color: var(--ambar-borde); }
+.bloque-codigo {
+  margin: 0; padding: 10px 12px; background: var(--fondo-panel);
+  border: 1px solid var(--borde-2); font-family: var(--mono); font-size: 11.5px;
+  line-height: 1.6; white-space: pre; overflow-x: auto;
+}
+.terminal-embebida {
+  flex: 1; min-height: 0; padding: 8px; background: #1e1e1e;
+  overflow: hidden;
+}
+
+/* ── Agente: config a la izquierda, terminal fija a la derecha ─────────── */
+
+.agente-layout {
+  display: flex; align-items: stretch; height: 100%;
+}
+.agente-layout__config {
+  flex: 1; min-width: 0; overflow-y: auto; padding-right: 24px;
+}
+.agente-layout__terminal {
+  /* El ancho real es un inline `flexBasis` que pone agente.js (arrastrable,
+     recordado en localStorage) — esto es sólo el valor antes de que cargue. */
+  flex: 0 0 440px; min-height: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--borde); background: #1e1e1e;
+  margin: -16px -18px -16px 0; /* cancela el padding de `.vista` sólo del lado derecho */
+}
+.agente-layout__resizer {
+  flex: 0 0 5px; width: 5px; cursor: col-resize;
+  background: var(--borde); position: relative;
+}
+.agente-layout__resizer:hover, .agente-layout__resizer:active {
+  background: var(--azul);
+}
+.agente-terminal__cabecera {
+  flex: 0 0 auto; padding: 9px 13px; background: #252526;
+  border-bottom: 1px solid #333; color: #bbb;
+  font-size: 11px; letter-spacing: .04em;
+}
+.agente-terminal__cuerpo {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px;
+}
+.agente-terminal__vacio {
+  color: #888; font-size: 12px; line-height: 1.6; padding: 4px;
+}
+/* El panel es oscuro a propósito (como cualquier terminal); los textos de
+   estado que comparte con el resto de la app (`.campo__ayuda`, `.aviso`)
+   vienen pensados para fondo claro y quedan ilegibles acá sin este override. */
+.agente-terminal__cuerpo .campo__ayuda { color: #bbb; }
+.agente-terminal__cuerpo .aviso { background: #2d2418; border-color: #4a3a1a; color: #e0b34d; }
+.agente-terminal__cuerpo .btn { background: #333; border-color: #444; color: #eee; }
+.agente-terminal__cuerpo .btn:hover { background: #3a3a3a; }
+.selector {
+  width: 100%; font-size: 12.5px; padding: 6px 6px;
+  border: 1px solid var(--borde-fuerte); background: var(--fondo); color: var(--texto);
+}
+.fila-control { display: flex; gap: 8px; align-items: center; }
+
+/* ── Avisos ──────────────────────────────────────────────────────────── */
+
+.aviso {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 11px 13px; margin-bottom: 14px;
+  border: 1px solid var(--borde); background: var(--fondo-panel);
+  font-size: 11.5px; line-height: 1.6; color: var(--texto-3);
+}
+.aviso--ok { background: var(--verde-fondo); border-color: var(--verde-borde); color: var(--verde); }
+.aviso--falta { background: var(--ambar-fondo); border-color: var(--ambar-borde); color: var(--ambar); }
+.aviso--error { background: var(--rojo-fondo); border-color: var(--rojo-borde); color: var(--rojo); }
+.aviso--info { background: var(--azul-fondo); border-color: var(--azul-borde); color: var(--azul); }
+.aviso__icono { flex: 0 0 auto; padding-top: 1px; display: flex; }
+.aviso__cuerpo { flex: 1; min-width: 0; }
+.aviso__titulo { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+
+/* ── Tabla ───────────────────────────────────────────────────────────── */
+
+.tabla { border: 1px solid var(--borde); font-size: 12.5px; overflow: auto; }
+.tabla__fila { display: flex; align-items: center; border-bottom: 1px solid var(--borde-4); }
+/* Sólo la última fila del cuerpo. Las de la cabeza también son `:last-child`
+   de su propia caja, y ahí la línea sí hace falta: es lo que separa la
+   cabecera de los datos. */
+.tabla__fila:last-child:not(.tabla__fila--cabecera):not(.tabla__fila--filtros) { border-bottom: none; }
+.tabla__fila--par { background: var(--fondo-zebra); }
+/* La cabecera y la fila de filtros van juntas en una sola caja pegada arriba:
+   el `sticky` es de la caja, no de cada fila. Ver `tabla.js`. */
+.tabla__cabeza { position: sticky; top: 0; z-index: 3; }
+.tabla__fila--cabecera {
+  background: var(--fondo-cabecera); border-bottom: 1px solid var(--borde);
+  font-weight: 600; color: var(--texto-2);
+}
+.tabla__celda {
+  padding: 7px 9px; border-right: 1px solid var(--borde-4);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.tabla__fila--cabecera .tabla__celda { border-right-color: var(--borde-3); }
+.tabla__celda:last-child { border-right: none; }
+/* Opt-in por columna. La grilla de casos trunca a una línea a propósito;
+   una tabla de diagnóstico o de rutas necesita envolver o no se lee. */
+.tabla__celda--envuelve { white-space: normal; overflow-wrap: anywhere; }
+.tabla__fila--alto { align-items: flex-start; }
+.tabla__pie { padding: 7px 0; font-size: 11.5px; color: var(--texto-3); }
+.tabla__vacia { padding: 22px; text-align: center; color: var(--texto-3); font-size: 12.5px; line-height: 1.6; }
+
+/* ── Fichas (tools, variables) ───────────────────────────────────────── */
+
+.fichas { display: flex; flex-wrap: wrap; gap: 6px; }
+.ficha {
+  font-size: 11px; font-family: var(--mono); padding: 3px 8px;
+  border: 1px solid var(--borde); background: var(--fondo-panel); color: var(--texto-2);
+}
+
+/* ── Modal ───────────────────────────────────────────────────────────── */
+
+.velo {
+  position: fixed; inset: 0; background: rgba(32,33,36,.55);
+  display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50;
+}
+.modal {
+  width: 880px; max-width: 100%; max-height: 100%;
+  background: var(--fondo); border: 1px solid var(--borde-fuerte);
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+  display: flex; flex-direction: column;
+}
+.modal__cabecera { padding: 13px 16px; border-bottom: 1px solid var(--borde); background: var(--fondo-pestanas); }
+.modal__titulo { font-size: 15px; font-weight: 600; }
+.modal__sub { font-size: 11.5px; color: var(--texto-3); margin-top: 3px; }
+.modal__cuerpo { flex: 1; min-height: 0; overflow: auto; }
+.modal__pie {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 11px 16px; border-top: 1px solid var(--borde); background: var(--fondo-panel);
+}
+
+/* ── Estados de carga ────────────────────────────────────────────────── */
+
+.cargando { padding: 30px; text-align: center; color: var(--texto-3); font-size: 12.5px; }
+
+/* ── Grilla de casos: las columnas del bot, fijas ─────────────────────── */
+
+/*
+  Elijas 5 columnas de la fuente o 100, las del bot están siempre y quedan
+  pegadas al borde derecho: al scrollear horizontalmente se mueven sólo los
+  datos de la fuente. Son angostas a propósito — no son datos, son el control
+  del bot sobre esa fila.
+
+  Es un único `sticky` por fila, no uno por columna: cinco celdas sticky
+  vecinas dependen de que las cinco redondeen al mismo subpíxel para no dejar
+  una costura entre sí, y en algún zoom no lo hacían — se veía la columna de
+  atrás filtrarse por esa línea de un píxel. Un solo contenedor (el `display:
+  flex` de adentro no necesita `sticky` en cada hijo) no tiene con qué
+  desalinearse contra sí mismo. El fondo va acá y no en cada celda, por lo
+  mismo: una sola superficie opaca, no cinco que tienen que empalmar.
+*/
+.grilla { border: 1px solid var(--borde); overflow: auto; font-size: 12.5px; }
+.grilla .tabla__grupo-fijo {
+  position: sticky;
+  right: 0;
+  display: flex;
+  flex-shrink: 0;
+  margin-left: auto;
+  background: var(--fondo);
+  border-left: 2px solid var(--borde-3);
+  z-index: 1;
+}
+.grilla .tabla__grupo-fijo--par { background: var(--fondo-zebra); }
+/* El fondo de cada variante, nada más: quién tapa a quién ya lo resuelve
+   `.tabla__cabeza`, que se pega arriba con toda la cabeza adentro. */
+.grilla .tabla__grupo-fijo--cabecera { background: var(--fondo-cabecera); }
+.grilla .tabla__grupo-fijo--filtros { background: var(--fondo-panel); }
+
+/*
+  En una pantalla angosta, fijar cinco columnas dejaría los datos sin lugar:
+  ahí se liberan y la tabla scrollea entera.
+*/
+@media (max-width: 1180px) {
+  .grilla .tabla__grupo-fijo { position: static; margin-left: 0; }
+}
+
+/* ── Grupo de botones exclusivos (Tarjetas | Texto) ──────────────────── */
+
+/*
+  Un toggle y no dos paneles: tarjetas y texto son el mismo artefacto visto de
+  dos formas, y ponerlos lado a lado fue lo que le comió el ancho al legacy.
+*/
+.grupo-botones { display: flex; }
+.grupo-botones .btn { border-radius: 0; }
+.grupo-botones .btn:first-child { border-radius: 3px 0 0 3px; }
+.grupo-botones .btn:last-child { border-radius: 0 3px 3px 0; margin-left: -1px; }
+.btn--activo {
+  background: var(--azul-fondo); border-color: var(--azul);
+  color: var(--azul); font-weight: 500; z-index: 1;
+}
+
+/* ── Visor del registro de eventos ───────────────────────────────────── */
+
+/*
+  Monoespaciado y con la hora en una columna fija: un log se lee escaneando la
+  columna de la izquierda, y con ancho variable no se puede.
+*/
+.visor-log {
+  height: 380px; overflow: auto; background: var(--fondo-panel);
+  border-top: 1px solid var(--borde); border-bottom: 1px solid var(--borde);
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+}
+.visor-log:focus { outline: none; }
+.log__linea { display: flex; gap: 9px; padding: 2px 12px; }
+.log__hora { flex: 0 0 56px; color: var(--texto-4); }
+.log__nodo { flex: 0 0 84px; color: var(--texto-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log__mensaje { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+/* Cada corrida arranca con su separador: sin eso, tres reintentos seguidos se
+   leen como una sola tirada y no se ve dónde empezó cada uno. */
+.log__separador {
+  display: flex; gap: 10px; align-items: center;
+  padding: 6px 12px; margin-top: 4px;
+  background: var(--fondo-cabecera); border-top: 1px solid var(--borde-2);
+  font-size: 10.5px; color: var(--texto-2);
+}
+.visor-log > div:first-child .log__separador { margin-top: 0; border-top: none; }
+
+/* La fila de filtros va pegada a la cabecera porque comparten la caja
+   `.tabla__cabeza`, que es la que se pega arriba: acá no hace falta ningún
+   `top` propio. Cuando cada una se pegaba por su cuenta, este `top` tenía que
+   valer exactamente el alto de la cabecera, y no valía. */
+.tabla__fila--filtros {
+  background: var(--fondo-panel);
+  border-bottom: 1px solid var(--borde);
+}
+/* `overflow: hidden` igual que las celdas de datos: un filtro de una columna
+   que queda debajo de las columnas fijas del bot se recorta limpio, en vez de
+   asomar por encima y parecer un error de dibujo. */
+.tabla__fila--filtros .tabla__celda { padding: 4px 5px; }
+.entrada--filtro {
+  width: 100%; padding: 3px 6px; font-size: 11px;
+  border: 1px solid var(--borde); background: var(--fondo);
+}
+.entrada--filtro:focus { outline: none; border-color: var(--azul); }
+.selector--chico { padding: 2px 4px; font-size: 11px; height: 24px; }

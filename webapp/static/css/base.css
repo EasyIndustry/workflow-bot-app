@@ -1,0 +1,28 @@
+html, body { margin: 0; padding: 0; height: 100%; }
+
+body {
+  font-family: var(--fuente);
+  font-size: 13px;
+  color: var(--texto);
+  background: var(--fondo);
+}
+
+* { box-sizing: border-box; }
+
+a { color: var(--azul); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+select, input, button, textarea { font-family: inherit; }
+
+/* Radio 0 en todo: es una herramienta densa, no una landing. */
+button, input, select, textarea { border-radius: 0; }
+
+#app { height: 100%; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #c9ccd1; border-radius: 5px; }
+::-webkit-scrollbar-track { background: var(--borde-4); }
+
+.oculto { display: none !important; }
+.crece { flex: 1; }
+.mono { font-family: var(--mono); }

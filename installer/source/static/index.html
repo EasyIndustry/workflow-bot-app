@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instalar Bot</title>
+<link rel="stylesheet" href="wizard.css">
+</head>
+<body>
+
+<div class="wizard">
+
+  <aside class="pasos">
+    <div class="marca">Bot</div>
+    <ol id="listaPasos">
+      <li data-paso="1"><span class="n">1</span> Carpeta</li>
+      <li data-paso="2"><span class="n">2</span> La máquina</li>
+      <li data-paso="3"><span class="n">3</span> Los límites</li>
+      <li data-paso="4"><span class="n">4</span> Instalar</li>
+    </ol>
+    <p class="nota">Instalación local.<br>Todavía sin plugins.</p>
+  </aside>
+
+  <main class="panel">
+
+    <!-- 1 ─────────────────────────────────────────────────────────── -->
+    <section class="paso" data-paso="1">
+      <h1>¿Dónde querés instalarlo?</h1>
+      <p class="bajada">
+        Todo lo que Bot necesita va a vivir en esta carpeta: la base de datos, la
+        configuración y el espacio de trabajo. Para desinstalarlo, se borra.
+      </p>
+
+      <label class="campo">
+        <span>Carpeta de instalación</span>
+        <input type="text" id="ruta" spellcheck="false" autocomplete="off">
+      </label>
+      <p class="ayuda">
+        Sugerida: <a href="#" id="usarSugerida" class="mono"></a>
+      </p>
+
+      <div id="revision" class="revision"></div>
+    </section>
+
+    <!-- 2 ─────────────────────────────────────────────────────────── -->
+    <section class="paso" data-paso="2">
+      <h1>La máquina</h1>
+      <p class="bajada">
+        Antes de crear nada, que esté todo lo que hace falta.
+      </p>
+      <div id="chequeos" class="chequeos"></div>
+    </section>
+
+    <!-- 3 ─────────────────────────────────────────────────────────── -->
+    <section class="paso" data-paso="3">
+      <h1>Qué va a poder tocar</h1>
+      <p class="bajada">
+        Bot ejecuta flujos que actúan sobre esta computadora. Estos son los
+        límites con los que queda instalado.
+      </p>
+
+      <div id="limites" class="limites"></div>
+
+      <h2>Cómo queda la carpeta</h2>
+      <pre id="arbol" class="arbol"></pre>
+    </section>
+
+    <!-- 4 ─────────────────────────────────────────────────────────── -->
+    <section class="paso" data-paso="4">
+      <div id="antesDeInstalar">
+        <h1>Todo listo</h1>
+        <p class="bajada">
+          Se va a crear la carpeta, escribir la configuración de arranque y armar
+          la base de datos. La carpeta de plugins queda creada y vacía: se
+          instalan después, desde la app.
+        </p>
+        <dl id="resumen" class="resumen"></dl>
+      </div>
+
+      <div id="resultado" class="oculto"></div>
+    </section>
+
+  </main>
+
+  <footer class="pie">
+    <div id="error" class="error oculto"></div>
+    <div class="crece"></div>
+    <button id="atras" class="boton secundario">Atrás</button>
+    <button id="siguiente" class="boton primario">Siguiente</button>
+  </footer>
+
+</div>
+
+<script src="wizard.js"></script>
+</body>
+</html>
