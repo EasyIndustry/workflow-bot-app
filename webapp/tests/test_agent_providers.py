@@ -38,7 +38,8 @@ def test_estado_reporta_instalado_segun_el_path(monkeypatch):
     def fake_which(nombre):
         return "/usr/bin/claude" if nombre == "claude" else None
 
-    monkeypatch.setattr(agent_providers.shutil, "which", fake_which)
+    monkeypatch.setattr(agent_providers.shutil, "which", lambda nombre, path=None: fake_which(nombre))
+    monkeypatch.setattr(agent_providers, "_path_del_registro", lambda: "")
     monkeypatch.setattr(agent_providers.Path, "is_file", lambda self: False)
 
     filas = {f["id"]: f for f in agent_providers.estado()}
@@ -49,12 +50,26 @@ def test_estado_reporta_instalado_segun_el_path(monkeypatch):
     assert filas["codex"]["se_puede_instalar"] is False
 
 
-def test_ninguno_necesita_node():
-    """En una PC de planta no hay npm: los tres van por el instalador nativo del vendor."""
+def test_ninguno_necesita_node_ni_claude_code_powershell():
+    """
+    En una PC de planta no hay npm. Y Claude Code no puede ir por el `irm | iex`
+    del vendor: Defender lo marca como troyano por heurística cuando lo lanza
+    este servidor — se baja y verifica desde Python (webapp/instalar_agente.py).
+    """
     for p in agent_providers.PROVEEDORES:
         assert "npm" not in p.instalar
-        if p.instalar:
-            assert p.instalar[0] in ("powershell", "bash")
+    claude = agent_providers.proveedor("claude-code")
+    assert claude.instalar[1:] == ("-m", "webapp.instalar_agente", "claude-code")
+    assert "powershell" not in claude.instalar[0].lower()
+
+
+def test_codex_y_agy_van_por_winget_cuando_esta(monkeypatch):
+    monkeypatch.setattr(agent_providers, "ruta_de_winget", lambda: r"C:\WindowsApps\winget.exe")
+    comando = agent_providers._instalar_windows("OpenAI.Codex", "irm x | iex")
+    assert comando[:4] == (r"C:\WindowsApps\winget.exe", "install", "--id", "OpenAI.Codex")
+    assert "--disable-interactivity" in comando
+    monkeypatch.setattr(agent_providers, "ruta_de_winget", lambda: None)
+    assert agent_providers._instalar_windows("OpenAI.Codex", "irm x | iex")[0] == "powershell"
 
 
 def test_recien_instalado_se_encuentra_aunque_el_path_no_lo_tenga(monkeypatch, tmp_path):
@@ -63,7 +78,8 @@ def test_recien_instalado_se_encuentra_aunque_el_path_no_lo_tenga(monkeypatch, t
     servidor ya estaba corriendo con el PATH viejo: sin mirar la carpeta
     conocida, "Iniciar sesión" fallaba con "claude no se encuentra".
     """
-    monkeypatch.setattr(agent_providers.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(agent_providers.shutil, "which", lambda _n, path=None: None)
+    monkeypatch.setattr(agent_providers, "_path_del_registro", lambda: "")
     binario = tmp_path / "claude.exe"
     binario.write_bytes(b"")
     claude = agent_providers.proveedor("claude-code")
