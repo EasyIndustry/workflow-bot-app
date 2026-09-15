@@ -902,7 +902,9 @@ async def agent_terminal_ws(
             ),
         }))
 
-    argv = list(prov.instalar if mode == "install" else prov.login)
+    # El login con el binario resuelto: recién instalado por el vendor, el PATH
+    # de este proceso todavía no lo tiene (ver agent_providers.ruta_del_binario).
+    argv = list(prov.instalar if mode == "install" else agent_providers.comando_login(prov))
     sesion = TerminalSession(argv, cwd=str(ROOT))
     sesion.iniciar()
 

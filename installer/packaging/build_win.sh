@@ -35,7 +35,12 @@ mkdir -p "${CARGA}" "${TRABAJO}/descargas"
 
 # ── 1. El intérprete ────────────────────────────────────────────────────
 echo "==> CPython ${PY_VERSION} para Windows"
-URL=$(curl -sL --max-time 30 \
+# Con token si hay uno (GitHub Actions lo pasa como GITHUB_TOKEN): la API
+# anónima corta a 60 pedidos por hora por IP, y en un runner compartido eso
+# se agota con facilidad.
+AUTH=()
+[ -n "${GITHUB_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+URL=$(curl -sL --max-time 30 "${AUTH[@]}" \
   "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest" \
   | grep -o "https[^\"]*cpython-${PY_VERSION}[^\"]*x86_64-pc-windows-msvc-install_only\.tar\.gz" \
   | head -1)
@@ -202,6 +207,12 @@ Desinstalar este programa NO borra esa carpeta. Adentro está data\secret.key,
 que es la llave con la que se cifran las contraseñas guardadas: sin ese
 archivo no se pueden recuperar, ni con una copia de la base.
 TXT
+
+# El ícono del programa: el instalador, los accesos directos y "Aplicaciones
+# y características" lo usan desde la carga (ver bot.nsi). Es el dibujo de
+# webapp/bandeja.py pasado a .ico una vez y versionado, para no depender de
+# Pillow en la máquina que construye.
+cp "${RAIZ}/installer/packaging/bot.ico" "${CARGA}/bot.ico"
 
 # ── 5. El instalador ────────────────────────────────────────────────────
 echo "==> makensis"

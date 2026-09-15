@@ -287,7 +287,7 @@ function filaProveedor(p, terminalCuerpo, conexion) {
         class: "btn btn--chico",
         text: "Instalar",
         disabled: !p.se_puede_instalar,
-        title: p.se_puede_instalar ? "" : "Hace falta npm en el PATH de esta máquina",
+        title: p.se_puede_instalar ? "" : "Hace falta PowerShell (o bash) en esta máquina para correr el instalador del proveedor",
       });
       btn.addEventListener("click", (e) => { e.stopPropagation(); abrirTerminal(terminalCuerpo, p.id, "install"); });
       botones.push(btn);

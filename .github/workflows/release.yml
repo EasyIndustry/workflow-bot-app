@@ -1,0 +1,56 @@
+# Construye BotSetup-<versión>.exe y lo cuelga del release.
+#
+# Se dispara cuando se publica un release (`gh release create vX.Y.Z`) y
+# también a mano, con el tag como parámetro, para rehacer el .exe de un
+# release ya publicado. El build es el mismo script que se corre en una
+# máquina de desarrollo (installer/packaging/build_win.sh): baja CPython y
+# los wheels de Windows, copia la app y compila el instalador con NSIS.
+# No hace falta Windows: NSIS compila cruzado desde Linux.
+#
+# El .exe queda como asset del release, que es lo que se lleva a una PC
+# nueva; Config → Actualizaciones de una instalación ya hecha usa el tarball
+# del tag, no este archivo.
+
+name: Instalador de Windows
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag del release ya publicado (ej. v0.4.1-beta.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  instalador:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tag a construir
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag || github.event.release.tag_name }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: NSIS
+        run: sudo apt-get update -q && sudo apt-get install -y -q nsis
+
+      - name: Construir
+        run: bash installer/packaging/build_win.sh "${{ steps.tag.outputs.version }}"
+
+      - name: Subir al release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ steps.tag.outputs.tag }}" installer/build/BotSetup-*.exe --clobber
