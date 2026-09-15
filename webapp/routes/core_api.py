@@ -801,7 +801,7 @@ def get_agent_config():
 @router.get("/agent/providers")
 def get_agent_providers():
     """Proveedores de CLI conocidos, y si ya están instalados en esta máquina."""
-    return {"providers": agent_providers.estado()}
+    return {"providers": agent_providers.estado(), "winget": agent_providers.ruta_de_winget() is not None}
 
 
 @router.get("/agent/providers/{proveedor_id}/config")
@@ -870,7 +870,7 @@ _ALLOWED_TOOLS_RE = re.compile(r"^[A-Za-z0-9_,\s*().:/-]{0,300}$")
 
 @router.websocket("/agent/terminal")
 async def agent_terminal_ws(
-    websocket: WebSocket, provider: str, mode: str = "login", actor: str = "agente-mcp",
+    websocket: WebSocket, provider: str, mode: str = "login", actor: str = "agente-mcp", paquete: str = "",
 ):
     """
     La terminal embebida del wizard: instala un proveedor o lo loguea.
@@ -904,7 +904,21 @@ async def agent_terminal_ws(
 
     # El login con el binario resuelto: recién instalado por el vendor, el PATH
     # de este proceso todavía no lo tiene (ver agent_providers.ruta_del_binario).
-    argv = list(prov.instalar if mode == "install" else agent_providers.comando_login(prov))
+    if prov.id == "manual" and mode == "install":
+        # "Manual / otro" instala cualquier CLI por su id de winget. El id lo
+        # valida agent_providers; acá sólo se decide qué decirle al navegador.
+        try:
+            argv = list(agent_providers.comando_winget_paquete(paquete))
+        except ValueError as exc:
+            await websocket.send_text(json.dumps({"error": str(exc)}))
+            await websocket.close(code=1008)
+            return
+    else:
+        argv = list(prov.instalar if mode == "install" else agent_providers.comando_login(prov))
+    if not argv:
+        await websocket.send_text(json.dumps({"error": f"{prov.label} no tiene un comando de {mode}."}))
+        await websocket.close(code=1008)
+        return
     sesion = TerminalSession(argv, cwd=str(ROOT))
     sesion.iniciar()
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import pathlib
 import sys
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from webapp import agent_providers  # noqa: E402
@@ -59,17 +61,42 @@ def test_ninguno_necesita_node_ni_claude_code_powershell():
     for p in agent_providers.PROVEEDORES:
         assert "npm" not in p.instalar
     claude = agent_providers.proveedor("claude-code")
-    assert claude.instalar[1:] == ("-m", "webapp.instalar_agente", "claude-code")
     assert "powershell" not in claude.instalar[0].lower()
+    # winget si la máquina lo tiene; si no, la bajada verificada. Nunca `irm | iex`.
+    if agent_providers.ruta_de_winget():
+        assert claude.instalar[2:4] == ("--id", "Anthropic.ClaudeCode")
+    else:
+        assert claude.instalar == agent_providers._INSTALADOR_VERIFICADO_CLAUDE
 
 
-def test_codex_y_agy_van_por_winget_cuando_esta(monkeypatch):
+def test_winget_cuando_esta_y_solo_la_fuente_winget(monkeypatch):
     monkeypatch.setattr(agent_providers, "ruta_de_winget", lambda: r"C:\WindowsApps\winget.exe")
-    comando = agent_providers._instalar_windows("OpenAI.Codex", "irm x | iex")
+    comando = agent_providers._instalar_windows("OpenAI.Codex", ("respaldo",))
     assert comando[:4] == (r"C:\WindowsApps\winget.exe", "install", "--id", "OpenAI.Codex")
+    # Sin `--source winget`, una tienda (msstore) rota frenaba la instalación
+    # aunque el paquete estuviera en la fuente que sí andaba.
+    assert comando[comando.index("--source") + 1] == "winget"
     assert "--disable-interactivity" in comando
     monkeypatch.setattr(agent_providers, "ruta_de_winget", lambda: None)
-    assert agent_providers._instalar_windows("OpenAI.Codex", "irm x | iex")[0] == "powershell"
+    assert agent_providers._instalar_windows("OpenAI.Codex", ("respaldo",)) == ("respaldo",)
+
+
+def test_el_instalador_verificado_de_claude_va_por_ruta_de_script():
+    """`-m webapp.instalar_agente` fallaba: la terminal corre parada en la carpeta de datos, sin `webapp` importable."""
+    ruta = agent_providers._INSTALADOR_VERIFICADO_CLAUDE[1]
+    assert ruta.endswith("instalar_agente.py") and pathlib.Path(ruta).is_file()
+    assert agent_providers._INSTALADOR_VERIFICADO_CLAUDE[2] == "claude-code"
+
+
+def test_manual_instala_cualquier_paquete_de_winget_con_id_valido(monkeypatch):
+    monkeypatch.setattr(agent_providers, "ruta_de_winget", lambda: "winget")
+    assert "Google.AntigravityCLI" in agent_providers.comando_winget_paquete("Google.AntigravityCLI")
+    for malo in ("", "con espacios", "a;b", "x" * 200):
+        with pytest.raises(ValueError):
+            agent_providers.comando_winget_paquete(malo)
+    monkeypatch.setattr(agent_providers, "ruta_de_winget", lambda: None)
+    with pytest.raises(ValueError, match="winget"):
+        agent_providers.comando_winget_paquete("OpenAI.Codex")
 
 
 def test_recien_instalado_se_encuentra_aunque_el_path_no_lo_tenga(monkeypatch, tmp_path):

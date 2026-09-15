@@ -33,6 +33,7 @@ Windows y en la carpeta donde cada instalador suele dejarlo.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -85,20 +86,43 @@ def ruta_de_winget() -> str | None:
     return str(alias) if alias.is_file() else None
 
 
+_PAQUETE_WINGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+_-]{1,120}$")
+
+
 def _winget(paquete: str) -> tuple[str, ...]:
+    # `--source winget` a propósito: sin él winget consulta también la tienda
+    # (msstore) y, cuando esa fuente falla —en la primera PC de la empresa, con
+    # "0x8a15005e: el certificado del servidor no coincide"—, se niega a seguir
+    # aunque el paquete esté en la fuente que sí funciona. Los tres CLIs viven
+    # en la fuente `winget`, la comunitaria de Microsoft, y no en la tienda.
     return (
-        ruta_de_winget() or "winget", "install", "--id", paquete, "--exact",
+        ruta_de_winget() or "winget", "install", "--id", paquete, "--exact", "--source", "winget",
         "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity",
     )
 
 
-def _instalar_windows(paquete_winget: str, script_vendor: str) -> tuple[str, ...]:
-    """winget si está; si no, el script del vendor (Defender puede marcarlo)."""
-    return _winget(paquete_winget) if ruta_de_winget() else _powershell(script_vendor)
+def comando_winget_paquete(paquete: str) -> tuple[str, ...]:
+    """
+    Instalar cualquier paquete de winget por su id, para un CLI que no está en
+    la tabla: es lo que hace útil a "Manual / otro". El id se valida con la
+    forma de los ids de winget antes de armar el argv; sin winget en la máquina
+    no hay comando.
+    """
+    paquete = (paquete or "").strip()
+    if not _PAQUETE_WINGET.match(paquete):
+        raise ValueError(f"id de paquete de winget inválido: {paquete!r} (ej. Anthropic.ClaudeCode)")
+    if not ruta_de_winget():
+        raise ValueError("esta máquina no tiene winget: instalá el CLI a mano y pegá la conexión MCP.")
+    return _winget(paquete)
 
 
-def _instalar(windows: tuple[str, ...], posix: str) -> tuple[str, ...]:
-    return windows if os.name == "nt" else _bash(posix)
+def _instalar_windows(paquete_winget: str, respaldo: tuple[str, ...]) -> tuple[str, ...]:
+    """winget si está; si no, el respaldo del proveedor."""
+    return _winget(paquete_winget) if ruta_de_winget() else respaldo
+
+
+def _instalar(windows: tuple[str, ...], posix: tuple[str, ...]) -> tuple[str, ...]:
+    return windows if os.name == "nt" else posix
 
 
 def _python_con_consola() -> str:
@@ -115,36 +139,54 @@ def _python_con_consola() -> str:
     return str(ejecutable)
 
 
+# La bajada verificada de Claude Code (webapp/instalar_agente.py), como script
+# por su ruta y no como `-m webapp.instalar_agente`: la terminal embebida
+# corre los comandos parados en la carpeta de datos de la instalación, donde
+# `webapp` no es importable — en la primera PC de la empresa falló con
+# "No module named 'webapp'". El script no importa nada del paquete.
+_INSTALADOR_VERIFICADO_CLAUDE = (
+    _python_con_consola(), str(Path(__file__).resolve().with_name("instalar_agente.py")), "claude-code",
+)
+
+
 PROVEEDORES: tuple[Proveedor, ...] = (
     Proveedor(
         id="claude-code",
         label="Claude Code",
         binario="claude",
-        # Bajada verificada desde Python en vez del one-liner oficial; ver
-        # webapp/instalar_agente.py. Vale para los tres sistemas.
-        instalar=(_python_con_consola(), "-m", "webapp.instalar_agente", "claude-code"),
+        # winget cuando está (Anthropic.ClaudeCode va al día); si no, la bajada
+        # verificada desde Python. Nunca el `irm | iex` oficial: ver el docstring.
+        instalar=_instalar(
+            _instalar_windows("Anthropic.ClaudeCode", _INSTALADOR_VERIFICADO_CLAUDE),
+            _INSTALADOR_VERIFICADO_CLAUDE,
+        ),
         login=("claude",),
         doc=(
-            "CLI oficial de Anthropic. Se baja el binario firmado y se verifica antes de "
-            "instalarlo (sin Node ni PowerShell). Al loguearse abre un navegador para autorizar la cuenta."
+            "CLI oficial de Anthropic. Se instala con winget; sin winget, la app baja el binario "
+            "firmado y lo verifica antes de instalarlo. Al loguearse abre un navegador para autorizar la cuenta."
         ),
         formato_config="json",
         auto_registro=True,
-        rutas_probables=(r"%USERPROFILE%\.local\bin\claude.exe", "~/.local/bin/claude"),
+        rutas_probables=(
+            r"%USERPROFILE%\.local\bin\claude.exe", r"%LOCALAPPDATA%\Microsoft\WinGet\Links\claude.exe",
+            "~/.local/bin/claude",
+        ),
     ),
     Proveedor(
         id="codex",
         label="Codex CLI",
         binario="codex",
         instalar=_instalar(
-            _instalar_windows("OpenAI.Codex", "irm https://chatgpt.com/codex/install.ps1 | iex"),
-            "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+            _instalar_windows("OpenAI.Codex", _powershell("irm https://chatgpt.com/codex/install.ps1 | iex")),
+            _bash("curl -fsSL https://chatgpt.com/codex/install.sh | sh"),
         ),
         login=("codex",),
         doc="CLI oficial de OpenAI. En Windows se instala con winget (sin Node).",
         formato_config="toml",
         auto_registro=True,
+        # WinGet\Links es donde winget deja el alias de un paquete "portable".
         rutas_probables=(
+            r"%LOCALAPPDATA%\Microsoft\WinGet\Links\codex.exe",
             r"%LOCALAPPDATA%\Programs\OpenAI\Codex\bin\codex.exe",
             "~/.codex/bin/codex", "~/.local/bin/codex",
         ),
@@ -154,8 +196,8 @@ PROVEEDORES: tuple[Proveedor, ...] = (
         label="Antigravity CLI (agy)",
         binario="agy",
         instalar=_instalar(
-            _instalar_windows("Google.AntigravityCLI", "irm https://antigravity.google/cli/install.ps1 | iex"),
-            "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+            _instalar_windows("Google.AntigravityCLI", _powershell("irm https://antigravity.google/cli/install.ps1 | iex")),
+            _bash("curl -fsSL https://antigravity.google/cli/install.sh | bash"),
         ),
         login=("agy",),
         doc=(
@@ -164,7 +206,10 @@ PROVEEDORES: tuple[Proveedor, ...] = (
         ),
         formato_config="",  # no hay archivo de config documentado — sólo `agy mcp add`
         auto_registro=True,
-        rutas_probables=(r"%LOCALAPPDATA%\agy\bin\agy.exe", "~/.agy/bin/agy", "~/.local/bin/agy"),
+        rutas_probables=(
+            r"%LOCALAPPDATA%\Microsoft\WinGet\Links\agy.exe", r"%LOCALAPPDATA%\agy\bin\agy.exe",
+            "~/.agy/bin/agy", "~/.local/bin/agy",
+        ),
     ),
     Proveedor(
         id="manual",
@@ -173,9 +218,8 @@ PROVEEDORES: tuple[Proveedor, ...] = (
         instalar=(),
         login=(),
         doc=(
-            "Sin automatización todavía — pensado para un cliente MCP que no está en "
-            "esta lista, o para IA local (Ollama, etc.) más adelante. Pegá el bloque JSON "
-            "a mano en lo que sea que uses."
+            "Un CLI que no está en esta lista: se instala por su id de winget desde acá, "
+            "y la conexión MCP se pega a mano con el bloque JSON de abajo."
         ),
         formato_config="json",
         auto_registro=False,

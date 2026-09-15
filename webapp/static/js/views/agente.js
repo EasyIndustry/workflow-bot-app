@@ -51,7 +51,7 @@ export async function montar(elShell) {
     return;
   }
 
-  await dibujarPantalla(conexion, proveedores.providers || []);
+  await dibujarPantalla(conexion, proveedores.providers || [], Boolean(proveedores.winget));
 }
 
 // ── Clientes MCP que no son "proveedores" (no hay CLI que instalar/loguear) ─
@@ -124,7 +124,7 @@ function bloqueConfigProveedor(p, conexion) {
 
 // ── Pantalla: configuración (izquierda) + terminal fija (derecha) ────────
 
-async function dibujarPantalla(datos, proveedores) {
+async function dibujarPantalla(datos, proveedores, hayWinget = false) {
   const terminalCuerpo = h("div", { class: "agente-terminal__cuerpo" });
   dibujarTerminalVacia(terminalCuerpo);
 
@@ -159,7 +159,7 @@ async function dibujarPantalla(datos, proveedores) {
         "Hacé clic en un proveedor para ver su configuración particular y dejar notas.",
     ]),
     h("div", { class: "tarjeta", style: { marginTop: "8px" } },
-      proveedores.map((p) => filaProveedor(p, terminalCuerpo, datos.connection)),
+      proveedores.map((p) => filaProveedor(p, terminalCuerpo, datos.connection, hayWinget)),
     ),
 
     ...seccionOtrosClientes(datos),
@@ -279,8 +279,24 @@ function seccionHerramientasPermitidas(valorInicial) {
   return h("div", { class: "fila-control", style: { marginTop: "8px" } }, [input, btnGuardar, estado]);
 }
 
-function filaProveedor(p, terminalCuerpo, conexion) {
+function filaProveedor(p, terminalCuerpo, conexion, hayWinget) {
   const botones = [];
+  if (p.id === "manual") {
+    // Cualquier CLI por su id de winget: es lo que hace útil a esta fila. Sin
+    // winget en la máquina no hay con qué, y se dice en vez de ofrecer el botón.
+    const idPaquete = h("input", {
+      class: "entrada entrada--mono", type: "text", placeholder: "id de winget, ej. Anthropic.ClaudeCode",
+      style: { width: "240px" }, disabled: !hayWinget,
+      title: hayWinget ? "" : "Esta máquina no tiene winget",
+    });
+    const btn = h("button", { class: "btn btn--chico", text: "Instalar", disabled: !hayWinget });
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (idPaquete.value.trim()) abrirTerminal(terminalCuerpo, "manual", "install", idPaquete.value.trim());
+    });
+    idPaquete.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); btn.click(); } });
+    botones.push(idPaquete, btn);
+  }
   if (p.automatizable) {
     if (!p.instalado) {
       const btn = h("button", {
@@ -427,10 +443,11 @@ function cerrarSesionActiva() {
   sesionActiva = null;
 }
 
-function wsUrl(providerId, modo) {
+function wsUrl(providerId, modo, paquete = "") {
   const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocolo}//${location.host}/api/core/agent/terminal` +
-    `?provider=${encodeURIComponent(providerId)}&mode=${encodeURIComponent(modo)}&actor=agente-mcp`;
+    `?provider=${encodeURIComponent(providerId)}&mode=${encodeURIComponent(modo)}&actor=agente-mcp` +
+    (paquete ? `&paquete=${encodeURIComponent(paquete)}` : "");
 }
 
 function dibujarTerminalVacia(terminalCuerpo) {
@@ -440,7 +457,7 @@ function dibujarTerminalVacia(terminalCuerpo) {
   }));
 }
 
-async function abrirTerminal(terminalCuerpo, providerId, modo) {
+async function abrirTerminal(terminalCuerpo, providerId, modo, paquete = "") {
   cerrarSesionActiva();
 
   const estado = h("div", { class: "campo__ayuda", text: "Cargando la terminal…" });
@@ -464,7 +481,7 @@ async function abrirTerminal(terminalCuerpo, providerId, modo) {
   term.open(pantalla);
   fit.fit();
 
-  const ws = new WebSocket(wsUrl(providerId, modo));
+  const ws = new WebSocket(wsUrl(providerId, modo, paquete));
   ws.binaryType = "arraybuffer";
 
   const enviarResize = () => {
