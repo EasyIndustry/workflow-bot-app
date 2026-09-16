@@ -77,8 +77,40 @@ export async function montar(elShell, partes) {
   const elegido = flujos.find((f) => f.name === nombre) || null;
 
   dibujarLateral(elegido);
+  vigilarLista(elegido);
   if (!elegido) return dibujarSinElegir();
   await abrirFlujo(elegido.name);
+}
+
+// ── La lista, al día ────────────────────────────────────────────────────
+//
+// Un flujo que guarda otro —un agente por MCP, otra PC de la red— no
+// aparecía hasta recargar la página: la lista se leía una vez al montar.
+// Un sondeo cada 5 s de `GET /workflows` (nombres, carpetas y fecha de
+// cambio, sin contenido) alcanza para que el árbol se ponga al día solo. No
+// toca el flujo abierto: pisar lo que alguien está editando es peor que
+// mostrarlo viejo; para eso está el aviso "sin guardar" y volver a abrirlo.
+const SONDEO_LISTA_MS = 5000;
+let vigilanciaLista = null;
+
+function vigilarLista(elegido) {
+  if (vigilanciaLista) clearTimeout(vigilanciaLista);
+  const firma = (lista) => lista.map((f) => `${f.name}|${f.folder}|${f.state}|${f.updated_at}`).sort().join("\n");
+  const tick = async () => {
+    if (!vigente()) { vigilanciaLista = null; return; }
+    try {
+      const nueva = await api.workflows();
+      if (vigente() && firma(nueva) !== firma(flujos)) {
+        flujos = nueva;
+        const actual = elegido && flujos.find((f) => f.name === elegido.name);
+        dibujarLateral(actual || null);
+      }
+    } catch {
+      // Sin servidor, el próximo tick vuelve a probar.
+    }
+    if (vigente()) vigilanciaLista = setTimeout(tick, SONDEO_LISTA_MS);
+  };
+  vigilanciaLista = setTimeout(tick, SONDEO_LISTA_MS);
 }
 
 // ── Panel lateral: el árbol ─────────────────────────────────────────────

@@ -138,3 +138,56 @@ def test_sin_registro_run_with_gate_sigue_igual_que_antes():
             return kwargs
 
     assert asyncio.run(run_with_gate(Pelada(), RunGate(), "f", "1", row={"a": 1})) == {"row": {"a": 1}}
+
+
+# ── tickets: runs pedidos sin esperar ──────────────────────────────────
+
+
+def test_un_ticket_pasa_de_en_cola_a_en_vuelo_a_terminado_con_su_resultado():
+    reloj = Reloj()
+    registro = RunsEnVuelo(reloj=reloj)
+
+    ticket = registro.reservar("CASO-9", "flujo_demo", source="casos")
+    assert registro.consultar(ticket)["estado"] == "en_cola"
+    assert registro.listar()[0]["en_cola"] is True
+
+    reloj.t += 30
+    assert registro.empezar("CASO-9", "flujo_demo", total=4, clave=ticket) == ticket
+    consulta = registro.consultar(ticket)
+    assert consulta["estado"] == "en_vuelo"
+    assert consulta["vivo"]["elapsed"] == 0.0  # el reloj arranca cuando corre, no cuando se encoló
+    assert consulta["vivo"]["total"] == 4 and consulta["vivo"]["en_cola"] is False
+
+    registro.terminar(ticket, {"status": "ok", "run_id": "run-1"})
+    consulta = registro.consultar(ticket)
+    assert consulta["estado"] == "terminado"
+    assert consulta["run"] == {"status": "ok", "run_id": "run-1", "ticket": ticket, "case_id": "CASO-9", "flow": "flujo_demo"}
+    assert registro.listar() == []
+    assert registro.consultar("no-existe")["estado"] == "desconocido"
+
+
+def test_run_with_gate_guarda_el_resultado_bajo_el_ticket_tambien_si_explota():
+    registro = RunsEnVuelo()
+
+    class Resultado:
+        def to_dict(self):
+            return {"status": "ok", "run_id": "run-7"}
+
+    class Instancia(InstanciaDeHoy):
+        def run(self, flow_name, case_id, **kwargs):
+            return Resultado()
+
+    ticket = registro.reservar("1", "f")
+    asyncio.run(run_with_gate(Instancia(registro), RunGate(), "f", "1", en_vuelo=registro, clave=ticket))
+    assert registro.consultar(ticket)["run"]["run_id"] == "run-7"
+
+    class Explota(InstanciaDeHoy):
+        def run(self, flow_name, case_id, **kwargs):
+            raise RuntimeError("boom")
+
+    ticket2 = registro.reservar("2", "f")
+    with pytest.raises(RuntimeError):
+        asyncio.run(run_with_gate(Explota(registro), RunGate(), "f", "2", en_vuelo=registro, clave=ticket2))
+    terminado = registro.consultar(ticket2)
+    assert terminado["estado"] == "terminado" and terminado["run"]["status"] == "err"
+    assert "boom" in terminado["run"]["message"]

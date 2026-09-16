@@ -1,5 +1,6 @@
 """
-Los runs que están corriendo **ahora**, para que la grilla lo muestre.
+Los runs que están corriendo **ahora**, para que la grilla lo muestre, y el
+resultado de los que arrancaron sin esperar, para quien los pidió.
 
 `POST /run` bloquea hasta que el flujo termina, y el núcleo guarda la traza y
 el log recién al final (`Instance.run` → `runs.save` / `logs.append_run`).
@@ -7,14 +8,20 @@ Mientras tanto la fila de la fuente no dice nada: ni que está corriendo, ni
 en qué paso. Este registro es la memoria de "qué está en vuelo" de este
 proceso — `run_with_gate` anota el arranque y el fin, y la UI lo consulta.
 
+`POST /runs` (sin esperar) devuelve un **ticket** en el acto: la clave con la
+que este registro conoce al run. Quien lo pidió —otro Bot, un agente remoto—
+pregunta después por ese ticket (`GET /runs/ticket/<clave>`) y recibe "en
+cola", "en vuelo" con el paso, o "terminado" con el resultado entero. El
+`run_id` del núcleo existe recién cuando el run terminó; el ticket existe
+desde antes de que empiece, y por eso es lo que viaja.
+
 Qué paso va es información que sólo tiene el executor del núcleo. Hoy no la
-ofrece: `Instance.run` no acepta un callback por nodo (issue abierto en
+ofrece: `Instance.run` no acepta un callback por nodo (issue #15 en
 workflow-bot-core). Por eso `paso()` existe pero nadie lo llama todavía; el
 día que el núcleo lo tenga, `run_with_gate` le pasa `on_step` y la barra deja
-de ser "en curso" para ser "3 de 10 · Exportar". El total de
-pasos sí se puede contar de antemano —los nodos de acción del grafo—, y se
-anota para que la barra tenga escala aunque el flujo tenga bucles (que la
-hacen aproximada, no exacta).
+de ser "en curso" para ser "3 de 10 · Exportar". El total de pasos sí se
+puede contar de antemano —los nodos de acción del grafo—, y se anota para que
+la barra tenga escala aunque el flujo tenga bucles.
 """
 
 from __future__ import annotations
@@ -22,7 +29,13 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
+
+# Cuántos resultados de runs sin esperar se recuerdan. Un ticket viejo se
+# olvida; la traza sigue en la base (`GET /runs`), esto es sólo la memoria
+# corta para quien está esperando.
+_RECORDAR_TERMINADOS = 500
 
 
 @dataclass
@@ -36,9 +49,13 @@ class RunEnVuelo:
     total: int | None = None
     hechos: int = 0
     paso: str = ""
+    # Pedido sin esperar y todavía detrás del gate: figura para que se vea
+    # que está por correr, pero no corre.
+    en_cola: bool = False
 
     def to_dict(self, ahora: float) -> dict:
         return {
+            "ticket": self.clave,
             "case_id": self.case_id,
             "flow": self.flow,
             "source": self.source,
@@ -47,6 +64,7 @@ class RunEnVuelo:
             "total": self.total,
             "hechos": self.hechos,
             "paso": self.paso,
+            "en_cola": self.en_cola,
         }
 
 
@@ -57,13 +75,35 @@ class RunsEnVuelo:
         self._reloj = reloj
         self._lock = threading.Lock()
         self._vivos: dict[str, RunEnVuelo] = {}
+        self._terminados: OrderedDict[str, dict] = OrderedDict()
 
-    def empezar(self, case_id: str, flow: str, *, source: str = "", total: int | None = None) -> str:
+    def empezar(self, case_id: str, flow: str, *, source: str = "", total: int | None = None,
+                clave: str | None = None) -> str:
+        """
+        Anota el arranque. Con `clave` —un ticket que ya se había reservado— la
+        misma entrada pasa de "en cola" a corriendo, con el reloj puesto a cero.
+        """
+        with self._lock:
+            if clave and clave in self._vivos:
+                vivo = self._vivos[clave]
+                vivo.en_cola = False
+                vivo.started_at = self._reloj()
+                vivo.total = total if total is not None else vivo.total
+                return clave
+            clave = clave or uuid.uuid4().hex[:12]
+            self._vivos[clave] = RunEnVuelo(
+                clave=clave, case_id=str(case_id), flow=flow, source=source or "",
+                started_at=self._reloj(), total=total,
+            )
+        return clave
+
+    def reservar(self, case_id: str, flow: str, *, source: str = "") -> str:
+        """Un ticket para un run que se pidió sin esperar y todavía no arrancó."""
         clave = uuid.uuid4().hex[:12]
         with self._lock:
             self._vivos[clave] = RunEnVuelo(
                 clave=clave, case_id=str(case_id), flow=flow, source=source or "",
-                started_at=self._reloj(), total=total,
+                started_at=self._reloj(), en_cola=True,
             )
         return clave
 
@@ -76,9 +116,31 @@ class RunsEnVuelo:
             vivo.hechos = indice if indice is not None else vivo.hechos + 1
             vivo.paso = display or node_id
 
-    def terminar(self, clave: str) -> None:
+    def terminar(self, clave: str, resultado: dict | None = None) -> None:
+        """Saca el run de los vivos y, si hay resultado, lo guarda para quien pregunte por el ticket."""
         with self._lock:
-            self._vivos.pop(clave, None)
+            vivo = self._vivos.pop(clave, None)
+            if resultado is not None:
+                self._terminados[clave] = {
+                    **resultado,
+                    "ticket": clave,
+                    "case_id": (vivo.case_id if vivo else resultado.get("case_id")),
+                    "flow": (vivo.flow if vivo else resultado.get("flow")),
+                }
+                while len(self._terminados) > _RECORDAR_TERMINADOS:
+                    self._terminados.popitem(last=False)
+
+    def consultar(self, clave: str) -> dict:
+        """Qué pasa con un ticket: en cola, en vuelo (con su paso), terminado (con el run), o desconocido."""
+        ahora = self._reloj()
+        with self._lock:
+            vivo = self._vivos.get(clave)
+            if vivo is not None:
+                return {"estado": "en_cola" if vivo.en_cola else "en_vuelo", "vivo": vivo.to_dict(ahora), "run": None}
+            terminado = self._terminados.get(clave)
+        if terminado is not None:
+            return {"estado": "terminado", "vivo": None, "run": terminado}
+        return {"estado": "desconocido", "vivo": None, "run": None}
 
     def listar(self) -> list[dict]:
         ahora = self._reloj()

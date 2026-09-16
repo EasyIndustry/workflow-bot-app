@@ -1245,6 +1245,26 @@ async def validate(body: RunBody):
     }
 
 
+def _frenar_si_tiene_errores(flow: str) -> None:
+    """
+    Un flujo con errores de diagnóstico —un tool que no está instalado, un
+    nodo sin salida— no se ejecuta. El núcleo sí lo correría: el nodo falla y
+    sigue por la arista |err|, y el run termina "ok" con el trabajo sin
+    hacer. Eso es un error de configuración, no una falla de runtime, y se
+    frena antes de tocar nada; el dry run ya lo muestra.
+    """
+    try:
+        _, extra = _instance.diagnose(flow)
+    except WorkflowNotFound as exc:
+        raise HTTPException(404, str(exc)) from None
+    errores = [d.message for d in extra if d.severity.value == "error"]
+    if errores:
+        raise HTTPException(409, {
+            "message": f'El flujo "{flow}" tiene errores y no se ejecuta hasta corregirlos.',
+            "errors": errores,
+        })
+
+
 @router.post("/run")
 async def run_flow(body: RunBody):
     """
@@ -1252,29 +1272,14 @@ async def run_flow(body: RunBody):
 
     Bloquea hasta terminar; el run sobrevive igual al cierre del navegador,
     porque el motor ya no vive en la pestaña. La traza queda guardada aunque el
-    cliente se desconecte.
+    cliente se desconecte. Para no esperar, `POST /runs`.
 
     Pasa por `_gate`: si el flujo declara que necesita correr solo (issue #8,
     todavía no en esta rama), espera a que no quede ningún otro run en vuelo y
     bloquea a los nuevos mientras dura. Hasta que esa declaración exista, todo
     corre concurrente — ver `run_with_gate`.
     """
-    # Un flujo con errores de diagnóstico —un tool que no está instalado, un
-    # nodo sin salida— no se ejecuta. El núcleo sí lo correría: el nodo falla y
-    # sigue por la arista |err|, y el run termina "ok" con el trabajo sin
-    # hacer. Eso es un error de configuración, no una falla de runtime, y se
-    # frena antes de tocar nada; el dry run ya lo muestra.
-    try:
-        _, extra = _instance.diagnose(body.flow)
-    except WorkflowNotFound as exc:
-        raise HTTPException(404, str(exc)) from None
-    errores = [d.message for d in extra if d.severity.value == "error"]
-    if errores:
-        raise HTTPException(409, {
-            "message": f'El flujo "{body.flow}" tiene errores y no se ejecuta hasta corregirlos.',
-            "errors": errores,
-        })
-
+    _frenar_si_tiene_errores(body.flow)
     try:
         resultado = await run_with_gate(
             _instance, _gate, body.flow, body.case_id, en_vuelo=_en_vuelo,
@@ -1287,6 +1292,50 @@ async def run_flow(body: RunBody):
         # mensaje del núcleo ya dice cuál y por qué.
         raise HTTPException(403, str(exc)) from None
     return resultado.to_dict()
+
+
+# Las tareas de fondo de los runs sin esperar. Guardar la referencia es lo que
+# impide que el recolector cancele una tarea a mitad de camino.
+_tareas_sin_esperar: set[asyncio.Task] = set()
+
+
+@router.post("/runs")
+async def run_flow_sin_esperar(body: RunBody):
+    """
+    Ejecuta un flujo sin esperar a que termine: devuelve un **ticket** en el
+    acto y el run sigue de fondo, por el mismo gate y con la misma traza.
+
+    Es lo que necesita otro Bot que deriva un caso (plugin `bots`) o un agente
+    remoto que dispara y vuelve a mirar: `GET /runs/ticket/<ticket>` dice si
+    está en cola, en vuelo (con su paso) o terminado (con el resultado). El
+    `run_id` del núcleo existe recién al final; el ticket, desde ahora.
+
+    Lo que sí se resuelve antes de contestar es lo que puede fallar por
+    configuración —el flujo no existe, tiene errores—: un 404 o un 409 acá
+    son mejores que un ticket que termina en error dos segundos después.
+    """
+    _frenar_si_tiene_errores(body.flow)
+    ticket = _en_vuelo.reservar(body.case_id, body.flow, source=body.source)
+
+    async def correr() -> None:
+        try:
+            await run_with_gate(
+                _instance, _gate, body.flow, body.case_id, en_vuelo=_en_vuelo, clave=ticket,
+                row=body.row, source=body.source, actor=body.actor,
+            )
+        except Exception:  # noqa: BLE001 — el resultado ya quedó anotado bajo el ticket
+            pass
+
+    tarea = asyncio.create_task(correr())
+    _tareas_sin_esperar.add(tarea)
+    tarea.add_done_callback(_tareas_sin_esperar.discard)
+    return {"ticket": ticket, "case_id": body.case_id, "flow": body.flow, "estado": "en_cola"}
+
+
+@router.get("/runs/ticket/{ticket}")
+def get_run_ticket(ticket: str):
+    """Qué pasa con un run pedido sin esperar: en cola, en vuelo, terminado (con el run), o desconocido."""
+    return _en_vuelo.consultar(ticket)
 
 
 # ── Acciones de un plugin (botón + formulario + resultado) ──────────────

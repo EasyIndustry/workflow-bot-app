@@ -197,11 +197,19 @@ async function cargar(nombre, { reiniciar = false } = {}) {
 
 // ── Runs en vuelo: la barra de la columna Log ─────────────────────────────
 
+// Cada cuánto se mira `runs/en-vuelo`: seguido mientras hay algo corriendo,
+// despacio cuando no. Antes el sondeo se detenía al quedar vacío, y un run
+// que disparaba otro (otro Bot, un agente remoto, otra pestaña) no se veía
+// hasta recargar la página. Dos consultas livianas cada diez segundos es un
+// precio chico por ver siempre lo que pasa.
+const SONDEO_ACTIVO_MS = 1500;
+const SONDEO_QUIETO_MS = 5000;
+
 /**
- * Sondea `GET /runs/en-vuelo` cada 1.5 s mientras haya algo corriendo y se
- * detiene solo cuando no queda nada. Actualiza las celdas Log **en su lugar**
- * (por `data-log-celda`), sin redibujar la grilla: redibujar cerraría un
- * desplegable abierto o perdería el scroll en cada tick.
+ * Sondea `GET /runs/en-vuelo` mientras la fuente esté abierta: cada 1.5 s si
+ * hay algo corriendo, cada 5 s si no. Actualiza las celdas Log **en su
+ * lugar** (por `data-log-celda`), sin redibujar la grilla: redibujar cerraría
+ * un desplegable abierto o perdería el scroll en cada tick.
  */
 function vigilarEnVuelo(a) {
   if (a.vigilancia) return;
@@ -225,14 +233,14 @@ function vigilarEnVuelo(a) {
       await Promise.all(terminadas.map((c) => refrescarRun(a, fuente.name, c)));
       if (abierto === a && vigente()) redibujarQuieto();
     }
-    if (!a.enVuelo.size && !a.tanda) detenerVigilancia(a);
+    if (abierto !== a) return;
+    a.vigilancia = setTimeout(tick, a.enVuelo.size || a.tanda ? SONDEO_ACTIVO_MS : SONDEO_QUIETO_MS);
   };
-  a.vigilancia = setInterval(tick, 1500);
-  tick();
+  a.vigilancia = setTimeout(tick, 0);
 }
 
 function detenerVigilancia(a) {
-  if (a.vigilancia) clearInterval(a.vigilancia);
+  if (a.vigilancia) clearTimeout(a.vigilancia);
   a.vigilancia = null;
 }
 

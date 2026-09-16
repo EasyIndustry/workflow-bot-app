@@ -213,6 +213,10 @@ export const api = {
   // Lo que está corriendo ahora: case_id, flujo, segundos y —si el núcleo lo
   // cuenta— el paso en curso. La grilla lo consulta mientras haya algo en vuelo.
   enVuelo: () => pedir("/runs/en-vuelo"),
+  // Correr sin esperar: vuelve un ticket; `ticket()` dice en cola / en vuelo /
+  // terminado con el run. Es lo que usan otro Bot (plugin `bots`) o un agente remoto.
+  correrSinEsperar: (cuerpo) => pedir("/runs", { metodo: "POST", cuerpo }),
+  ticket: (ticket) => pedir(`/runs/ticket/${codificar(ticket)}`),
 
   // Registro de eventos de una fila. Acumulado entre runs, que es como lo
   // muestra el modal del botón Log de la grilla.

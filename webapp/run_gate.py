@@ -88,7 +88,8 @@ class RunGate:
                 self._condicion.notify_all()
 
 
-async def run_with_gate(instance, gate: RunGate, flow_name: str, case_id: str, *, en_vuelo=None, **kwargs):
+async def run_with_gate(instance, gate: RunGate, flow_name: str, case_id: str, *, en_vuelo=None,
+                        clave: str | None = None, **kwargs):
     """
     Corre un flujo a través del gate — el punto de integración único.
 
@@ -99,28 +100,41 @@ async def run_with_gate(instance, gate: RunGate, flow_name: str, case_id: str, *
     coordinar un merge entre las dos ramas. El día que el método exista, esta
     línea lo empieza a usar sola.
 
-    `en_vuelo` (un `RunsEnVuelo`) anota el run mientras corre, para la grilla.
-    Mismo criterio de compatibilidad: si `Instance.run` acepta `on_step`, se
-    le pasa y la UI ve el paso en curso; si no —el núcleo de hoy—, sólo se
-    sabe que corre y desde cuándo.
+    `en_vuelo` (un `RunsEnVuelo`) anota el run mientras corre, para la grilla,
+    y al terminar guarda el resultado bajo su ticket para quien lo pidió sin
+    esperar (`POST /runs`). `clave` es ese ticket cuando ya se reservó antes
+    de pasar por el gate; sin él, se genera al arrancar. Mismo criterio de
+    compatibilidad: si `Instance.run` acepta `on_step`, se le pasa y la UI ve
+    el paso en curso; si no —el núcleo de hoy—, sólo se sabe que corre.
     """
     verificar = getattr(instance, "requires_exclusive_run", None)
     es_exclusivo = bool(verificar(flow_name)) if verificar else False
     modo = gate.exclusive() if es_exclusivo else gate.shared()
     async with modo:
-        clave = None
         if en_vuelo is not None:
             clave = en_vuelo.empezar(
                 case_id, flow_name, source=kwargs.get("source") or "",
-                total=_contar_pasos(instance, flow_name),
+                total=_contar_pasos(instance, flow_name), clave=clave,
             )
             if _acepta_on_step(instance):
                 kwargs["on_step"] = _hook_de_progreso(en_vuelo, clave)
         try:
-            return await run_in_threadpool(instance.run, flow_name, case_id, **kwargs)
-        finally:
-            if clave is not None:
-                en_vuelo.terminar(clave)
+            resultado = await run_in_threadpool(instance.run, flow_name, case_id, **kwargs)
+        except Exception as exc:
+            if en_vuelo is not None and clave is not None:
+                en_vuelo.terminar(clave, {"status": "err", "message": f"{type(exc).__name__}: {exc}"})
+            raise
+        if en_vuelo is not None and clave is not None:
+            en_vuelo.terminar(clave, _como_dict(resultado))
+        return resultado
+
+
+def _como_dict(resultado) -> dict:
+    """El resultado del núcleo como dict, sea `RunResult` o lo que devuelva un fake."""
+    to_dict = getattr(resultado, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    return resultado if isinstance(resultado, dict) else {"status": str(resultado)}
 
 
 def _acepta_on_step(instance) -> bool:
