@@ -6,6 +6,11 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-16
 
+- **Terminal del agente flotante.** La terminal de instalar/loguear un CLI
+  salió de la vista Agente a `webapp/static/js/agent_terminal.js`, un
+  singleton montado sobre `body` con un indicador fijo en la barra lateral:
+  sobrevive al cambio de pestaña mientras un login OAuth tarda. Con un solo
+  proveedor instalado, Agente lo abre directo con su acordeón desplegado.
 - **Grilla de Sources sin filtrarse por detrás.** El grupo fijo de las
   columnas del bot medía lo que medía su contenido, no la fila: en la fila
   de filtros eran 8px opacos y los selects de los datos asomaban por arriba

@@ -1,22 +1,19 @@
 /**
- * Agente: cómo conectar un agente MCP a esta instalación, y una terminal
- * embebida para instalar/loguear un proveedor de CLI.
+ * Agente: cómo conectar un agente MCP a esta instalación, y el wizard para
+ * instalar/loguear un proveedor de CLI.
  *
  * `backend/mcp` es un servidor por stdio — lo levanta el cliente del agente
  * (Claude Desktop, Claude Code, Cursor, Codex, cualquiera que hable MCP), no
  * esta webapp. Por eso esta pantalla no tiene un estado "conectado": es la
- * receta para que ese cliente lo levante él mismo. Acá también vive el wizard
- * de instalar/loguear un proveedor — una terminal embebida (xterm.js, cargado
- * del CDN al abrirla) contra un proceso real del lado del servidor. El
+ * receta para que ese cliente lo levante él mismo.
+ *
+ * El wizard de instalar/loguear corre en una terminal real (xterm.js contra
+ * un proceso del lado del servidor) que vive en `agent_terminal.js`, no acá:
+ * es un panel flotante que sobrevive a que el usuario cambie de pestaña
+ * mientras un login OAuth tarda. Esta vista sólo dispara `abrir()` y refleja
+ * el estado (¿hay una sesión de este proveedor corriendo ahora?) — el
  * servidor sólo corre los argv fijos que declara `agent_providers.py`; esta
  * vista nunca arma un comando, sólo elige cuál proveedor y cuál modo.
- *
- * La terminal vive en una columna fija a la derecha (arrastrable, ancho
- * recordado en localStorage), ocupando toda la altura de la pantalla — no un
- * cuadro que aparece metido en el medio del texto. La idea original —y a la
- * que se vuelve acá— es que la única interfaz de interacción con el agente
- * sea esta terminal, corriendo el CLI real, no una UI de chat propia encima
- * (eso existió y se sacó).
  *
  * Cada proveedor es un acordeón: clic en la fila para ver su configuración
  * particular (el bloque JSON/TOML para pegar a mano, si `formato_config` no
@@ -24,22 +21,25 @@
  * proveedor vía `agent_provider_config.py`). Para Claude Code, Codex y
  * Antigravity ni hace falta copiar nada: `mcp_registration.py` escribe la
  * conexión sola apenas termina un install/login exitoso.
+ *
+ * Con un solo proveedor instalado, entrar acá lo abre directo (su acordeón ya
+ * desplegado) en vez de obligar a buscarlo en la lista — es el único que
+ * importa una vez que ya se eligió. Con cero o con más de uno, la pantalla
+ * arranca en la lista, que es la única elección que tiene sentido mostrar.
  */
 
 import { h, poner } from "../dom.js";
 import { api } from "../api.js";
 import { aviso } from "../components/aviso.js";
+import * as agentTerminal from "../agent_terminal.js";
 
 let shell = null;
-let sesionActiva = null; // { ws, limpiar, providerId, modo }
-let xtermCargando = null;
 
 export async function montar(elShell) {
   shell = elShell;
   shell.ponerRotulo("AGENTE");
   shell.limpiarLateral();
 
-  cerrarSesionActiva();
   poner(shell.vista, h("div", { class: "cargando", text: "Cargando…" }));
 
   let conexion;
@@ -50,6 +50,14 @@ export async function montar(elShell) {
     poner(shell.vista, aviso("error", "No se pudo leer la configuración", e.message || String(e)));
     return;
   }
+
+  agentTerminal.escuchar((estado) => {
+    // Una sesión se cerró (o abrió) en algún proveedor: puede haber cambiado
+    // "instalado", así que se vuelve a armar la pantalla entera. Sólo llega
+    // acá si esta vista sigue siendo la última montada — `escuchar` reemplaza
+    // el callback anterior en vez de acumularlos.
+    if (!estado.activa) montar(shell);
+  });
 
   await dibujarPantalla(conexion, proveedores.providers || [], Boolean(proveedores.winget));
 }
@@ -122,18 +130,26 @@ function bloqueConfigProveedor(p, conexion) {
   return [];
 }
 
-// ── Pantalla: configuración (izquierda) + terminal fija (derecha) ────────
+// ── Pantalla ─────────────────────────────────────────────────────────────
+//
+// Con exactamente un proveedor instalado, no tiene sentido mostrar una lista
+// para elegir entre uno: se le abre el acordeón ya desplegado. Con cero o con
+// más de uno, la lista es la elección real y arranca cerrada.
+
+function proveedorParaAbrirDirecto(proveedores) {
+  const instalados = proveedores.filter((p) => p.automatizable && p.instalado);
+  return instalados.length === 1 ? instalados[0].id : null;
+}
 
 async function dibujarPantalla(datos, proveedores, hayWinget = false) {
-  const terminalCuerpo = h("div", { class: "agente-terminal__cuerpo" });
-  dibujarTerminalVacia(terminalCuerpo);
+  const abrirDirecto = proveedorParaAbrirDirecto(proveedores);
 
   let herramientasPermitidas = "";
   try {
     herramientasPermitidas = (await api.agentHerramientasPermitidas()).allowed_tools || "";
   } catch { /* si falla, la sección arranca vacía y guardar la vuelve a intentar */ }
 
-  const columnaConfig = h("div", { class: "agente-layout__config" }, [
+  const columna = h("div", { class: "agente-layout" }, [
     h("div", { style: { marginBottom: "16px" } }, [
       h("div", { class: "titulo", text: "Agente" }),
       h("div", { class: "subtitulo" }, [
@@ -154,12 +170,13 @@ async function dibujarPantalla(datos, proveedores, hayWinget = false) {
 
     h("div", { class: "seccion" }, [h("span", { text: "PROVEEDORES DE CLI" })]),
     h("div", { class: "campo__ayuda" }, [
-      "Instalá y logueá el CLI de un proveedor — se abre en la terminal de la derecha. " +
-        "Corre en esta misma máquina, con tus propios permisos de usuario — nunca con sudo ni admin. " +
-        "Hacé clic en un proveedor para ver su configuración particular y dejar notas.",
+      "Instalá y logueá el CLI de un proveedor — se abre en un panel de terminal flotante, " +
+        "que sigue corriendo aunque cambies de pestaña. Corre en esta misma máquina, con tus " +
+        "propios permisos de usuario — nunca con sudo ni admin. Hacé clic en un proveedor para " +
+        "ver su configuración particular y dejar notas.",
     ]),
     h("div", { class: "tarjeta", style: { marginTop: "8px" } },
-      proveedores.map((p) => filaProveedor(p, terminalCuerpo, datos.connection, hayWinget)),
+      proveedores.map((p) => filaProveedor(p, datos.connection, hayWinget, p.id === abrirDirecto)),
     ),
 
     ...seccionOtrosClientes(datos),
@@ -188,68 +205,7 @@ async function dibujarPantalla(datos, proveedores, hayWinget = false) {
     seccionHerramientasPermitidas(herramientasPermitidas),
   ]);
 
-  const columnaTerminal = h("div", { class: "agente-layout__terminal" }, [
-    h("div", { class: "agente-terminal__cabecera" }, [
-      h("span", { text: "TERMINAL" }),
-    ]),
-    terminalCuerpo,
-  ]);
-  columnaTerminal.style.flexBasis = anchoTerminalGuardado() + "px";
-
-  const resizer = h("div", { class: "agente-layout__resizer", title: "Arrastrar para cambiar el ancho" });
-  activarResize(resizer, columnaTerminal);
-
-  poner(shell.vista, h("div", { class: "agente-layout" }, [columnaConfig, resizer, columnaTerminal]));
-}
-
-// ── Ancho de la columna de terminal, arrastrable y recordado ────────────
-
-const ANCHO_MIN = 280;
-const ANCHO_MAX = 900;
-const ANCHO_DEFECTO = 440;
-const CLAVE_ANCHO = "agente.anchoTerminal";
-
-function anchoTerminalGuardado() {
-  const guardado = Number(localStorage.getItem(CLAVE_ANCHO));
-  if (!guardado || Number.isNaN(guardado)) return ANCHO_DEFECTO;
-  return Math.min(ANCHO_MAX, Math.max(ANCHO_MIN, guardado));
-}
-
-/**
- * Arrastrar el separador cambia el ancho de la columna de terminal, no la de
- * config —la columna de config ya se banca cualquier ancho porque scrollea
- * sola, y es la terminal la que tiene un tamaño de grilla (cols/rows) que vale
- * la pena poder agrandar o achicar. El `ResizeObserver` que ya escucha a la
- * pantalla de xterm (ver `abrirTerminal`) hace el resto: cada frame de este
- * arrastre dispara un `fit()` y un resize real de la sesión, no sólo al soltar.
- */
-function activarResize(resizer, columnaTerminal) {
-  let arrancoEnX = 0;
-  let anchoAlArrancar = 0;
-
-  const mover = (e) => {
-    const delta = arrancoEnX - e.clientX; // la terminal está a la derecha: mover a la izquierda agranda
-    const nuevoAncho = Math.min(ANCHO_MAX, Math.max(ANCHO_MIN, anchoAlArrancar + delta));
-    columnaTerminal.style.flexBasis = nuevoAncho + "px";
-  };
-
-  const soltar = () => {
-    document.removeEventListener("mousemove", mover);
-    document.removeEventListener("mouseup", soltar);
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
-    localStorage.setItem(CLAVE_ANCHO, parseInt(columnaTerminal.style.flexBasis, 10));
-  };
-
-  resizer.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    arrancoEnX = e.clientX;
-    anchoAlArrancar = columnaTerminal.getBoundingClientRect().width;
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-    document.addEventListener("mousemove", mover);
-    document.addEventListener("mouseup", soltar);
-  });
+  poner(shell.vista, columna);
 }
 
 function seccionHerramientasPermitidas(valorInicial) {
@@ -279,9 +235,16 @@ function seccionHerramientasPermitidas(valorInicial) {
   return h("div", { class: "fila-control", style: { marginTop: "8px" } }, [input, btnGuardar, estado]);
 }
 
-function filaProveedor(p, terminalCuerpo, conexion, hayWinget) {
+function filaProveedor(p, conexion, hayWinget, abrirDirecto) {
+  const sesion = agentTerminal.sesionDe(p.id);
   const botones = [];
-  if (p.id === "manual") {
+  if (sesion) {
+    // Ya hay una terminal corriendo para este proveedor (puede estar
+    // escondida en el panel flotante): reabrirla, no arrancar otra.
+    const btnVer = h("button", { class: "btn btn--chico btn--azul", text: "Ver terminal" });
+    btnVer.addEventListener("click", (e) => { e.stopPropagation(); agentTerminal.verPanel(); });
+    botones.push(btnVer);
+  } else if (p.id === "manual") {
     // Cualquier CLI por su id de winget: es lo que hace útil a esta fila. Sin
     // winget en la máquina no hay con qué, y se dice en vez de ofrecer el botón.
     const idPaquete = h("input", {
@@ -292,12 +255,11 @@ function filaProveedor(p, terminalCuerpo, conexion, hayWinget) {
     const btn = h("button", { class: "btn btn--chico", text: "Instalar", disabled: !hayWinget });
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (idPaquete.value.trim()) abrirTerminal(terminalCuerpo, "manual", "install", idPaquete.value.trim());
+      if (idPaquete.value.trim()) agentTerminal.abrir(shell, "manual", "install", idPaquete.value.trim());
     });
     idPaquete.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); btn.click(); } });
     botones.push(idPaquete, btn);
-  }
-  if (p.automatizable) {
+  } else if (p.automatizable) {
     if (!p.instalado) {
       const btn = h("button", {
         class: "btn btn--chico",
@@ -305,17 +267,17 @@ function filaProveedor(p, terminalCuerpo, conexion, hayWinget) {
         disabled: !p.se_puede_instalar,
         title: p.se_puede_instalar ? "" : "Hace falta PowerShell (o bash) en esta máquina para correr el instalador del proveedor",
       });
-      btn.addEventListener("click", (e) => { e.stopPropagation(); abrirTerminal(terminalCuerpo, p.id, "install"); });
+      btn.addEventListener("click", (e) => { e.stopPropagation(); agentTerminal.abrir(shell, p.id, "install"); });
       botones.push(btn);
     } else {
       const btnLogin = h("button", { class: "btn btn--chico btn--azul", text: "Iniciar sesión" });
-      btnLogin.addEventListener("click", (e) => { e.stopPropagation(); abrirTerminal(terminalCuerpo, p.id, "login"); });
+      btnLogin.addEventListener("click", (e) => { e.stopPropagation(); agentTerminal.abrir(shell, p.id, "login"); });
       botones.push(btnLogin);
     }
   }
 
-  const flecha = h("span", { class: "acordeon__flecha", text: "▸" });
-  const panel = h("div", { class: "acordeon__panel", hidden: true });
+  const flecha = h("span", { class: "acordeon__flecha", text: abrirDirecto ? "▾" : "▸" });
+  const panel = h("div", { class: "acordeon__panel", hidden: !abrirDirecto });
   let cargado = false;
 
   const encabezado = h("div", {
@@ -344,6 +306,11 @@ function filaProveedor(p, terminalCuerpo, conexion, hayWinget) {
       cargado = true;
       poner(panel, ...panelProveedor(p, conexion));
     }
+  }
+
+  if (abrirDirecto) {
+    cargado = true;
+    poner(panel, ...panelProveedor(p, conexion));
   }
 
   return h("div", { class: "acordeon" }, [encabezado, panel]);
@@ -401,136 +368,6 @@ function panelProveedor(p, conexion) {
   );
 
   return bloques;
-}
-
-// ── Terminal embebida (instalar / loguear) ──────────────────────────────
-
-function cargarXterm() {
-  if (window.Terminal && window.FitAddon) return Promise.resolve();
-  if (xtermCargando) return xtermCargando;
-
-  const cargarScript = (src) => new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = src;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error(`no se pudo cargar ${src} desde el CDN`));
-    document.head.appendChild(script);
-  });
-
-  xtermCargando = (async () => {
-    const hoja = h("link", {
-      rel: "stylesheet",
-      href: "https://cdnjs.cloudflare.com/ajax/libs/xterm/5.5.0/xterm.min.css",
-    });
-    document.head.appendChild(hoja);
-
-    // cdnjs dejó de publicar `xterm.min.js` desde la 5.4.0 en adelante — sólo
-    // queda el bundle sin minificar (`xterm.js`), misma API UMD (`window.Terminal`).
-    await cargarScript("https://cdnjs.cloudflare.com/ajax/libs/xterm/5.5.0/xterm.js");
-    // El addon de auto-ajuste no está en cdnjs (nunca lo publicaron): jsdelivr
-    // sirve el mismo paquete de npm tal cual. Sin esto la terminal queda fija
-    // en 80x24 aunque la columna de al lado sea más grande o más chica.
-    await cargarScript("https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js");
-  })();
-  return xtermCargando;
-}
-
-function cerrarSesionActiva() {
-  if (!sesionActiva) return;
-  try { sesionActiva.observador?.disconnect(); } catch { /* ya estaba desconectado */ }
-  try { sesionActiva.ws.close(); } catch { /* ya estaba cerrado */ }
-  try { sesionActiva.limpiar?.(); } catch { /* ya estaba destruido */ }
-  sesionActiva = null;
-}
-
-function wsUrl(providerId, modo, paquete = "") {
-  const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocolo}//${location.host}/api/core/agent/terminal` +
-    `?provider=${encodeURIComponent(providerId)}&mode=${encodeURIComponent(modo)}&actor=agente-mcp` +
-    (paquete ? `&paquete=${encodeURIComponent(paquete)}` : "");
-}
-
-function dibujarTerminalVacia(terminalCuerpo) {
-  poner(terminalCuerpo, h("div", {
-    class: "agente-terminal__vacio",
-    text: "Elegí \"Instalar\" o \"Iniciar sesión\" en un proveedor para abrir la terminal acá.",
-  }));
-}
-
-async function abrirTerminal(terminalCuerpo, providerId, modo, paquete = "") {
-  cerrarSesionActiva();
-
-  const estado = h("div", { class: "campo__ayuda", text: "Cargando la terminal…" });
-  poner(terminalCuerpo, estado);
-
-  try {
-    await cargarXterm();
-  } catch (e) {
-    poner(terminalCuerpo, aviso("error", "No se pudo abrir la terminal", e.message));
-    return;
-  }
-
-  const pantalla = h("div", { class: "terminal-embebida" });
-  const cerrar = h("button", { class: "btn btn--chico", text: "Cerrar", style: { marginTop: "8px", flex: "0 0 auto" } });
-  cerrar.addEventListener("click", () => { cerrarSesionActiva(); dibujarTerminalVacia(terminalCuerpo); });
-  poner(terminalCuerpo, estado, pantalla, cerrar);
-
-  const term = new window.Terminal({ convertEol: true, fontSize: 13 });
-  const fit = new window.FitAddon.FitAddon();
-  term.loadAddon(fit);
-  term.open(pantalla);
-  fit.fit();
-
-  const ws = new WebSocket(wsUrl(providerId, modo, paquete));
-  ws.binaryType = "arraybuffer";
-
-  const enviarResize = () => {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    try { fit.fit(); } catch { /* la pantalla puede no tener tamaño todavía (recién montada) */ }
-    ws.send(JSON.stringify({ resize: { rows: term.rows, cols: term.cols } }));
-  };
-  // La columna de la terminal ocupa toda la altura fija de la pantalla, así que
-  // el único motivo por el que su tamaño cambia es que alguien redimensione la
-  // ventana del navegador — no hay splitter que arrastrar acá.
-  const observador = new ResizeObserver(() => enviarResize());
-  observador.observe(pantalla);
-
-  sesionActiva = { ws, observador, limpiar: () => term.dispose(), providerId, modo };
-
-  ws.addEventListener("open", () => {
-    estado.textContent = modo === "install" ? "Instalando…" : "Iniciando sesión…";
-    enviarResize();
-  });
-
-  ws.addEventListener("message", (evento) => {
-    if (typeof evento.data === "string") {
-      let control = null;
-      try { control = JSON.parse(evento.data); } catch { /* texto suelto, se ignora */ }
-      if (control?.aviso) estado.textContent = "⚠ " + control.aviso;
-      else if (control?.error) estado.textContent = "✕ " + control.error;
-      return;
-    }
-    term.write(new Uint8Array(evento.data));
-  });
-
-  ws.addEventListener("close", () => {
-    // No se pisa el texto: puede traer el aviso de auto-registro que mandó el
-    // servidor justo antes de cerrar (ver `agent_terminal_ws`) — perderlo acá
-    // sería que nadie llegue a leer "✓ Registrado en .mcp.json".
-    estado.textContent = (estado.textContent ? estado.textContent + " · " : "") + "Sesión terminada.";
-    // Si fue una instalación, el estado de "instalado" pudo haber cambiado —
-    // se refresca la pantalla entera para que la fila pase a ofrecer login.
-    // Con demora: sin esto, el aviso de arriba desaparece antes de poder leerlo.
-    if (modo === "install") setTimeout(() => montar(shell), 2500);
-  });
-
-  ws.addEventListener("error", () => {
-    estado.textContent = "Error de conexión con el servidor.";
-  });
-
-  term.onData((datos) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(datos));
-  });
 }
 
 // ── Compartido ────────────────────────────────────────────────────────

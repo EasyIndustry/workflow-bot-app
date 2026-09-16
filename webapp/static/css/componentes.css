@@ -126,47 +126,71 @@
   overflow: hidden;
 }
 
-/* ── Agente: config a la izquierda, terminal fija a la derecha ─────────── */
+/* ── Agente: una sola columna de configuración ────────────────────────── */
 
 .agente-layout {
-  display: flex; align-items: stretch; height: 100%;
+  max-width: 760px;
 }
-.agente-layout__config {
-  flex: 1; min-width: 0; overflow-y: auto; padding-right: 24px;
+
+/* ── Terminal flotante (agent_terminal.js) ──────────────────────────────
+   Vive fuera de `.vista`, montada directo sobre `document.body`: sobrevive
+   a cualquier cambio de pestaña porque el router sólo vacía `.vista`. El
+   indicador que la abre/cierra vive en `.lateral__indicador` (shell.js), que
+   tampoco se vacía al cambiar de vista. */
+
+.terminal-flotante {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  z-index: 40;
+  display: flex; flex-direction: row;
+  background: #1e1e1e; border-left: 1px solid #000;
+  box-shadow: -6px 0 24px rgba(0, 0, 0, .35);
 }
-.agente-layout__terminal {
-  /* El ancho real es un inline `flexBasis` que pone agente.js (arrastrable,
-     recordado en localStorage) — esto es sólo el valor antes de que cargue. */
-  flex: 0 0 440px; min-height: 0;
-  display: flex; flex-direction: column;
-  border-left: 1px solid var(--borde); background: #1e1e1e;
-  margin: -16px -18px -16px 0; /* cancela el padding de `.vista` sólo del lado derecho */
+/* `[hidden]` y `.terminal-flotante` empatan en especificidad (0,1,0): sin
+   esta regla, la que declara `display: flex` gana por venir después en la
+   hoja y el atributo `hidden` deja de esconder nada — pasaba lo mismo con
+   `.indicador-terminal` más abajo. */
+.terminal-flotante[hidden], .indicador-terminal[hidden] { display: none; }
+.terminal-flotante__resizer {
+  flex: 0 0 5px; width: 5px; cursor: col-resize; background: #000;
 }
-.agente-layout__resizer {
-  flex: 0 0 5px; width: 5px; cursor: col-resize;
-  background: var(--borde); position: relative;
+.terminal-flotante__resizer:hover, .terminal-flotante__resizer:active { background: var(--azul); }
+.terminal-flotante__columna {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
 }
-.agente-layout__resizer:hover, .agente-layout__resizer:active {
-  background: var(--azul);
+.terminal-flotante__cabecera {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 13px; background: #252526; border-bottom: 1px solid #333;
+  color: #bbb; font-size: 11px; letter-spacing: .04em;
 }
-.agente-terminal__cabecera {
-  flex: 0 0 auto; padding: 9px 13px; background: #252526;
-  border-bottom: 1px solid #333; color: #bbb;
-  font-size: 11px; letter-spacing: .04em;
-}
-.agente-terminal__cuerpo {
+.terminal-flotante__titulo { text-transform: uppercase; }
+.terminal-flotante__cuerpo {
   flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px;
-}
-.agente-terminal__vacio {
-  color: #888; font-size: 12px; line-height: 1.6; padding: 4px;
 }
 /* El panel es oscuro a propósito (como cualquier terminal); los textos de
    estado que comparte con el resto de la app (`.campo__ayuda`, `.aviso`)
    vienen pensados para fondo claro y quedan ilegibles acá sin este override. */
-.agente-terminal__cuerpo .campo__ayuda { color: #bbb; }
-.agente-terminal__cuerpo .aviso { background: #2d2418; border-color: #4a3a1a; color: #e0b34d; }
-.agente-terminal__cuerpo .btn { background: #333; border-color: #444; color: #eee; }
-.agente-terminal__cuerpo .btn:hover { background: #3a3a3a; }
+.terminal-flotante__cuerpo .campo__ayuda { color: #bbb; }
+.terminal-flotante__cuerpo .aviso { background: #2d2418; border-color: #4a3a1a; color: #e0b34d; }
+.terminal-flotante__cabecera .btn, .terminal-flotante__cuerpo .btn {
+  background: #333; border-color: #444; color: #eee;
+}
+.terminal-flotante__cabecera .btn:hover, .terminal-flotante__cuerpo .btn:hover { background: #3a3a3a; }
+
+/* ── Indicador de sesión activa, en la barra lateral ─────────────────── */
+
+.indicador-terminal {
+  display: flex; align-items: center; gap: 7px;
+  margin: 4px 8px; padding: 7px 10px; border-radius: 4px;
+  background: var(--lateral-hover); cursor: pointer; font-size: 11.5px;
+  color: var(--lateral-texto);
+}
+.indicador-terminal:hover { background: var(--lateral-sel); }
+.indicador-terminal__punto {
+  width: 7px; height: 7px; border-radius: 50%; background: #34a853;
+  flex: 0 0 7px; animation: parpadeo-indicador 2s ease-in-out infinite;
+}
+@keyframes parpadeo-indicador { 50% { opacity: .35; } }
+.indicador-terminal__texto { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selector {
   width: 100%; font-size: 12.5px; padding: 6px 6px;
   border: 1px solid var(--borde-fuerte); background: var(--fondo); color: var(--texto);

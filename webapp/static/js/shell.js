@@ -21,6 +21,11 @@ export function crearShell(raiz) {
   const cuerpoLateral = h("div", { class: "lateral__cuerpo" });
   const pieLateral = h("div", { class: "lateral__pie", text: "v0.9 · local" });
   const extraLateral = h("div");
+  // A diferencia de `extraLateral`, esta no la vacía `limpiarLateral()`: es el
+  // lugar donde vive el indicador de la terminal del agente (ver
+  // `agent_terminal.js`), que tiene que sobrevivir al cambio de pestaña igual
+  // que la sesión que representa.
+  const indicadorTerminal = h("div", { class: "lateral__indicador" });
 
   // Plegado: la barra queda en una franja del ancho del ícono. La preferencia
   // vive en el navegador porque es de quien opera, no de la instalación, y
@@ -45,6 +50,7 @@ export function crearShell(raiz) {
     rotulo,
     cuerpoLateral,
     extraLateral,
+    indicadorTerminal,
     pieLateral,
   ]);
 
@@ -69,6 +75,7 @@ export function crearShell(raiz) {
     vista,
     cuerpoLateral,
     extraLateral,
+    indicadorTerminal,
 
     /** Marca la pestaña activa. */
     marcarPestana(id) {
