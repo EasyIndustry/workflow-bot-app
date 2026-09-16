@@ -87,9 +87,12 @@ carga.
 - El servidor que levanta "Abrir Bot" queda como ícono en la bandeja
   (`webapp/bandeja.py`). Con `--red` escucha en toda la red local; es lo que
   usan el acceso directo y el wizard.
-- Mientras una fila corre, la columna Log muestra el progreso
-  (`GET /runs/en-vuelo`); es indeterminado hasta que el núcleo exponga un
-  callback por nodo (core#15).
+- Mientras una fila corre, la columna Log muestra el progreso por nodo
+  (`GET /runs/en-vuelo`, con el `on_step` del núcleo desde v0.3.1-beta.1).
+- Una instalación lleva un `AGENTS.md` generado (`webapp/contexto_agente.py`)
+  que le dice al agente qué es esto y que empiece por `describe_installation`;
+  lo que haya que contarle va en Plug ins → Conocimiento → Notas, no en el
+  archivo.
 
 En Windows fallan algunos tests de `backend/tests` que son del núcleo, no de
 la webapp; no son del cambio que estés haciendo.

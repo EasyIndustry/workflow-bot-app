@@ -20,6 +20,22 @@ desarrollo o la PC de un cliente), no sólo con tests.
   filtran las filas de la página ya cargada, sin releer la fuente, porque
   ese estado no está en la API sino en el bot; la nota de la barra lo dice
   cuando hay uno activo. La marca de selección pasó al final de la fila.
+- **Núcleo v0.3.1-beta.1** vendorizado (desde v0.3.0-beta.4): trae core#15
+  (`on_step`: la barra de la columna Log pasa a ser por nodo; `run_with_gate`
+  ya lo pasaba), core#16 (`default_root`/`default_plugins` en el MCP) y
+  core#17 (`describe_installation`, `list_flows`/`get_flow`,
+  `list_runs`/`get_run`/`get_case_log`, `write_resource_item`/
+  `delete_resource_item`, instrucciones que arrancan por la orientación,
+  `extra_tools`/`extra_handlers`/`instructions_extra`).
+- **Manual agéntico.** La app deja `AGENTS.md` (+ `CLAUDE.md` → `@AGENTS.md`)
+  en la carpeta de la instalación y lo regenera al arrancar y al cambiar
+  flujos, plugins o colecciones (`webapp/contexto_agente.py`); contra el
+  repo no se genera. `webapp/mcp_servidor.py` quedó en pasar al núcleo
+  `default_root`, `default_plugins` y lo propio de la app:
+  `describe_installation` enriquecido con `fuentes` y `notas`,
+  `preview_source`, y `write/delete_resource_item` envueltos para
+  regenerar el manual. Plugin local `conocimiento` con la colección `notas`
+  (Plug ins → Conocimiento), que el agente también escribe.
 - **Panel lateral plegable**: « junto a FLOW-BOT lo deja en una franja de
   38px con la marca sola, que lo vuelve a abrir; se recuerda en
   `localStorage` del navegador (`lateral-plegado`).

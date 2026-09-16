@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import db_view, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -68,8 +68,37 @@ router = APIRouter()
 # `connections` entra por `local_plugins` y no por entry point: es un default de
 # **esta** webapp, no algo que un tercero instale u omita — por eso vive bajo
 # `webapp/` y se registra acá, no en `backend/core`. Ver `webapp/connections/plugin.py`.
-LOCAL_PLUGINS = {"connections": "webapp.connections.plugin:PLUGIN"}
+# `conocimiento` igual: las notas para el agente son un default de la app.
+# Tiene que decir lo mismo que `webapp/mcp_servidor.py` (LOCAL_PLUGINS).
+LOCAL_PLUGINS = {
+    "connections": "webapp.connections.plugin:PLUGIN",
+    "conocimiento": "webapp.conocimiento.plugin:PLUGIN",
+}
 _instance = Instance(ROOT, local_plugins=LOCAL_PLUGINS)
+
+
+def _url_app() -> str | None:
+    puerto = os.environ.get("BOT_PORT")
+    return f"http://127.0.0.1:{puerto}" if puerto else None
+
+
+def _regenerar_manual() -> None:
+    """
+    El `AGENTS.md` de la instalación (ver `webapp/contexto_agente.py`). Se
+    rehace acá, en el proceso que ya tiene la instancia abierta, cada vez que
+    cambia lo que resume: al arrancar, al guardar o borrar un flujo, al
+    instalar un plugin, al tocar una colección. Es barato y así el archivo
+    nunca cuenta una instalación que ya no es.
+    """
+    # Contra el repo (desarrollo) no: la raíz es el checkout, que ya tiene su
+    # CLAUDE.md y sus docs para quien desarrolla, y un AGENTS.md que describa
+    # la base de prueba confundiría a ese agente. El manual es de una instalación.
+    if ROOT.resolve() == REPO.resolve():
+        return
+    contexto_agente.regenerar(_instance, ROOT, url_app=_url_app())
+
+
+_regenerar_manual()
 
 # Un solo gate por proceso, igual que la instancia: todos los runs de esta
 # máquina se coordinan entre sí. Ver `webapp/run_gate.py`.
@@ -108,6 +137,7 @@ def _recargar_instancia(modulos: tuple[str, ...] = ()) -> None:
         anterior.db.close()
     except Exception:  # noqa: BLE001 — cerrar lo viejo no puede tumbar lo nuevo
         pass
+    _regenerar_manual()
 
 
 # ── Catálogo y salud ────────────────────────────────────────────────────
@@ -1038,18 +1068,21 @@ class ResourceItem(BaseModel):
 def put_resource_item(plugin: str, resource: str, key: str, body: ResourceItem):
     """Crea o actualiza un item, validado contra el esquema del resource."""
     try:
-        return _store(plugin, resource).write(key, body.item)
+        escrito = _store(plugin, resource).write(key, body.item)
     except ResourceError as exc:
         raise HTTPException(400, str(exc)) from None
+    _regenerar_manual()
+    return escrito
 
 
 @router.delete("/resources/{plugin}/{resource}/{key}")
 def delete_resource_item(plugin: str, resource: str, key: str):
     try:
         _store(plugin, resource).delete(key)
-        return {"ok": True}
     except ResourceError as exc:
         raise HTTPException(404, str(exc)) from None
+    _regenerar_manual()
+    return {"ok": True}
 
 
 # ── Workflows ───────────────────────────────────────────────────────────
@@ -1098,6 +1131,7 @@ def put_workflow(name: str, body: WorkflowBody):
 
     graph, extra = _instance.diagnose(name)
     diagnosticos = list(graph.diagnostics) + extra
+    _regenerar_manual()
     return {
         "workflow": wf.to_dict(),
         "runnable": graph.runnable and not any(d.severity.value == "error" for d in extra),
@@ -1163,6 +1197,7 @@ def delete_workflow(name: str):
             raise HTTPException(404, f'No existe el flujo "{name}"')
     except StoreError as exc:
         raise HTTPException(400, str(exc)) from None
+    _regenerar_manual()
     return {"ok": True}
 
 

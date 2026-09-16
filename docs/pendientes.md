@@ -4,14 +4,17 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
 `estado-del-proyecto.md`.
 
 ## Depende del núcleo
-- **Progreso por nodo** (core#15, `on_step`): hoy la barra de la grilla es
-  indeterminada y `bots.esperar` anota "0/10 · en curso". Cuando llegue, la
-  webapp ya lo consume (`run_with_gate` pasa `on_step` si la firma lo
-  acepta).
-- **MCP con root y plugins por defecto** (core#16): `webapp/mcp_servidor.py`
-  queda en un `main()` que pasa los dos datos.
+- Nada abierto que frene a la webapp: core#15 (`on_step`), #16 (root y
+  plugins por defecto en el MCP) y #17 (tools de orientación) llegaron en
+  v0.3.1-beta.1. Los issues quedan abiertos hasta verificarlos en la QA y
+  cerrarlos desde allá.
 
 ## Webapp
+- `BOT_ROOT` y `BOT_PORT` en el entorno aparecen como settings fantasma
+  `ROOT` y `PORT` en `effective_config` (el núcleo lee `BOT_<CLAVE>` como
+  override de un setting). Se vio en `describe_installation` desde la QA.
+  Renombrar las variables de la webapp a otro prefijo, y la receta MCP con
+  ellas.
 - Plantilla "otro Bot" al crear un Source: hoy hay que escribir la URL
   `http://<hijo>/api/core/runs` y el campo clave `run_id` a mano.
 - Login a Codex y Antigravity desde la terminal embebida sin probar en

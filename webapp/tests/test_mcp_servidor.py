@@ -1,7 +1,8 @@
 """
-`webapp.mcp_servidor`: el MCP del núcleo con `root` y los plugins de la app
-puestos por defecto. Sin esto, desde una instalación `check_flow` decía que
-`connections.llamar` no existía y `root` caía en `backend/`.
+`webapp.mcp_servidor`: el MCP del núcleo con la instalación y los plugins de
+la app por defecto, más lo que sólo esta app conoce (fuentes, notas,
+previsualizar una fuente). Lo que el núcleo ya hace (core#16, #17) no se
+vuelve a probar acá: se prueba que se le pasa bien y que los extras encajan.
 """
 
 from __future__ import annotations
@@ -16,36 +17,75 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 pytest.importorskip("mcp")
 
 from webapp import mcp_servidor  # noqa: E402
+from backend.mcp import server as nucleo  # noqa: E402
 
-RAIZ = r"C:\instalacion"
-PLUGINS = {"connections": r"C:\programa\webapp\connections"}
-
-
-def test_pone_root_y_plugins_si_la_tool_los_acepta():
-    args = mcp_servidor.completar("check_flow", {"flow": "x"}, root=RAIZ, plugins=PLUGINS)
-    assert args == {"flow": "x", "root": RAIZ, "plugins": PLUGINS}
+# Rutas reales: las tools del núcleo van por subproceso y cargan los plugins desde disco.
+PLUGINS = mcp_servidor.PLUGINS_DE_LA_APP
 
 
-def test_lo_que_manda_el_agente_gana():
-    propios = {"root": r"D:\otra", "plugins": {"connections": r"D:\mia", "extra": r"D:\e.py"}}
-    args = mcp_servidor.completar("check_flow", dict(propios), root=RAIZ, plugins=PLUGINS)
-    assert args["root"] == r"D:\otra"
-    assert args["plugins"] == {"connections": r"D:\mia", "extra": r"D:\e.py"}
+@pytest.fixture
+def extras(tmp_path):
+    for carpeta in ("data", "plugins", "workspace"):
+        (tmp_path / carpeta).mkdir()
+    e = mcp_servidor.Extras(str(tmp_path))
+    yield e
+    if e._instance is not None:
+        e._instance.close()
 
 
-def test_root_vacio_cuenta_como_no_pasado():
-    args = mcp_servidor.completar("list_tools", {"root": ""}, root=RAIZ, plugins=PLUGINS)
-    assert args["root"] == RAIZ
+def _llamar(extras, nombre, args=None):
+    """Como lo hace el servidor: con los defaults del núcleo puestos y despachado por `call_tool`."""
+    esquemas = {t.name: t.input_schema for t in [*nucleo.TOOLS, *mcp_servidor.EXTRA_TOOLS]}
+    argumentos = nucleo.con_defaults(args, esquemas.get(nombre, {}), root=extras.root, plugins=PLUGINS)
+    return nucleo.call_tool(nombre, argumentos, handlers={**nucleo.HANDLERS, **extras.handlers()})
 
 
-def test_tool_sin_esos_params_queda_igual():
-    # list_ports no toma ni root ni plugins: agregárselos sería "argumentos
-    # inválidos" del lado del núcleo.
-    assert mcp_servidor.completar("list_ports", None, root=RAIZ, plugins=PLUGINS) == {}
-    assert mcp_servidor.completar("no_existe", {"a": 1}, root=RAIZ, plugins=PLUGINS) == {"a": 1}
+def test_el_servidor_lleva_los_extras_y_las_instrucciones(tmp_path):
+    servidor = mcp_servidor.build_server(str(tmp_path), PLUGINS)
+    assert "preview_source" in servidor.instructions
+    assert "describe_installation" in servidor.instructions  # las del núcleo, que arrancan por la orientación
+    assert "data/bot.db" in servidor.instructions
 
 
-def test_los_plugins_de_la_app_son_los_que_carga_la_webapp():
-    # Misma carpeta que webapp/server.py registra como plugin local.
-    ruta = pathlib.Path(mcp_servidor.PLUGINS_DE_LA_APP["connections"])
-    assert ruta.name == "connections" and (ruta / "plugin.py").is_file()
+def test_los_extras_pisan_solo_lo_que_deben():
+    propios = set(mcp_servidor.Extras("x").handlers())
+    del_nucleo = {t.name for t in nucleo.TOOLS}
+    # describe/write/delete se envuelven (mismo nombre, mismo esquema); preview_source es nueva.
+    assert propios & del_nucleo == {"describe_installation", "write_resource_item", "delete_resource_item"}
+    assert {t.name for t in mcp_servidor.EXTRA_TOOLS} == {"preview_source"}
+    assert not ({t.name for t in mcp_servidor.EXTRA_TOOLS} & del_nucleo)
+
+
+def test_describe_trae_fuentes_y_notas_ademas_de_lo_del_nucleo(extras):
+    definicion = extras.instance.resource_definition("conocimiento", "notas")
+    extras.instance.resource_store("conocimiento", definicion).write("QA casos", {
+        "tema": "QA casos", "texto": "Bandeja de prueba.", "origen": "agente",
+    })
+    r = _llamar(extras, "describe_installation")
+    assert not r.is_error
+    d = r.structured_content
+    assert {"flows", "plugins", "actors", "boot", "runs"} <= set(d)  # lo del núcleo
+    assert d["fuentes"] == [] and d["notas"][0]["tema"] == "QA casos"  # lo de la app
+    assert "QA casos" in d["resumen"]
+
+
+def test_escribir_una_nota_deja_el_manual(extras):
+    r = _llamar(extras, "write_resource_item", {
+        "plugin": "conocimiento", "resource": "notas", "key": "QA casos",
+        "item": {"tema": "QA casos", "texto": "Bandeja de prueba.", "origen": "agente"},
+    })
+    assert not r.is_error, r.content[0].text
+    assert (pathlib.Path(extras.root) / "AGENTS.md").is_file()
+    r = _llamar(extras, "delete_resource_item", {"plugin": "conocimiento", "resource": "notas", "key": "QA casos"})
+    assert not r.is_error, r.content[0].text
+
+
+def test_preview_de_una_fuente_inexistente_vuelve_como_err_del_tool(extras):
+    r = _llamar(extras, "preview_source", {"name": "no-hay"})
+    assert not r.is_error  # el ToolResult dice err; el transporte no falla
+    assert r.structured_content["result"]["status"] == "err"
+
+
+def test_argumentos_que_no_encajan(extras):
+    r = _llamar(extras, "preview_source", {"otro": 1})
+    assert r.is_error and "argumentos inválidos" in r.content[0].text

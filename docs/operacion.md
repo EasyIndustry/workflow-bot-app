@@ -18,6 +18,11 @@
    app es privado (el público no lo necesita).
 5. Agente → **Instalar** el CLI que se use; **Iniciar sesión** deja el
    `.mcp.json` (Claude Code) o `.codex/config.toml` en la instalación.
+   En la carpeta de la instalación ya hay un `AGENTS.md` (y un `CLAUDE.md`
+   que lo importa) que la app regenera sola: le dice al agente qué es esto,
+   las reglas y que empiece por la tool `describe_installation`. No se
+   edita a mano; lo que haya que contarle al agente va en Plug ins →
+   Conocimiento → Notas.
 
 ## Actualizar
 
