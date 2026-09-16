@@ -27,7 +27,9 @@ Es la misma frontera que el contrato ya dibuja entre `Tool` y `Action`.
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 from typing import Any, Callable
 
 import mcp.types as types
@@ -35,6 +37,17 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from . import operations
+
+# Con qué instalación y qué plugins locales arranca el servidor (issue #16).
+#
+# `MCP_` y no `BOT_`, aunque el issue lo proponga así: `BOT_<CLAVE>` ya es el
+# prefijo con el que se pisa un **setting** de un plugin, y cualquier `BOT_*`
+# del entorno entra a `effective_config()`. Un `BOT_ROOT` quedaría además como
+# un setting fantasma llamado "ROOT" en la configuración de la instalación.
+# Es la misma disciplina de nombres que `boot.py` ya documenta para no
+# confundir `BOT_`, `BOOTSTRAP_` y `BOTENV_`.
+ENV_ROOT = "MCP_ROOT"
+ENV_PLUGINS = "MCP_PLUGINS"
 
 # Esquema compartido: cómo se pasan plugins locales a casi toda operación.
 _PLUGINS = {
@@ -66,6 +79,15 @@ def _tool(name: str, description: str, properties: dict, required: list[str] | N
 
 
 TOOLS: list[types.Tool] = [
+    _tool(
+        "describe_installation",
+        "La foto de la instalación en una llamada: flujos guardados, plugins "
+        "instalados, actores y sus permisos, configuración efectiva, ports "
+        "disponibles y un resumen de runs recientes. Llamar esto PRIMERO "
+        "cuando no se conoce la instalación: dice qué hay antes de elegir "
+        "qué otro tool usar. Incluye un campo `resumen` en texto plano.",
+        {"plugins": _PLUGINS, "root": _ROOT},
+    ),
     _tool(
         "list_tools",
         "El catálogo de tools disponibles, con sus params tipados y sus outputs. "
@@ -258,6 +280,75 @@ TOOLS: list[types.Tool] = [
         {"root": _ROOT},
     ),
     _tool(
+        "list_flows",
+        "Los flujos guardados: nombre, carpeta, estado y descripción. Para el "
+        "contenido y los diagnósticos de uno puntual, usar get_flow.",
+        {"root": _ROOT},
+    ),
+    _tool(
+        "get_flow",
+        "Un flujo guardado, con su contenido y sus diagnósticos ya cruzados "
+        "contra lo instalado -- sin tener que adivinar en qué ruta vive el "
+        ".mmd.",
+        {"name": {"type": "string"}, "root": _ROOT},
+        ["name"],
+    ),
+    _tool(
+        "list_runs",
+        "Runs ya ejecutados, resumidos: qué corrió, con qué status y cuándo. "
+        "Es el primer paso para responder \"por qué falló\"; para el detalle "
+        "nodo por nodo, usar get_run.",
+        {
+            "case_id": {"type": "string", "description": "Filtra por caso."},
+            "source": {"type": "string", "description": "Filtra por origen del run."},
+            "only_failed": {"type": "boolean"},
+            "limit": {"type": "integer"},
+            "root": _ROOT,
+        },
+    ),
+    _tool(
+        "get_run",
+        "La traza completa de un run ya ejecutado: cada nodo, sus params "
+        "resueltos y su resultado.",
+        {"run_id": {"type": "string"}, "root": _ROOT},
+        ["run_id"],
+    ),
+    _tool(
+        "get_case_log",
+        "Todo el registro de una fila, cruzando todos sus runs. Responde "
+        "\"por qué falló\" cuando list_runs/get_run no alcanzan porque el "
+        "caso pasó por varios runs (reintentos, reprocesos).",
+        {"case_id": {"type": "string"}, "limit": {"type": "integer"}, "root": _ROOT},
+        ["case_id"],
+    ),
+    _tool(
+        "write_resource_item",
+        "Escribe (crea o reemplaza) un item de una colección de un plugin. "
+        "Los campos declarados 'secret' nunca vuelven en claro en la "
+        "respuesta, ni siquiera al toque de guardarlos.",
+        {
+            "plugin": {"type": "string"},
+            "resource": {"type": "string", "description": "Nombre de la colección."},
+            "key": {"type": "string"},
+            "item": {"type": "object", "additionalProperties": True},
+            "plugins": _PLUGINS,
+            "root": _ROOT,
+        },
+        ["plugin", "resource", "key", "item"],
+    ),
+    _tool(
+        "delete_resource_item",
+        "Borra un item de una colección de un plugin.",
+        {
+            "plugin": {"type": "string"},
+            "resource": {"type": "string"},
+            "key": {"type": "string"},
+            "plugins": _PLUGINS,
+            "root": _ROOT,
+        },
+        ["plugin", "resource", "key"],
+    ),
+    _tool(
         "plugin_template",
         "El esqueleto de un plugin nuevo: manifest, un tool y los ports ya "
         "declarados. Se genera desde el contrato, así que no queda desactualizado.",
@@ -277,6 +368,7 @@ TOOLS: list[types.Tool] = [
 ]
 
 HANDLERS: dict[str, Callable[..., dict]] = {
+    "describe_installation": operations.describe_installation,
     "list_tools": operations.list_tools,
     "list_plugins": operations.list_plugins,
     "list_resource_items": operations.list_resource_items,
@@ -289,13 +381,30 @@ HANDLERS: dict[str, Callable[..., dict]] = {
     "run_action": operations.run_action,
     "run_flow": operations.run_flow,
     "list_users": operations.list_users,
+    "list_flows": operations.list_flows,
+    "get_flow": operations.get_flow,
+    "list_runs": operations.list_runs,
+    "get_run": operations.get_run,
+    "get_case_log": operations.get_case_log,
+    "write_resource_item": operations.write_resource_item,
+    "delete_resource_item": operations.delete_resource_item,
     "plugin_template": operations.plugin_template,
 }
 
 INSTRUCCIONES = """\
 Motor de workflows: se escriben flujos en Mermaid y el núcleo los ejecuta.
 
-Bucle de trabajo:
+Por dónde empezar cuando la orden es ambigua ("fijate por qué falla la fila
+X", "armame un flujo que haga Y") y no se conoce esta instalación:
+
+  - No se sabe qué hay acá            -> describe_installation
+  - Por qué algo falló                -> list_runs / get_run / get_case_log
+  - Qué flujos existen, o uno puntual -> list_flows / get_flow
+  - Completar una colección de un plugin (una conexión, una fuente, una nota)
+                                       -> write_resource_item / delete_resource_item
+  - Escribir o corregir un flujo      -> el bucle de abajo
+
+Bucle de trabajo (autoría de un flujo o un plugin):
 
   1. list_tools        qué tools existen ya
   2. escribir el .mmd
@@ -382,7 +491,9 @@ contrato define como disparable por una persona.\
 """
 
 
-def call_tool(name: str, arguments: dict | None = None) -> types.CallToolResult:
+def call_tool(
+    name: str, arguments: dict | None = None, *, handlers: dict[str, Callable[..., dict]] | None = None
+) -> types.CallToolResult:
     """
     Despacha una tool y envuelve el resultado. Síncrono y sin protocolo.
 
@@ -390,13 +501,18 @@ def call_tool(name: str, arguments: dict | None = None) -> types.CallToolResult:
     decisión de este archivo —qué hacer cuando algo falla— y así se puede
     probar sin levantar un servidor ni hablar stdio.
 
+    `handlers` por defecto es el diccionario fijo de este módulo; un
+    envoltorio (issue #17) puede pasar el suyo propio, mergeado con éste, para
+    sumar tools sin reimplementar el despacho.
+
     **Nada puede tumbar el servidor.** Todo fallo vuelve como resultado con
     `is_error`, no como excepción de protocolo: así quien llama lo lee y puede
     corregir, en vez de recibir un error de transporte que no dice nada.
     """
-    handler = HANDLERS.get(name)
+    handlers = HANDLERS if handlers is None else handlers
+    handler = handlers.get(name)
     if handler is None:
-        disponibles = ", ".join(sorted(HANDLERS))
+        disponibles = ", ".join(sorted(handlers))
         return _error(f"Tool desconocida: {name}. Disponibles: {disponibles}")
 
     try:
@@ -416,20 +532,92 @@ def call_tool(name: str, arguments: dict | None = None) -> types.CallToolResult:
     )
 
 
-def build_server() -> Server:
-    """El servidor, con sus handlers cableados. Separado de `main` para testear."""
+def con_defaults(
+    arguments: dict | None,
+    esquema: dict,
+    *,
+    root: str | None = None,
+    plugins: dict[str, str] | None = None,
+) -> dict:
+    """
+    Completa `root` y `plugins` en una llamada, si la tool los acepta y quien
+    llamó no los mandó.
+
+    Es lo que le permite a una instalación arrancar su servidor apuntando a sí
+    misma (issue #16): sin esto, cada tool cae en `backend/` —el checkout— y
+    no ve los plugins que la app registró en memoria, así que un `check_flow`
+    de un flujo perfectamente válido responde "no hay ningún tool X
+    instalado" y el agente sale a arreglar lo que no está roto.
+
+    **Lo que manda el agente gana**, siempre: así puede apuntar a otra
+    instalación o probar su propia versión de un plugin sin instalarla. Con
+    `plugins` no es uno u otro sino un merge, con los del agente arriba: el
+    servidor declara los de la instalación —que el agente no tiene forma de
+    conocer— y el agente igual puede sumar el suyo.
+
+    Qué acepta cada tool sale de su esquema declarado y no de la firma de
+    Python: el esquema es el contrato que se negocia al conectar, y es lo que
+    quien llama ve.
+    """
+    completos = dict(arguments or {})
+    propiedades = esquema.get("properties", {})
+
+    if root and "root" in propiedades and not completos.get("root"):
+        completos["root"] = root
+    if plugins and "plugins" in propiedades:
+        completos["plugins"] = {**plugins, **(completos.get("plugins") or {})}
+    return completos
+
+
+def build_server(
+    *,
+    default_root: str | None = None,
+    default_plugins: dict[str, str] | None = None,
+    instructions_extra: str = "",
+    extra_tools: list[types.Tool] | None = None,
+    extra_handlers: dict[str, Callable[..., dict]] | None = None,
+) -> Server:
+    """
+    El servidor, con sus handlers cableados. Separado de `main` para testear.
+
+    `default_root`/`default_plugins` son con qué instalación y qué plugins
+    locales arranca este servidor (issue #16): se completan en cada llamada
+    que los acepte, y lo que mande el agente gana. Incluye `run_flow`, cuyo
+    `root` no tiene default justamente para que nadie ejecute contra
+    producción sin nombrarla -- nombrarla al arrancar el servidor es
+    exactamente eso, un acto explícito de quien lo levanta.
+
+    `instructions_extra`/`extra_tools`/`extra_handlers` son la puerta de
+    entrada para un envoltorio de una instalación concreta (issue #17, ej. la
+    webapp) que necesita sumar tools propias -- colecciones que sólo esa
+    instalación conoce-- sin reimplementar `on_list_tools`/`on_call_tool` a
+    mano, que es el modo de falla que este archivo existe para evitar: dos
+    caminos al mismo servidor esperando divergir.
+
+    Sin argumentos, el comportamiento es el de siempre.
+    """
+    tools = [*TOOLS, *(extra_tools or [])]
+    handlers = {**HANDLERS, **(extra_handlers or {})}
+    esquemas = {t.name: t.input_schema for t in tools}
+    instrucciones = INSTRUCCIONES + (f"\n\n{instructions_extra}" if instructions_extra else "")
 
     async def on_list_tools(_ctx, _params) -> types.ListToolsResult:
-        return types.ListToolsResult(tools=TOOLS)
+        return types.ListToolsResult(tools=tools)
 
     async def on_call_tool(_ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
-        return call_tool(params.name, params.arguments)
+        argumentos = con_defaults(
+            params.arguments,
+            esquemas.get(params.name, {}),
+            root=default_root,
+            plugins=default_plugins,
+        )
+        return call_tool(params.name, argumentos, handlers=handlers)
 
     return Server(
         "bot-workflows",
         version="0.1.0",
         title="Motor de workflows",
-        instructions=INSTRUCCIONES,
+        instructions=instrucciones,
         on_list_tools=on_list_tools,
         on_call_tool=on_call_tool,
     )
@@ -446,17 +634,89 @@ def _json(valor: Any) -> str:
     return json.dumps(valor, indent=2, ensure_ascii=False)
 
 
-async def serve() -> None:
-    servidor = build_server()
+async def serve(
+    *,
+    default_root: str | None = None,
+    default_plugins: dict[str, str] | None = None,
+    instructions_extra: str = "",
+    extra_tools: list[types.Tool] | None = None,
+    extra_handlers: dict[str, Callable[..., dict]] | None = None,
+) -> None:
+    """El servidor sobre stdio. Los argumentos son los mismos de `build_server`."""
+    servidor = build_server(
+        default_root=default_root,
+        default_plugins=default_plugins,
+        instructions_extra=instructions_extra,
+        extra_tools=extra_tools,
+        extra_handlers=extra_handlers,
+    )
     async with stdio_server() as (lectura, escritura):
         await servidor.run(lectura, escritura, servidor.create_initialization_options())
 
 
-def main() -> int:
+def parse_plugins(especificacion: str) -> dict[str, str]:
+    """`"connections=/ruta;otro=/ruta2"` -> `{"connections": "/ruta", ...}`."""
+    plugins: dict[str, str] = {}
+    for parte in (especificacion or "").split(";"):
+        nombre, _, ruta = parte.partition("=")
+        if nombre.strip() and ruta.strip():
+            plugins[nombre.strip()] = ruta.strip()
+    return plugins
+
+
+def parse_args(argv: list[str] | None = None) -> tuple[str | None, dict[str, str]]:
+    """
+    Con qué instalación y qué plugins arranca el servidor: flags, o entorno.
+
+    Los dos caminos existen porque los dos aparecen: una app que lanza el
+    servidor como subproceso arma el argv, y un cliente MCP que sólo deja
+    configurar el comando y el entorno usa las variables.
+    """
+    parser = argparse.ArgumentParser(
+        prog="python -m backend.mcp",
+        description="Servidor MCP del motor de workflows.",
+    )
+    parser.add_argument(
+        "--root",
+        default=os.environ.get(ENV_ROOT) or None,
+        help=f"Instalación sobre la que operan las tools (o {ENV_ROOT}).",
+    )
+    parser.add_argument(
+        "--plugin",
+        dest="plugins",
+        action="append",
+        metavar="NOMBRE=RUTA",
+        help=(
+            "Plugin local que el servidor conoce de entrada. Repetible. "
+            f"También {ENV_PLUGINS}=\"nombre=ruta;otro=ruta\"."
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    plugins = parse_plugins(os.environ.get(ENV_PLUGINS, ""))
+    for especificacion in args.plugins or []:
+        plugins.update(parse_plugins(especificacion))
+    return args.root, plugins
+
+
+def main(argv: list[str] | None = None) -> int:
+    import functools
+
     import anyio
 
-    anyio.run(serve)
+    root, plugins = parse_args(argv)
+    anyio.run(functools.partial(serve, default_root=root, default_plugins=plugins))
     return 0
 
 
-__all__ = ["HANDLERS", "TOOLS", "build_server", "call_tool", "main", "serve"]
+__all__ = [
+    "HANDLERS",
+    "TOOLS",
+    "build_server",
+    "call_tool",
+    "con_defaults",
+    "main",
+    "parse_args",
+    "parse_plugins",
+    "serve",
+]
