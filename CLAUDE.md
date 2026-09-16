@@ -17,6 +17,12 @@ agente por MCP puede escribir flujos y plugins.
 El tag vendorizado está en `core-release.json`. Los issues del núcleo se abren
 en `workflow-bot-core`; los de la app, acá.
 
+**Antes de tocar nada, leer [`docs/README.md`](docs/README.md)**: el índice
+de la documentación del proyecto (estado por fecha, arquitectura, operación,
+decisiones y pendientes). Cada cambio que altere qué existe o cómo se opera
+actualiza el archivo que corresponde y agrega una línea fechada en
+`docs/estado-del-proyecto.md`.
+
 ## Arrancar
 
 ```bash
