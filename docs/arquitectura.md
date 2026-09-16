@@ -34,6 +34,7 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `webapp/run_gate.py` | lector-escritor para runs concurrentes; `run_with_gate` es el único punto por donde arranca un run |
 | `webapp/runs_en_vuelo.py` | qué corre ahora (para la barra de la grilla) y los resultados por ticket de `POST /runs` |
 | `webapp/connections/` | plugin local: Sources (la grilla) y Actions (una llamada HTTP guardada como nodo) |
+| `webapp/librerias.py` | las librerías Python que pide un plugin en su `requirements.txt` (versión y hash fijos, sólo wheels), instaladas con pip en el runtime del programa antes de validar el plugin; la versión del runtime (`runtime-release.json`, la deja el `.exe`) contra la que cura el catálogo |
 | `webapp/conocimiento/` | plugin local: la colección `notas`, lo que un agente tiene que saber de la instalación y no está en ningún otro lado |
 | `webapp/contexto_agente.py` | el manual agéntico: `describir` (el `describe_installation` del núcleo más fuentes y notas) y el `AGENTS.md` que se deja en la instalación al arrancar y al cambiar flujos, plugins o colecciones |
 | `webapp/plugin_install.py` · `plugin_catalog.py` | instalar un plugin desde archivo o desde el catálogo en GitHub, validando en otro proceso |

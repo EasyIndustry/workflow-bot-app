@@ -58,6 +58,13 @@ carga.
   acciones se dibujan desde el manifest (`GET /tools`). Si hace falta tocar
   `plugins.js` para que un plugin se vea bien, algo se declaró en el lugar
   equivocado.
+- **Un plugin pide ports para I/O y declara librerías para cómputo.** Lo que
+  toca red, disco, procesos o ventanas va por un port del núcleo. numpy o
+  trimesh van en un `requirements.txt` junto al `__init__.py`, con versión y
+  hash fijos: la app los instala con pip en el runtime del programa, sólo
+  desde wheels, antes de validar el plugin (`webapp/librerias.py`). El
+  `.exe` publica `runtime-release.json` y el catálogo cura contra esa
+  versión.
 - **Los plugins son genéricos**, con nombre de herramienta y nunca de un
   cliente ni de un sistema externo: una llamada HTTP guardada es una Action
   de `connections`, no un plugin. Los plugins no viven en este repo: el

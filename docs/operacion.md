@@ -24,6 +24,22 @@
    edita a mano; lo que haya que contarle al agente va en Plug ins →
    Conocimiento → Notas.
 
+## Plugins con librerías
+
+Un plugin puede pedir librerías Python de cómputo (numpy, trimesh) en un
+`requirements.txt` junto a su `__init__.py`, con versión y hash fijos. Al
+instalarlo, la app las instala con pip en el runtime del programa
+(`%LOCALAPPDATA%\Programs\Bot\runtime`, compartido por todas las instalaciones
+de esa PC), sólo desde wheels, y si algo falta no copia el plugin. Plug ins →
+**Librerías** muestra qué pide cada plugin, qué hay, y la versión del runtime
+(`runtime-release.json`, publicado con cada release), que es contra la que el
+catálogo cura (`compatible_runtime` en la ficha del plugin).
+
+Sin internet: bajar desde una PC con red el zip de wheels que publica el
+catálogo para ese plugin y esa versión de runtime, copiar los `.whl` a la
+carpeta `wheels/` de la instalación (al lado de `data/`), y al instalar
+tildar "sin internet". Con eso pip no sale a PyPI.
+
 ## Actualizar
 
 Config → Actualizaciones. Dos bloques, Núcleo y Web app, cada uno con su
@@ -48,7 +64,9 @@ gh release create vX.Y.Z --prerelease --target main --title vX.Y.Z --notes "..."
 ```
 
 El workflow *Instalador de Windows* construye `BotSetup-X.Y.Z.exe` y lo
-cuelga del release (unos 4 minutos). Config → Actualizaciones de cualquier
+cuelga del release junto con `runtime-release.json`, la versión exacta de
+Python y de las librerías base del runtime, que el catálogo de plugins usa
+para curar (unos 4 minutos). Config → Actualizaciones de cualquier
 instalación lista ese tag; con "incluir releases de prueba" si es
 pre-release. Para rehacer el `.exe` de un tag: `gh workflow run "Instalador
 de Windows" -f tag=vX.Y.Z`.

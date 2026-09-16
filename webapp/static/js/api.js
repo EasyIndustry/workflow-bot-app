@@ -88,13 +88,14 @@ export const api = {
   // Plugins: instalar es dejar el archivo en plugins_dir, validado antes en
   // otro proceso, y recargar la instancia. Ver webapp/plugin_install.py.
   infoInstalacion: () => pedir("/plugins/install-info"),
-  instalarPluginPorRuta: (path, { name, replace = false } = {}) =>
-    pedir("/plugins/install/path", { metodo: "POST", cuerpo: { path, name: name || null, replace } }),
-  instalarPluginArchivo: (archivo, { name, replace = false } = {}) => {
+  instalarPluginPorRuta: (path, { name, replace = false, offline = false } = {}) =>
+    pedir("/plugins/install/path", { metodo: "POST", cuerpo: { path, name: name || null, replace, offline } }),
+  instalarPluginArchivo: (archivo, { name, replace = false, offline = false } = {}) => {
     const form = new FormData();
     form.append("file", archivo, archivo.name);
     if (name) form.append("name", name);
     form.append("replace", replace ? "true" : "false");
+    form.append("offline", offline ? "true" : "false");
     return pedir("/plugins/install/upload", { metodo: "POST", form });
   },
   desinstalarPlugin: (nombre) => pedir(`/plugins/${codificar(nombre)}`, { metodo: "DELETE" }),
@@ -105,7 +106,13 @@ export const api = {
   catalogoPlugins: () => pedir("/plugins/catalog"),
   configurarCatalogoPlugins: (repo, branch) =>
     pedir("/plugins/catalog/config", { metodo: "PUT", cuerpo: { repo, branch } }),
-  instalarDesdeCatalogo: (name) => pedir("/plugins/catalog/install", { metodo: "POST", cuerpo: { name } }),
+  instalarDesdeCatalogo: (name, { offline = false } = {}) =>
+    pedir("/plugins/catalog/install", { metodo: "POST", cuerpo: { name, offline } }),
+  // Librerías Python que piden los plugins (requirements.txt) y el runtime
+  // donde se instalan. Ver webapp/librerias.py.
+  libreriasDePlugins: () => pedir("/plugins/libraries"),
+  instalarLibreriasDe: (name, { offline = false } = {}) =>
+    pedir("/plugins/libraries/install", { metodo: "POST", cuerpo: { name, offline } }),
 
   // Actualizaciones del núcleo (backend/) y de la web app (webapp/): releases
   // de GitHub, con el repo de cada componente guardado por instalación. Ver

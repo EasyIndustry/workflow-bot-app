@@ -113,7 +113,111 @@ function dibujarLateral(plugins, elegido) {
         : "Esta instalación no declara plugins_dir en boot.env",
       onClick: () => abrirInstalar(),
     }, [h("span", { style: { fontSize: "13px", lineHeight: "1" }, text: "+" }), h("span", { text: "Instalar un archivo" })]),
+    h("div", {
+      class: "item item--dashed",
+      title: "Las librerías Python que piden los plugins, el runtime donde se instalan y su versión",
+      onClick: () => abrirLibrerias(),
+    }, [h("span", { style: { fontSize: "13px", lineHeight: "1" }, text: "≡" }), h("span", { text: "Librerías" })]),
   );
+}
+
+// ── Librerías ───────────────────────────────────────────────────────────
+//
+// Un plugin puede pedir librerías Python para cómputo (numpy, trimesh) en su
+// requirements.txt; la app las instala en el runtime del programa, sólo
+// desde wheels con versión y hash fijos (webapp/librerias.py). Esta pantalla
+// muestra qué pide cada plugin instalado, qué hay, y la versión del runtime
+// contra la que cura el catálogo. Nada acá conoce un plugin por nombre.
+
+async function abrirLibrerias() {
+  const cuerpo = h("div", {}, [h("div", { class: "cargando", style: { padding: "22px" }, text: "Mirando el runtime…" })]);
+  const { cerrar } = abrirModal({
+    titulo: "Librerías",
+    sub: "Lo que cada plugin declara en su requirements.txt y lo que hay en el runtime. Sólo wheels con versión y hash fijos; sin sdist.",
+    cuerpo,
+    acciones: [h("button", { class: "btn", text: "Cerrar", onClick: () => cerrar() })],
+  });
+
+  async function cargar() {
+    let datos;
+    try {
+      datos = await api.libreriasDePlugins();
+    } catch (e) {
+      poner(cuerpo, aviso("error", "No se pudo leer el runtime", e.message));
+      return;
+    }
+    poner(cuerpo, ...pintarLibrerias(datos, cargar));
+  }
+  cargar();
+}
+
+function pintarLibrerias(datos, recargar) {
+  const rt = datos.runtime || {};
+  const partes = [
+    h("div", { style: { padding: "12px 16px 8px", fontSize: "12.5px", lineHeight: "1.6" } }, [
+      h("div", {}, [
+        h("span", { style: { color: "var(--texto-3)" }, text: "Runtime: " }),
+        h("span", { class: "mono", text: `Python ${rt.python || "?"}` }),
+        rt.tag
+          ? h("span", { class: "mono", style: { color: "var(--texto-3)" }, text: ` · release ${rt.tag}` })
+          : h("span", { style: { color: "var(--texto-3)" }, text: " · en vivo (sin runtime-release.json: desarrollo o programa anterior)" }),
+      ]),
+      h("div", { class: "mono", style: { fontSize: "11px", color: "var(--texto-4)", overflowWrap: "anywhere" }, text: rt.executable || "" }),
+      h("div", { style: { marginTop: "6px", color: "var(--texto-3)" } }, [
+        "Sin internet: copiá las wheels a ",
+        h("span", { class: "mono", text: datos.wheels_dir }),
+        datos.wheels.length ? ` (hay ${datos.wheels.length}).` : " (vacía).",
+      ]),
+    ]),
+  ];
+
+  if (!datos.plugins.length) {
+    partes.push(h("div", { class: "tabla__vacia", text: "Ningún plugin instalado declara librerías." }));
+    return partes;
+  }
+  for (const p of datos.plugins) partes.push(filaLibrerias(p, recargar));
+  return partes;
+}
+
+function filaLibrerias(p, recargar) {
+  const faltan = (p.requirements || []).filter((r) => !r.ok);
+  const detalle = h("div", { style: { fontSize: "11.5px", color: "var(--rojo)", display: "none", whiteSpace: "pre-wrap" } });
+  const chkOffline = h("input", { type: "checkbox" });
+  const boton = faltan.length
+    ? h("button", { class: "btn btn--chico btn--primario", text: `Instalar ${faltan.length === 1 ? "la que falta" : `las ${faltan.length} que faltan`}` })
+    : null;
+  if (boton) {
+    boton.addEventListener("click", async () => {
+      boton.disabled = true;
+      boton.textContent = "Instalando…";
+      try {
+        await api.instalarLibreriasDe(p.name, { offline: chkOffline.checked });
+        confirmacion = `Se instalaron las librerías de "${p.name}".`;
+        await recargar();
+      } catch (e) {
+        detalle.textContent = [e.message, ...(e.errores || [])].join("\n");
+        detalle.style.display = "";
+        boton.disabled = false;
+        boton.textContent = "Reintentar";
+      }
+    });
+  }
+  const filas = (p.requirements || []).map((r) => h("div", { class: "mono", style: { fontSize: "11.5px", display: "flex", gap: "8px" } }, [
+    h("span", { class: r.ok ? "badge badge--ok" : "badge badge--falta", text: r.ok ? "ok" : (r.installed ? "otra versión" : "falta") }),
+    h("span", { text: `${r.name}==${r.required}` }),
+    r.installed && !r.ok ? h("span", { style: { color: "var(--texto-3)" }, text: `(hay ${r.installed})` }) : null,
+  ]));
+  return h("div", { style: { display: "flex", gap: "12px", alignItems: "flex-start", padding: "9px 16px", borderTop: "1px solid var(--borde)" } }, [
+    h("div", { style: { flex: "1", minWidth: "0" } }, [
+      h("div", { style: { fontWeight: "600", fontSize: "13px", marginBottom: "4px" }, text: p.name }),
+      ...(p.error ? [h("div", { class: "mono", style: { fontSize: "11.5px", color: "var(--rojo)", whiteSpace: "pre-wrap" }, text: p.error.join("\n") })] : filas),
+      detalle,
+    ]),
+    boton ? h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" } }, [
+      boton,
+      h("label", { class: "fila-control", style: { cursor: "pointer", fontSize: "11.5px" } }, [chkOffline, h("span", { text: "sin internet" })]),
+    ]) : null,
+  ]);
 }
 
 // ── Plugins en línea ────────────────────────────────────────────────────
@@ -207,12 +311,15 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
     title: entrada.installable ? `Baja la rama ${datos.branch} e instala ${entrada.path}` : "Entrada de índice sin código: no hay nada que instalar desde acá",
   });
   const detalle = h("div", { style: { fontSize: "11.5px", color: "var(--rojo)", display: "none", whiteSpace: "pre-wrap" } });
+  // Si el plugin trae librerías, "sin internet" las toma sólo de la carpeta
+  // wheels/ (del plugin o de la instalación) en vez de salir a PyPI.
+  const chkOffline = h("input", { type: "checkbox" });
 
   boton.addEventListener("click", async () => {
     boton.disabled = true;
     boton.textContent = "Instalando…";
     try {
-      const r = await api.instalarDesdeCatalogo(entrada.name);
+      const r = await api.instalarDesdeCatalogo(entrada.name, { offline: chkOffline.checked });
       confirmacion = `Se instaló "${r.installed.name}" v${r.installed.plugin.version} desde ${datos.repo} (${datos.branch}).`;
       cerrarModal();
       irA("plugins", r.installed.name);
@@ -233,10 +340,16 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
       ]),
       h("div", { style: { fontSize: "12px", color: "var(--texto-2)", marginTop: "3px" }, text: entrada.description }),
       h("div", { class: "mono", style: { fontSize: "11px", color: "var(--texto-4)", marginTop: "3px" },
-        text: [`ports: ${(entrada.ports || []).join(", ") || "—"}`, entrada.compatible_core ? `core ${entrada.compatible_core}` : "", entrada.path || entrada.source].filter(Boolean).join(" · ") }),
+        text: [`ports: ${(entrada.ports || []).join(", ") || "—"}`, entrada.compatible_core ? `core ${entrada.compatible_core}` : "", entrada.compatible_runtime ? `runtime ${entrada.compatible_runtime}` : "", entrada.path || entrada.source].filter(Boolean).join(" · ") }),
       detalle,
     ]),
-    boton,
+    h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" } }, [
+      boton,
+      entrada.installable
+        ? h("label", { class: "fila-control", style: { cursor: "pointer", fontSize: "11.5px" }, title: "Las librerías del plugin, si pide alguna, sólo desde la carpeta wheels/" },
+            [chkOffline, h("span", { text: "sin internet" })])
+        : null,
+    ]),
   ]);
 }
 
@@ -282,6 +395,7 @@ function abrirInstalar() {
   const campoNombre = crearCampo({ name: "name", type: "str", label: "Nombre",
     doc: "Opcional. Con qué nombre de módulo queda instalado; si no, el del archivo o la carpeta." }, "");
   const chkReemplazar = h("input", { type: "checkbox" });
+  const chkOffline = h("input", { type: "checkbox" });
 
   const filaArchivo = h("div", { class: "campo" }, [
     h("div", { class: "campo__etiqueta" }, [h("div", { class: "campo__nombre", text: "Archivo" })]),
@@ -319,12 +433,19 @@ function abrirInstalar() {
         h("div", { class: "campo__ayuda", text: "Sin esto, instalar un nombre que ya existe falla. Con esto, el anterior se aparta y vuelve si el nuevo no carga." }),
       ]),
     ]),
+    h("div", { class: "campo" }, [
+      h("div", { class: "campo__etiqueta" }, [h("div", { class: "campo__nombre", text: "Librerías" })]),
+      h("div", { class: "campo__control" }, [
+        h("label", { class: "fila-control", style: { cursor: "pointer" } }, [chkOffline, h("span", { style: { fontSize: "12.5px" }, text: "Sin internet: sólo desde la carpeta wheels/" })]),
+        h("div", { class: "campo__ayuda", text: "Si el plugin trae requirements.txt, sus librerías se instalan en el runtime antes de validarlo: sólo wheels con versión y hash fijos. Sin internet, se toman de wheels/ del plugin o de la instalación." }),
+      ]),
+    ]),
   ]);
 
   const botonInstalar = h("button", { class: "btn btn--primario", text: "Instalar" });
   const { cerrar } = abrirModal({
     titulo: "Instalar un plugin",
-    sub: "Un plugin del núcleo no importa librerías: pide ports. Por eso instalar es un archivo, no un pip install.",
+    sub: "Un plugin pide ports para hacer I/O; las librerías de cómputo que declare en requirements.txt se instalan con él.",
     cuerpo,
     izquierda: h("button", { class: "btn", text: "Plantilla para escribir uno", onClick: () => { cerrar(); abrirPlantilla(); } }),
     acciones: [
@@ -334,7 +455,7 @@ function abrirInstalar() {
   });
 
   botonInstalar.addEventListener("click", async () => {
-    const opciones = { name: campoNombre.leer().trim() || undefined, replace: chkReemplazar.checked };
+    const opciones = { name: campoNombre.leer().trim() || undefined, replace: chkReemplazar.checked, offline: chkOffline.checked };
     botonInstalar.disabled = true;
     botonInstalar.textContent = "Validando…";
     try {

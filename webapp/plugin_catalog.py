@@ -186,6 +186,9 @@ def entradas(repo: str, branch: str, abrir=None, token: str | None = None) -> li
             "source": str(datos.get("source") or ""),
             "repo_url": str(datos.get("repo_url") or ""),
             "compatible_core": str(datos.get("compatible_core") or ""),
+            # Contra qué runtime (Python + librerías base del .exe) se curaron sus
+            # librerías, si pide alguna. Ver webapp/librerias.py.
+            "compatible_runtime": str(datos.get("compatible_runtime") or ""),
             "maintainer": str(datos.get("maintainer") or ""),
             "license": str(datos.get("license") or ""),
             # Sin `path` es una entrada del índice público (un paquete de pip):

@@ -6,6 +6,17 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-16
 
+- **Librerías Python para plugins** (decidido con core#20 y
+  workflow-bot-plugins#1). Un plugin trae `requirements.txt` con versión y
+  hash fijos; `plugin_install.instalar()` lo instala con pip en el runtime
+  del programa —sólo wheels, `--require-hashes`— antes de validar, y si falla
+  no copia nada (`webapp/librerias.py`). Sin internet: `wheels/` del plugin
+  o de la instalación y la opción "sin internet" al instalar. Plug ins →
+  Librerías: runtime, qué pide cada plugin, qué falta, instalar. El build del
+  `.exe` deja `runtime-release.json` (Python exacto + librerías base) y el
+  workflow lo sube como asset del release; el catálogo pasa
+  `compatible_runtime`. `describe_installation` suma `librerias` y el
+  resumen dice el runtime y qué falta.
 - **Terminal del agente flotante.** La terminal de instalar/loguear un CLI
   salió de la vista Agente a `webapp/static/js/agent_terminal.js`, un
   singleton montado sobre `body` con un indicador fijo en la barra lateral:

@@ -45,6 +45,9 @@ URL=$(curl -sL --max-time 30 "${AUTH[@]}" \
   | grep -o "https[^\"]*cpython-${PY_VERSION}[^\"]*x86_64-pc-windows-msvc-install_only\.tar\.gz" \
   | head -1)
 [ -n "${URL}" ] || { echo "no se encontró un build de CPython ${PY_VERSION}"; exit 1; }
+# La versión exacta (3.12.14, no "3.12"): es contra lo que el catálogo cura
+# las librerías de los plugins, ver runtime-release.json más abajo.
+PY_EXACTA=$(echo "${URL}" | grep -o "cpython-${PY_VERSION}\.[0-9]*" | head -1 | sed 's/cpython-//')
 curl -sL --max-time 300 "${URL}" -o "${TRABAJO}/descargas/python.tar.gz"
 tar xzf "${TRABAJO}/descargas/python.tar.gz" -C "${TRABAJO}"
 mv "${TRABAJO}/python" "${CARGA}/runtime"
@@ -145,6 +148,31 @@ if faltan:
     print("\n".join(f"  {f}" for f in faltan))
     sys.exit(1)
 print(f"    {len(presentes)} paquetes, árbol completo: {', '.join(sorted(presentes))}")
+PY
+
+# La versión del runtime, publicada con el release: la versión exacta de
+# Python y de cada librería base. Es la referencia contra la que el catálogo
+# de plugins cura las librerías que un plugin pide en su requirements.txt
+# (webapp/librerias.py, workflow-bot-core#20): la wheel que probó el curador
+# con este runtime es la que corre en el cliente. Viaja en la carga y también
+# como asset del release (release.yml), para que el curador la lea sin bajar
+# el .exe.
+python3 - "${CARGA}/runtime-release.json" "${VERSION}" "${PY_EXACTA:-${PY_VERSION}}" "${SITE}" <<'PY'
+import json, pathlib, re, sys, time
+destino, version, py, site = sys.argv[1], sys.argv[2], sys.argv[3], pathlib.Path(sys.argv[4])
+paquetes = {}
+for meta in sorted(site.glob("*.dist-info/METADATA")):
+    nombre = version_ = None
+    for linea in meta.read_text(encoding="utf-8", errors="replace").splitlines():
+        if linea.startswith("Name:"): nombre = linea.split(":", 1)[1].strip()
+        elif linea.startswith("Version:"): version_ = linea.split(":", 1)[1].strip()
+        if nombre and version_: break
+    if nombre and version_:
+        paquetes[re.sub(r"[-_.]+", "-", nombre).lower()] = version_
+json.dump({"tag": "v" + version.lstrip("vV"), "python": py, "platform": "win_amd64",
+           "packages": paquetes, "built_at": time.time()},
+          open(destino, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+print(f"    runtime: Python {py}, {len(paquetes)} paquetes base")
 PY
 
 # ── 4. La aplicación ────────────────────────────────────────────────────

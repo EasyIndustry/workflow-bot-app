@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import contexto_agente, db_view, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, librerias, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -363,12 +363,15 @@ class InstallPathBody(BaseModel):
     path: str
     name: str | None = None
     replace: bool = False
+    # Sin internet: las librerías del plugin sólo desde la carpeta `wheels/`
+    # del plugin o de la instalación, sin tocar PyPI.
+    offline: bool = False
 
 
 @router.post("/plugins/install/path", status_code=201)
 async def install_plugin_from_path(body: InstallPathBody):
     """Instala un `.py`, una carpeta con `__init__.py` o un `.zip` que ya está en esta máquina."""
-    return await _instalar(Path(body.path), nombre=body.name, reemplazar=body.replace)
+    return await _instalar(Path(body.path), nombre=body.name, reemplazar=body.replace, sin_red=body.offline)
 
 
 @router.post("/plugins/install/upload", status_code=201)
@@ -376,6 +379,7 @@ async def install_plugin_from_upload(
     file: UploadFile = File(...),
     name: str | None = Form(None),
     replace: bool = Form(False),
+    offline: bool = Form(False),
 ):
     """Instala un `.py` o un `.zip` subido desde el navegador."""
     sufijo = Path(file.filename or "").suffix
@@ -386,16 +390,17 @@ async def install_plugin_from_upload(
         destino = tmp / Path(file.filename).name
         with destino.open("wb") as f:
             shutil.copyfileobj(file.file, f)
-        return await _instalar(destino, nombre=name or None, reemplazar=replace)
+        return await _instalar(destino, nombre=name or None, reemplazar=replace, sin_red=offline)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-async def _instalar(origen: Path, *, nombre: str | None, reemplazar: bool):
+async def _instalar(origen: Path, *, nombre: str | None, reemplazar: bool, sin_red: bool = False):
     carpeta = _instance.boot.plugins_dir
     try:
         resultado = await run_in_threadpool(
-            plugin_install.instalar, carpeta, origen, nombre=nombre, reemplazar=reemplazar
+            plugin_install.instalar, carpeta, origen, nombre=nombre, reemplazar=reemplazar,
+            root=ROOT, sin_red=sin_red,
         )
     except plugin_install.InstallError as exc:
         raise HTTPException(400, {"message": str(exc), "errors": exc.errores}) from None
@@ -444,6 +449,7 @@ def put_plugin_catalog_config(body: CatalogConfigBody):
 
 class CatalogInstallBody(BaseModel):
     name: str
+    offline: bool = False
 
 
 @router.post("/plugins/catalog/install", status_code=201)
@@ -467,7 +473,7 @@ async def install_plugin_from_catalog(body: CatalogInstallBody):
             )
         except plugin_catalog.CatalogError as exc:
             raise HTTPException(502, {"message": str(exc), "errors": exc.detalle}) from None
-        resultado = await _instalar(carpeta, nombre=entrada["module"], reemplazar=True)
+        resultado = await _instalar(carpeta, nombre=entrada["module"], reemplazar=True, sin_red=body.offline)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -477,6 +483,62 @@ async def install_plugin_from_catalog(body: CatalogInstallBody):
     )
     plugin_catalog.anotar_procedencia(Path(resultado["installed"]["path"]), procedencia)
     return {**resultado, "provenance": procedencia}
+
+
+# ── Librerías de los plugins ──────────────────────────────────────────────
+#
+# Qué pide cada plugin instalado (su requirements.txt), qué hay en el runtime
+# y la versión del runtime contra la que cura el catálogo. Ver webapp/librerias.py.
+
+
+def _librerias_de_los_plugins() -> list[dict]:
+    salida = []
+    for p in plugin_install.instalados(_instance.boot.plugins_dir):
+        if not p.get("requirements"):
+            continue
+        try:
+            requisitos = librerias.leer_requisitos(Path(p["requirements"]))
+            salida.append({"name": p["name"], "requirements": librerias.estado_de(requisitos), "error": None})
+        except librerias.LibreriasError as exc:
+            salida.append({"name": p["name"], "requirements": [], "error": [str(exc), *exc.detalle]})
+    return salida
+
+
+@router.get("/plugins/libraries")
+def get_plugin_libraries():
+    """El runtime (versión y paquetes), las librerías que pide cada plugin y si están, y la carpeta de wheels."""
+    wheels = ROOT / librerias.WHEELS
+    return {
+        "runtime": librerias.runtime(REPO),
+        "plugins": _librerias_de_los_plugins(),
+        "wheels_dir": str(wheels),
+        "wheels": sorted(w.name for w in wheels.glob("*.whl")) if wheels.is_dir() else [],
+    }
+
+
+class LibrariesInstallBody(BaseModel):
+    name: str
+    offline: bool = False
+
+
+@router.post("/plugins/libraries/install")
+async def install_plugin_libraries(body: LibrariesInstallBody):
+    """Instala (o completa) las librerías que pide un plugin ya instalado, y recarga la instancia."""
+    instalado = next((p for p in plugin_install.instalados(_instance.boot.plugins_dir) if p["name"] == body.name), None)
+    if instalado is None or not instalado.get("requirements"):
+        raise HTTPException(404, f'"{body.name}" no está instalado o no declara librerías.')
+    try:
+        resultado = await run_in_threadpool(
+            lambda: librerias.instalar_requisitos(
+                Path(instalado["requirements"]), ruta_plugin=Path(instalado["path"]), root=ROOT, sin_red=body.offline,
+            )
+        )
+    except librerias.LibreriasError as exc:
+        raise HTTPException(400, {"message": str(exc), "errors": exc.detalle}) from None
+    # Un plugin que no cargaba por falta de librería carga ahora: la instancia se rearma.
+    async with _gate.exclusive():
+        _recargar_instancia((body.name,))
+    return {"name": body.name, **resultado, "catalog": _instance.registry.catalog()}
 
 
 @router.delete("/plugins/{name}")

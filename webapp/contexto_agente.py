@@ -53,6 +53,7 @@ def describir(instance) -> dict:
     d = instance.describe_installation()
     d["fuentes"] = _fuentes(instance)
     d["notas"] = _notas(instance)
+    d["librerias"] = _librerias(instance)
     d["resumen"] = resumen(d)
     return d
 
@@ -82,6 +83,26 @@ def _notas(instance) -> list[dict]:
     return [{"tema": it.get("tema"), "texto": it.get("texto"), "origen": it.get("origen") or "persona"} for it in items]
 
 
+def _librerias(instance) -> dict:
+    """El runtime y qué librería pide cada plugin instalado; si falta una, el agente lo ve antes de correr nada."""
+    from webapp import librerias, plugin_install
+
+    programa = Path(__file__).resolve().parent.parent
+    try:
+        rt = librerias.runtime(programa)
+        plugins = []
+        for p in plugin_install.instalados(instance.boot.plugins_dir):
+            if not p.get("requirements"):
+                continue
+            try:
+                plugins.append({"name": p["name"], "requirements": librerias.estado_de(librerias.leer_requisitos(Path(p["requirements"])))})
+            except librerias.LibreriasError as exc:
+                plugins.append({"name": p["name"], "requirements": [], "error": str(exc)})
+        return {"runtime": {"tag": rt.get("tag"), "python": rt.get("python"), "source": rt.get("source")}, "plugins": plugins}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
 def resumen(d: dict) -> str:
     """El resumen del núcleo, más las fuentes con su clave, los flujos con su descripción y las notas por tema."""
     lineas = [d.get("resumen") or ""]
@@ -102,6 +123,14 @@ def resumen(d: dict) -> str:
     lineas.append(
         f"Notas de conocimiento: {len(notas)}" + (" — " + ", ".join(n["tema"] for n in notas[:8]) + "." if notas else ".")
     )
+    lib = d.get("librerias") or {}
+    if "error" not in lib and lib.get("runtime"):
+        rt = lib["runtime"]
+        faltan = [f"{p['name']}: {r['name']}" for p in lib.get("plugins", []) for r in p.get("requirements", []) if not r["ok"]]
+        lineas.append(
+            f"Runtime: Python {rt.get('python')}" + (f", release {rt['tag']}" if rt.get("tag") else " (en vivo)") + "."
+            + (f" Librerías que faltan: {', '.join(faltan)}." if faltan else "")
+        )
     return "\n".join(linea for linea in lineas if linea)
 
 

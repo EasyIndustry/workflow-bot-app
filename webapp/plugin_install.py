@@ -23,9 +23,12 @@ un salto al vacío:
    que se pida `reemplazar`, y aun así el anterior se guarda a un costado hasta
    que el nuevo se valida — si el nuevo no carga, vuelve el viejo.
 
-Lo que no hace, a propósito: no instala paquetes de pip ni resuelve
-dependencias. Un plugin del núcleo no importa librerías externas (pide ports),
-así que un archivo o una carpeta es todo lo que hay que instalar.
+Librerías Python: si la carpeta del plugin trae `requirements.txt`, se
+instalan **antes** de validar, con `webapp/librerias.py` —sólo wheels, con
+versión y hash fijos, en el runtime que corre la app— y si eso falla no se
+copia nada. Un plugin no importa librerías para hacer I/O (eso sigue siendo
+un port); sí puede necesitarlas para cómputo, y ésta es la única forma de
+que existan en la máquina del cliente (workflow-bot-core#20).
 
 Después de instalar hay que **recargar la instancia**: el registry se arma una
 vez al construirla. Eso es de quien orquesta (la API), no de acá.
@@ -42,6 +45,8 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+
+from webapp import librerias
 
 RAIZ = Path(__file__).resolve().parent.parent
 TIMEOUT = 60
@@ -70,9 +75,13 @@ def instalados(plugins_dir: Path | None) -> list[dict]:
         if entrada.name.startswith((".", "_")):
             continue
         if entrada.is_file() and entrada.suffix == ".py":
-            salida.append({"name": entrada.stem, "path": str(entrada), "kind": "file"})
+            salida.append({"name": entrada.stem, "path": str(entrada), "kind": "file", "requirements": None})
         elif entrada.is_dir() and (entrada / "__init__.py").is_file():
-            salida.append({"name": entrada.name, "path": str(entrada), "kind": "package"})
+            requisitos = librerias.requisitos_de(entrada)
+            salida.append({
+                "name": entrada.name, "path": str(entrada), "kind": "package",
+                "requirements": str(requisitos) if requisitos else None,
+            })
     return salida
 
 
@@ -130,13 +139,22 @@ def validar(nombre: str, ruta: Path) -> dict:
 # ── Instalar ────────────────────────────────────────────────────────────
 
 
-def instalar(plugins_dir: Path | None, origen: Path, *, nombre: str | None = None, reemplazar: bool = False) -> dict:
+def instalar(
+    plugins_dir: Path | None, origen: Path, *, nombre: str | None = None, reemplazar: bool = False,
+    root: Path | None = None, sin_red: bool = False,
+) -> dict:
     """
     Copia `origen` (un `.py`, una carpeta con `__init__.py`, o un `.zip` con
     cualquiera de las dos) a `plugins_dir`, validándolo antes.
 
-    Devuelve `{"name", "path", "plugin"}`, con `plugin` como lo describe el
-    catálogo del núcleo. Levanta `InstallError` con los motivos si no pasa.
+    Si la carpeta trae `requirements.txt`, primero se instalan sus librerías
+    en el runtime (`librerias.instalar_requisitos`): así la validación importa
+    el plugin con lo que necesita, y un requirements que no cumple la
+    convención o una wheel que no está frenan todo antes de copiar. `root` es
+    la instalación, por su carpeta `wheels/`; `sin_red` no toca PyPI.
+
+    Devuelve `{"name", "path", "plugin", "libraries"}`, con `plugin` como lo
+    describe el catálogo del núcleo. Levanta `InstallError` con los motivos si no pasa.
     """
     if plugins_dir is None:
         raise InstallError(
@@ -156,6 +174,16 @@ def instalar(plugins_dir: Path | None, origen: Path, *, nombre: str | None = Non
         if candidato != destino_tmp:
             candidato.rename(destino_tmp)
 
+        librerias_instaladas = None
+        requisitos = librerias.requisitos_de(destino_tmp)
+        if requisitos is not None:
+            try:
+                librerias_instaladas = librerias.instalar_requisitos(
+                    requisitos, ruta_plugin=destino_tmp, root=root, sin_red=sin_red,
+                )["installed"]
+            except librerias.LibreriasError as exc:
+                raise InstallError(f'Las librerías de "{nombre_final}" no se pudieron instalar: {exc}', exc.detalle) from None
+
         veredicto = validar(nombre_final, destino_tmp)
         if not veredicto["ok"]:
             raise InstallError(f'El plugin "{nombre_final}" no carga', veredicto["errors"])
@@ -174,7 +202,9 @@ def instalar(plugins_dir: Path | None, origen: Path, *, nombre: str | None = Non
         destino = plugins_dir / destino_tmp.name
         try:
             if destino_tmp.is_dir():
-                shutil.copytree(destino_tmp, destino, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                # `wheels/` no viaja a plugins_dir: es insumo de la instalación, no
+                # código; ya quedó en el runtime lo que había que instalar.
+                shutil.copytree(destino_tmp, destino, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", librerias.WHEELS))
             else:
                 shutil.copy2(destino_tmp, destino)
         except Exception:
@@ -184,7 +214,7 @@ def instalar(plugins_dir: Path | None, origen: Path, *, nombre: str | None = Non
         if respaldo is not None:
             _borrar(respaldo)
 
-    return {"name": nombre_final, "path": str(destino), "plugin": veredicto["plugin"]}
+    return {"name": nombre_final, "path": str(destino), "plugin": veredicto["plugin"], "libraries": librerias_instaladas}
 
 
 def desinstalar(plugins_dir: Path | None, nombre: str) -> Path:

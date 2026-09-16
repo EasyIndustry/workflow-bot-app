@@ -4,6 +4,8 @@ data/
 workspace/
 plugins/
 boot.env
+# Wheels traídas a mano para instalar librerías de plugins sin internet (webapp/librerias.py)
+wheels/
 
 # Entorno
 .venv/

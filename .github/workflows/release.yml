@@ -53,4 +53,8 @@ jobs:
       - name: Subir al release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ steps.tag.outputs.tag }}" installer/build/BotSetup-*.exe --clobber
+        run: |
+          gh release upload "${{ steps.tag.outputs.tag }}" installer/build/BotSetup-*.exe --clobber
+          # La versión del runtime, para que el catálogo de plugins cure contra
+          # ella sin bajar el .exe (ver installer/packaging/build_win.sh).
+          gh release upload "${{ steps.tag.outputs.tag }}" installer/build/carga/runtime-release.json --clobber
