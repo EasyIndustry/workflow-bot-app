@@ -16,6 +16,25 @@
 }
 .lateral__marca { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px; }
 .lateral__marca span { font-size: 13px; font-weight: 600; color: #fff; }
+.lateral__marca span { flex: 1; }
+.lateral__plegar {
+  display: flex; padding: 3px; border: 0; background: transparent; cursor: pointer;
+  color: var(--lateral-apagado); border-radius: 2px;
+}
+.lateral__plegar:hover { color: #fff; background: var(--lateral-hover); }
+.lateral__marca:not(:hover) .lateral__plegar { visibility: hidden; }
+
+/*
+  Plegada, la barra es una franja del ancho del ícono: queda la marca sola,
+  que al tocarla vuelve a abrir. Se esconde todo lo demás con `display: none`
+  y no con `width: 0` para que nada de adentro (la terminal del agente, el
+  cuerpo que escribe cada vista) tenga que saber que está plegado.
+*/
+.shell--plegado .lateral { width: var(--ancho-lateral-plegado); flex-basis: var(--ancho-lateral-plegado); }
+.shell--plegado .lateral > :not(.lateral__marca) { display: none; }
+.shell--plegado .lateral__marca { padding: 12px 0 10px; justify-content: center; }
+.shell--plegado .lateral__marca span,
+.shell--plegado .lateral__plegar { display: none; }
 .lateral__rotulo {
   padding: 12px 12px 6px;
   font-size: 10.5px; font-weight: 600; letter-spacing: .06em;

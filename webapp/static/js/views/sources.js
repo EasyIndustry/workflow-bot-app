@@ -48,15 +48,93 @@ let confirmacion = null;
 let abierto = null;
 
 // Las columnas del bot. No son datos: son el control del bot sobre esa fila, y
-// por eso son angostas y van fijas contra el borde derecho.
+// por eso son angostas y van fijas contra el borde derecho. La marca de
+// selección va última, contra el borde: se tilda después de mirar la fila.
 const COLUMNAS_BOT = [
-  { clave: "_marca", label: "", ancho: "32px" },
   { clave: "_estado", label: "Estado", ancho: "78px" },
   { clave: "_log", label: "Log", ancho: "72px" },
   { clave: "_ejec", label: "Últ. ejec.", ancho: "88px" },
   { clave: "_flujo", label: "Flujo", ancho: "150px" },
   { clave: "_correr", label: "", ancho: "86px" },
+  { clave: "_marca", label: "", ancho: "44px" },
 ];
+
+/**
+ * Los filtros de las columnas del bot. A diferencia de los de la fuente, no
+ * viajan a la API: el estado, la última ejecución, el flujo elegido y la
+ * marca no están en la fuente, están en esta página. Por eso filtran las
+ * filas que ya se trajeron y se aplican al instante, sin releer nada.
+ *
+ * Cada entrada: opciones {valor, texto} y el predicado `pasa(valor, ctx)`,
+ * donde `ctx` es {run, flujo, marcada} de la fila.
+ */
+const DIA = 24 * 3600;
+const FILTROS_BOT = {
+  _estado: {
+    opciones: [
+      { valor: "ok", texto: "ok" }, { valor: "err", texto: "err" },
+      { valor: "sin", texto: "sin correr" },
+    ],
+    pasa: (v, { run }) => (v === "sin" ? !run : Boolean(run) && run.status === v),
+  },
+  _ejec: {
+    opciones: [
+      { valor: "hoy", texto: "últimas 24 h" }, { valor: "semana", texto: "últimos 7 días" },
+      { valor: "viejo", texto: "hace más de 7 días" }, { valor: "nunca", texto: "nunca" },
+    ],
+    pasa: (v, { run }) => {
+      if (v === "nunca") return !run;
+      if (!run) return false;
+      const edad = Date.now() / 1000 - (run.finished_at || run.started_at || 0);
+      if (v === "hoy") return edad < DIA;
+      if (v === "semana") return edad < 7 * DIA;
+      return edad >= 7 * DIA;
+    },
+  },
+  _flujo: {
+    // Las opciones son los flujos guardados; se arman al dibujar.
+    opciones: () => [{ valor: "(ninguno)", texto: "sin flujo" },
+                     ...flujos.map((w) => ({ valor: w.name, texto: w.name }))],
+    pasa: (v, { flujo }) => (v === "(ninguno)" ? !flujo : flujo === v),
+  },
+  _marca: {
+    opciones: [{ valor: "si", texto: "marcadas" }, { valor: "no", texto: "sin marcar" }],
+    pasa: (v, { marcada }) => marcada === (v === "si"),
+  },
+};
+
+/** Las filas de la página que pasan los filtros del bot activos. */
+function filtrarPorBot(a, fuente, filas) {
+  const activos = Object.entries(a.filtrosBot).filter(([, v]) => v);
+  if (!activos.length) return filas;
+  return filas.filter((fila) => {
+    const caseId = claveDe(fuente, fila);
+    const ctx = {
+      run: a.ultimosRuns.get(caseId),
+      flujo: flujoDe(a, fuente, fila),
+      marcada: a.seleccion.has(caseId),
+    };
+    return activos.every(([clave, v]) => FILTROS_BOT[clave].pasa(v, ctx));
+  });
+}
+
+/** El desplegable de filtro de una columna del bot; `null` para las que no filtran (Log, Ejecutar). */
+function filtroDeColumnaBot(a, clave) {
+  const def = FILTROS_BOT[clave];
+  if (!def) return null;
+  const opciones = typeof def.opciones === "function" ? def.opciones() : def.opciones;
+  const select = h("select", {
+    class: "selector selector--chico", style: { width: "100%" },
+    title: "Filtra las filas de esta página: esto no está en la fuente, está en el bot",
+    // Sin releer la fuente: lo que filtra ya está en memoria.
+    onChange: (e) => { a.filtrosBot[clave] = e.target.value; dibujar(); },
+  }, [
+    h("option", { value: "", text: "(todas)" }),
+    ...opciones.map((o) => h("option", { value: o.valor, text: o.texto })),
+  ]);
+  select.value = a.filtrosBot[clave] || "";
+  return select;
+}
 
 export async function montar(elShell, partes) {
   shell = elShell;
@@ -144,6 +222,7 @@ async function cargar(nombre, { reiniciar = false } = {}) {
     cfg,
     search: "",
     filtros: {},
+    filtrosBot: {},
     facets: {},
     offset: 0,
     limite: (cfg && cfg.page_size) || 100,
@@ -316,7 +395,9 @@ function dibujar() {
     return poner(shell.vista, ...partes);
   }
 
-  const filas = a.filas || [];
+  // Marcar todo, la tanda y la grilla trabajan sobre lo que se ve: si un
+  // filtro del bot esconde una fila, no se marca ni se ejecuta por accidente.
+  const filas = filtrarPorBot(a, fuente, a.filas || []);
   partes.push(barraDeFiltros(a, fuente));
   partes.push(grilla(a, fuente, filas));
   partes.push(paginador(a));
@@ -336,7 +417,7 @@ function cabecera(a, fuente) {
       // puede mover la tabla que estás por seguir marcando.
       h("div", { dataset: { barraSeleccion: "1" },
                  style: { display: "flex", alignItems: "center", gap: "7px" } },
-        a.seleccion.size ? [barraDeSeleccion(a, fuente, a.filas || [])] : []),
+        a.seleccion.size ? [barraDeSeleccion(a, fuente, filtrarPorBot(a, fuente, a.filas || []))] : []),
       h("button", { class: "btn", text: "Editar fuente",
                     onClick: () => irA("plugins", "connections", "sources", fuente.name) }),
       h("button", { class: "btn", title: "Eliminar la fuente", style: { color: "var(--rojo)" },
@@ -382,11 +463,13 @@ function barraDeFiltros(a, fuente) {
   // Con paginación externa el buscador sólo mira la página que ya se trajo:
   // no hay forma honesta de decir "busca en toda la fuente" ahí — ver
   // `_fetch_page` en el plugin. Se avisa en vez de fingir que es lo mismo.
-  const notaBusqueda = fuente.page_param
+  const activosBot = Object.values(a.filtrosBot).filter(Boolean).length;
+  const notaBusqueda = (fuente.page_param
     ? "Esta fuente pagina contra la API externa: busca y filtra sólo en la página que ves, no en toda la fuente."
-    : `Buscar y filtrar miran las ${a.total} filas de la fuente, no las que se ven.`;
+    : `Buscar y filtrar miran las ${a.total} filas de la fuente, no las que se ven.`)
+    + (activosBot ? " Los filtros de las columnas del bot miran sólo esta página." : "");
 
-  const activos = Object.keys(a.filtros).length + (a.search ? 1 : 0);
+  const activos = Object.keys(a.filtros).length + (a.search ? 1 : 0) + activosBot;
 
   return h("div", {
     style: { display: "flex", alignItems: "center", gap: "9px", marginBottom: "10px", flexWrap: "wrap" },
@@ -395,7 +478,7 @@ function barraDeFiltros(a, fuente) {
     selectorLimite,
     activos
       ? h("button", { class: "btn", text: `Limpiar filtros (${activos})`,
-                      onClick: () => { a.search = ""; a.filtros = {}; a.offset = 0; cargar(a.nombre); } })
+                      onClick: () => { a.search = ""; a.filtros = {}; a.filtrosBot = {}; a.offset = 0; cargar(a.nombre); } })
       : null,
     h("div", { style: { flex: "1" } }),
     h("span", { style: { fontSize: "11.5px", color: "var(--texto-3)" }, text: notaBusqueda }),
@@ -576,17 +659,23 @@ function grilla(a, fuente, filas) {
   const bot = COLUMNAS_BOT.map((col) => ({
     ...col,
     label: col.clave === "_marca" ? marcaTodo : col.label,
+    filtro: filtroDeColumnaBot(a, col.clave),
     render: (fila) => celdaBot(col.clave, fila, fuente, a, filas),
   }));
+
+  const filtranBot = Object.values(a.filtrosBot).some(Boolean);
+  const vacio = filtranBot && (a.filas || []).length
+    ? `Ninguna de las ${a.filas.length} filas de esta página pasa los filtros de las columnas del bot.`
+    : (a.search || Object.keys(a.filtros).length)
+      ? "Ninguna fila coincide con la búsqueda o los filtros."
+      : "La fuente se leyó bien pero no devolvió ninguna fila.";
 
   return h("div", {}, [
     tabla([...columnas, ...bot], filas, {
       clase: "grilla",
       conFiltros: true,
       fijas: COLUMNAS_BOT.length,
-      vacio: (a.search || Object.keys(a.filtros).length)
-        ? "Ninguna fila coincide con la búsqueda o los filtros."
-        : "La fuente se leyó bien pero no devolvió ninguna fila.",
+      vacio,
     }),
   ]);
 }

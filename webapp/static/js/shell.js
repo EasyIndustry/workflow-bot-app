@@ -5,7 +5,7 @@
  * los dos huecos que este módulo devuelve — no reemplaza el marco.
  */
 
-import { h, poner, marca, vaciar } from "./dom.js";
+import { h, poner, marca, vaciar, icono, ICONOS } from "./dom.js";
 import { irA } from "./router.js";
 
 export const PESTANAS = [
@@ -22,9 +22,26 @@ export function crearShell(raiz) {
   const pieLateral = h("div", { class: "lateral__pie", text: "v0.9 · local" });
   const extraLateral = h("div");
 
+  // Plegado: la barra queda en una franja del ancho del ícono. La preferencia
+  // vive en el navegador porque es de quien opera, no de la instalación, y
+  // recargar no tiene por qué volver a abrirla.
+  const CLAVE_PLEGADO = "lateral-plegado";
+  let shellEl = null;
+  const plegar = (si) => {
+    shellEl.classList.toggle("shell--plegado", si);
+    try { localStorage.setItem(CLAVE_PLEGADO, si ? "1" : ""); } catch { /* sin storage, no se recuerda */ }
+  };
+  const botonPlegar = h("button", {
+    class: "lateral__plegar", title: "Ocultar el panel",
+    onClick: (e) => { e.stopPropagation(); plegar(true); },
+  }, [icono(ICONOS.plegar, 12, 2)]);
+
   const lateral = h("div", { class: "lateral" }, [
-    h("div", { class: "lateral__marca", title: "Inicio", style: { cursor: "pointer" }, onClick: () => irA("inicio") },
-      [marca(), h("span", { text: "FLOW-BOT" })]),
+    h("div", {
+      class: "lateral__marca", title: "Inicio", style: { cursor: "pointer" },
+      // Plegada, la marca es lo único que queda: tocarla vuelve a abrir el panel.
+      onClick: () => (shellEl.classList.contains("shell--plegado") ? plegar(false) : irA("inicio")),
+    }, [marca(), h("span", { text: "FLOW-BOT" }), botonPlegar]),
     rotulo,
     cuerpoLateral,
     extraLateral,
@@ -42,7 +59,11 @@ export function crearShell(raiz) {
   const vista = h("div", { class: "vista" });
   const principal = h("div", { class: "principal" }, [pestanas, vista]);
 
-  poner(raiz, h("div", { class: "shell" }, [lateral, principal]));
+  shellEl = h("div", { class: "shell" }, [lateral, principal]);
+  let plegadoGuardado = false;
+  try { plegadoGuardado = localStorage.getItem(CLAVE_PLEGADO) === "1"; } catch { /* idem */ }
+  if (plegadoGuardado) shellEl.classList.add("shell--plegado");
+  poner(raiz, shellEl);
 
   return {
     vista,

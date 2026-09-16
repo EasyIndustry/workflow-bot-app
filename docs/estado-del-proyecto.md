@@ -6,6 +6,18 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-16
 
+- **Grilla de Sources sin filtrarse por detrás.** El grupo fijo de las
+  columnas del bot medía lo que medía su contenido, no la fila: en la fila
+  de filtros eran 8px opacos y los selects de los datos asomaban por arriba
+  y por abajo (se veía a 1181–1400px de ancho). `align-self: stretch` en
+  `.tabla__grupo-fijo`; verificado por CDP a 1360/1280/1100.
+- **Filtros en las columnas del bot** (Estado, Últ. ejec., Flujo, marca):
+  filtran las filas de la página ya cargada, sin releer la fuente, porque
+  ese estado no está en la API sino en el bot; la nota de la barra lo dice
+  cuando hay uno activo. La marca de selección pasó al final de la fila.
+- **Panel lateral plegable**: « junto a FLOW-BOT lo deja en una franja de
+  38px con la marca sola, que lo vuelve a abrir; se recuerda en
+  `localStorage` del navegador (`lateral-plegado`).
 - **Bots que se hablan.** `POST /runs` corre un flujo sin esperar y
   devuelve un ticket; `GET /runs/ticket/<t>` dice en cola / en vuelo (con
   paso) / terminado (con el run). Plugin `bots` en el catálogo (`estado`,

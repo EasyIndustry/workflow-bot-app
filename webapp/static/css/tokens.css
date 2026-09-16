@@ -52,4 +52,5 @@
   --lateral-dashed: #3d3d3d;
 
   --ancho-lateral: 212px;
+  --ancho-lateral-plegado: 38px;   /* el ícono de la marca (14px) con su aire */
 }

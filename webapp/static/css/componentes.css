@@ -277,6 +277,14 @@
   background: var(--fondo);
   border-left: 2px solid var(--borde-3);
   z-index: 1;
+  /* La fila centra sus hijos (`align-items: center`), así que el grupo medía
+     lo que medía su contenido y no la fila: en la fila de filtros, con las
+     celdas del bot vacías, eran 8px de fondo opaco en el medio de una fila
+     de 32, y por arriba y por abajo se veían los selects de las columnas de
+     datos que pasaban por detrás. Estirado a la fila tapa siempre; el
+     centrado vertical del contenido lo hace el grupo adentro. */
+  align-self: stretch;
+  align-items: center;
 }
 .grilla .tabla__grupo-fijo--par { background: var(--fondo-zebra); }
 /* El fondo de cada variante, nada más: quién tapa a quién ya lo resuelve
