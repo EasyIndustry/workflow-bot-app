@@ -354,6 +354,13 @@ function refrescarCeldasLog(a) {
   for (const celda of shell.vista.querySelectorAll("[data-log-celda]")) {
     poner(celda, contenidoCeldaLog(a, celda.dataset.logCelda));
   }
+  // La celda Ejecutar cambia con lo mismo: mientras la fila corre es Detener.
+  const fuente = a.cfg || { name: a.nombre };
+  const porClave = new Map((a.filas || []).map((f) => [claveDe(fuente, f), f]));
+  for (const celda of shell.vista.querySelectorAll("[data-correr-celda]")) {
+    const fila = porClave.get(celda.dataset.correrCelda);
+    if (fila) poner(celda, contenidoCeldaCorrer(a, fuente, fila));
+  }
 }
 
 function contenidoCeldaLog(a, caseId) {
@@ -857,9 +864,46 @@ function celdaBot(clave, fila, fuente, a, filas) {
     return selector;
   }
 
+  // Mismo contenedor fijo que la celda Log: el sondeo cambia Ejecutar ↔
+  // Detener sin redibujar la grilla.
+  return h("div", { dataset: { correrCelda: caseId } }, [contenidoCeldaCorrer(a, fuente, fila)]);
+}
+
+/**
+ * Ejecutar, o Detener si la fila ya está corriendo.
+ *
+ * Se vio a distancia: una fila ejecutada desde otra PC se veía arrancar en la
+ * original, y nada impedía volver a ejecutarla. El servidor ya rechaza el
+ * segundo run (409); esto es lo que se ve. Detener no mata nada a mitad de un
+ * paso: el núcleo mira la marca antes de cada nodo, así que el que está
+ * corriendo termina y el que sigue no arranca. Lo que ya se escribió, quedó.
+ */
+function contenidoCeldaCorrer(a, fuente, fila) {
+  const caseId = claveDe(fuente, fila);
+  const vivo = a.enVuelo.get(caseId);
+  if (!vivo) {
+    return h("button", {
+      class: "btn btn--chico", text: "Ejecutar",
+      onClick: (e) => ejecutarUna(a, fuente, fila, e.currentTarget),
+    });
+  }
+  if (vivo.cancelando) {
+    return h("button", { class: "btn btn--chico", disabled: true, text: "Deteniendo…",
+                         title: "Termina el nodo en curso y para ahí." });
+  }
   return h("button", {
-    class: "btn btn--chico", text: "Ejecutar",
-    onClick: (e) => ejecutarUna(a, fuente, fila, e.currentTarget),
+    class: "btn btn--chico", text: "Detener", style: { color: "var(--rojo)" },
+    title: "Para después del nodo en curso. Lo hecho hasta ahí queda hecho.",
+    onClick: async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        await api.detenerRun(vivo.ticket);
+        vivo.cancelando = true;
+      } catch (err) {
+        anotar(a.nombre, "error", `${caseId}: no se pudo detener — ${err.message}`);
+      }
+      refrescarCeldasLog(a);
+    },
   });
 }
 

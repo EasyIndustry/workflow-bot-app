@@ -52,6 +52,10 @@ class RunEnVuelo:
     # Pedido sin esperar y todavía detrás del gate: figura para que se vea
     # que está por correr, pero no corre.
     en_cola: bool = False
+    # Alguien pidió frenarlo. El núcleo lo mira antes de cada nodo
+    # (`is_cancelled`), así que el nodo en curso termina y el que sigue ya no
+    # arranca: se detiene entre pasos, no a mitad de uno.
+    cancelar: bool = False
 
     def to_dict(self, ahora: float) -> dict:
         return {
@@ -65,6 +69,7 @@ class RunEnVuelo:
             "hechos": self.hechos,
             "paso": self.paso,
             "en_cola": self.en_cola,
+            "cancelando": self.cancelar,
         }
 
 
@@ -129,6 +134,38 @@ class RunsEnVuelo:
                 }
                 while len(self._terminados) > _RECORDAR_TERMINADOS:
                     self._terminados.popitem(last=False)
+
+    def cancelar(self, clave: str) -> bool:
+        """
+        Pide frenar un run. True si estaba en vuelo. No lo mata: deja la marca
+        que `is_cancelled` va a leer antes del próximo nodo, así que lo que
+        está a mitad de camino termina y lo que sigue no empieza.
+        """
+        with self._lock:
+            vivo = self._vivos.get(clave)
+            if vivo is None:
+                return False
+            vivo.cancelar = True
+            return True
+
+    def cancelado(self, clave: str) -> bool:
+        """Lo que el núcleo pregunta antes de cada nodo."""
+        with self._lock:
+            vivo = self._vivos.get(clave)
+            return bool(vivo and vivo.cancelar)
+
+    def en_vuelo_de(self, case_id: str, source: str = "") -> dict | None:
+        """
+        El run vivo de una fila, si hay uno. Es lo que permite rechazar un
+        segundo `POST /run` para la misma fila mientras el primero corre: desde
+        otra PC la grilla puede no haber sondeado todavía y el botón sigue ahí.
+        """
+        ahora = self._reloj()
+        with self._lock:
+            for vivo in self._vivos.values():
+                if vivo.case_id == str(case_id) and (not source or vivo.source == source):
+                    return vivo.to_dict(ahora)
+        return None
 
     def consultar(self, clave: str) -> dict:
         """Qué pasa con un ticket: en cola, en vuelo (con su paso), terminado (con el run), o desconocido."""

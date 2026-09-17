@@ -6,6 +6,17 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **Detener un run desde la grilla, y una fila no corre dos veces.** Se vio a
+  distancia: una fila ejecutada desde otra PC se veía arrancar en la original
+  y nada impedía volver a ejecutarla. Ahora `POST /run` devuelve 409 si esa
+  fila ya está en vuelo —es el servidor el que dice no, porque la grilla de
+  la otra PC puede no haber sondeado todavía— y la celda Ejecutar es
+  **Detener** mientras corre (`POST /runs/en-vuelo/{ticket}/stop`). Detener
+  usa el `is_cancelled` que el núcleo ya tenía: mira la marca antes de cada
+  nodo, así que el nodo en curso termina y el siguiente no arranca; lo que se
+  escribió, quedó escrito. Ojo: el núcleo deja el run detenido con
+  `status: ok` y "Detenido por el usuario" sólo en el registro, así que el
+  badge de Estado lo muestra como ok.
 - **Núcleo v0.3.1-beta.5** vendorizado: core#24, el dry run ya no rechaza un
   param JSON cuyo valor es todavía un placeholder (`rutas={rutas}` de un nodo
   anterior). Verificado en los dos sentidos: el mismo flujo pasa de `err` a

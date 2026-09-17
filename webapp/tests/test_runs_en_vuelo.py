@@ -191,3 +191,37 @@ def test_run_with_gate_guarda_el_resultado_bajo_el_ticket_tambien_si_explota():
     terminado = registro.consultar(ticket2)
     assert terminado["estado"] == "terminado" and terminado["run"]["status"] == "err"
     assert "boom" in terminado["run"]["message"]
+
+
+# ── Detener, y una fila que no corre dos veces ──────────────────────────
+
+
+def test_cancelar_deja_la_marca_que_el_nucleo_pregunta_antes_de_cada_nodo():
+    """No mata nada: pone la marca que `is_cancelled` lee entre nodos."""
+    registro = RunsEnVuelo(reloj=Reloj())
+    clave = registro.empezar("CASO-1", "flujo")
+
+    assert registro.cancelado(clave) is False
+    assert registro.cancelar(clave) is True
+    assert registro.cancelado(clave) is True
+    assert registro.listar()[0]["cancelando"] is True
+
+
+def test_cancelar_un_ticket_que_no_esta_en_vuelo_dice_que_no():
+    registro = RunsEnVuelo(reloj=Reloj())
+    clave = registro.empezar("CASO-1", "flujo")
+    registro.terminar(clave)
+
+    assert registro.cancelar(clave) is False
+    assert registro.cancelar("nunca-existio") is False
+
+
+def test_en_vuelo_de_encuentra_la_fila_que_corre_y_no_otra():
+    """Es lo que permite rechazar el segundo run de la misma fila desde otra PC."""
+    registro = RunsEnVuelo(reloj=Reloj())
+    registro.empezar("AP962", "convertidor", source="casos")
+
+    assert registro.en_vuelo_de("AP962", "casos")["flow"] == "convertidor"
+    assert registro.en_vuelo_de("AP962") is not None          # sin fuente: cualquiera
+    assert registro.en_vuelo_de("AP962", "otra-fuente") is None
+    assert registro.en_vuelo_de("AP963", "casos") is None

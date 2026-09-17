@@ -118,6 +118,11 @@ async def run_with_gate(instance, gate: RunGate, flow_name: str, case_id: str, *
             )
             if _acepta_on_step(instance):
                 kwargs["on_step"] = _hook_de_progreso(en_vuelo, clave)
+            # La otra dirección del mismo punto del recorrido: el núcleo lo
+            # pregunta antes de cada nodo, y "Detener" en la grilla pone la
+            # marca. Mismo criterio de compatibilidad que `on_step`.
+            if _acepta(instance, "is_cancelled"):
+                kwargs["is_cancelled"] = _hook_de_cancelacion(en_vuelo, clave)
         try:
             resultado = await run_in_threadpool(instance.run, flow_name, case_id, **kwargs)
         except Exception as exc:
@@ -138,10 +143,23 @@ def _como_dict(resultado) -> dict:
 
 
 def _acepta_on_step(instance) -> bool:
+    return _acepta(instance, "on_step")
+
+
+def _acepta(instance, parametro: str) -> bool:
     try:
-        return "on_step" in inspect.signature(instance.run).parameters
+        return parametro in inspect.signature(instance.run).parameters
     except (TypeError, ValueError):
         return False
+
+
+def _hook_de_cancelacion(en_vuelo, clave: str):
+    """La forma pedida al núcleo: is_cancelled() -> bool, sin argumentos."""
+
+    def is_cancelled() -> bool:
+        return en_vuelo.cancelado(clave)
+
+    return is_cancelled
 
 
 def _hook_de_progreso(en_vuelo, clave: str):

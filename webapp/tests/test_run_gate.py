@@ -226,3 +226,47 @@ def test_run_with_gate_usa_exclusive_si_instance_lo_declara():
         assert llamadas == ["pesado"]
 
     asyncio.run(main())
+
+
+def test_el_gate_le_pasa_al_nucleo_como_saber_si_lo_detuvieron():
+    """
+    `Detener` en la grilla pone la marca en el registro; el núcleo la lee con
+    `is_cancelled` antes de cada nodo. Acá se prueba el cable entre las dos:
+    un run que arranca con la marca puesta la ve.
+    """
+    from webapp.runs_en_vuelo import RunsEnVuelo
+
+    visto = {}
+
+    class Instancia:
+        def run(self, flow_name, case_id, *, is_cancelled=None, on_step=None, **kwargs):
+            # Simula lo que hace el executor: preguntar. Para verlo, la marca
+            # se pone desde adentro con el ticket que el gate anotó.
+            clave = next(iter(registro._vivos))
+            registro.cancelar(clave)
+            visto["cancelado"] = is_cancelled()
+            return {"status": "ok"}
+
+    registro = RunsEnVuelo()
+
+    async def main():
+        return await run_with_gate(Instancia(), RunGate(), "flujo", "CASO-1", en_vuelo=registro)
+
+    asyncio.run(main())
+    assert visto["cancelado"] is True
+    assert len(registro) == 0  # al terminar, sale de los vivos
+
+
+def test_un_nucleo_sin_is_cancelled_sigue_andando():
+    """Compatibilidad hacia atrás: el argumento sólo se pasa si `run` lo acepta."""
+    from webapp.runs_en_vuelo import RunsEnVuelo
+
+    class InstanciaVieja:
+        def run(self, flow_name, case_id, **kwargs):
+            assert "is_cancelled" not in kwargs
+            return {"status": "ok"}
+
+    async def main():
+        return await run_with_gate(InstanciaVieja(), RunGate(), "flujo", "CASO-1", en_vuelo=RunsEnVuelo())
+
+    assert asyncio.run(main())["status"] == "ok"

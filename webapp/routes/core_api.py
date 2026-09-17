@@ -1436,6 +1436,7 @@ async def run_flow(body: RunBody):
     corre concurrente — ver `run_with_gate`.
     """
     _frenar_si_tiene_errores(body.flow)
+    _frenar_si_ya_corre(body.case_id, body.source)
     try:
         resultado = await run_with_gate(
             _instance, _gate, body.flow, body.case_id, en_vuelo=_en_vuelo,
@@ -1564,6 +1565,37 @@ def list_runs(
         actor=actor, include_dry=include_dry,
     )
     return [r.to_dict() for r in filas]
+
+
+def _frenar_si_ya_corre(case_id: str, source: str | None) -> None:
+    """
+    Una fila no corre dos veces a la vez.
+
+    Se vio a distancia: desde otra PC se ejecutó una fila, en la original se
+    la veía arrancar, y nada impedía volver a ejecutarla — la grilla de la
+    otra PC todavía no había sondeado, y el botón seguía ahí. Deshabilitar el
+    botón no alcanza para eso; esto sí, porque es el servidor el que dice no.
+    """
+    vivo = _en_vuelo.en_vuelo_de(str(case_id), source or "")
+    if vivo is not None:
+        raise HTTPException(409, {
+            "message": f'"{case_id}" ya está corriendo ({vivo["flow"]}, {vivo["elapsed"]:.0f} s). '
+                       f"Esperá a que termine, o detenelo desde la grilla.",
+            "ticket": vivo["ticket"],
+        })
+
+
+@router.post("/runs/en-vuelo/{ticket}/stop")
+def stop_run_en_vuelo(ticket: str):
+    """
+    Pide frenar un run en vuelo. El núcleo mira la marca antes de cada nodo
+    (`is_cancelled`): el nodo en curso termina, el siguiente no arranca, y el
+    run queda guardado hasta ahí con "Detenido por el usuario" en su registro.
+    No mata nada a mitad de un paso: lo que ya se escribió, quedó escrito.
+    """
+    if not _en_vuelo.cancelar(ticket):
+        raise HTTPException(404, f"No hay ningún run en vuelo con el ticket {ticket}: ya terminó o nunca existió.")
+    return {"ticket": ticket, "cancelando": True}
 
 
 @router.get("/runs/en-vuelo")
