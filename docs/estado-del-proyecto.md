@@ -6,6 +6,16 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **Alcance de archivos: sólo rutas completas.** Una instalación nueva en
+  `D:\User\Bot` quedó sin arrancar con `fs_roots=principal=D:,…,C=C:`.
+  `D:` sin la barra es "la carpeta actual de esa unidad": pasó la validación
+  resolviendo a una carpeta inocua y, al reiniciar desde otro lado, resolvió a
+  la raíz de la instalación —con `plugins/` adentro— y el núcleo se negó
+  (core#22, como corresponde). La pantalla rechaza ahora cualquier ruta no
+  absoluta, cada caso con su motivo: unidad sin barra, relativa, UNC sin
+  share. La unidad entera con la barra ya se rechazaba porque contiene
+  `data/`. Se restauró el `boot.env` de esa instalación (respaldo
+  `boot.env.roto-2026-09-17`).
 - **Detener un run desde la grilla, y una fila no corre dos veces.** Se vio a
   distancia: una fila ejecutada desde otra PC se veía arrancar en la original
   y nada impedía volver a ejecutarla. Ahora `POST /run` devuelve 409 si esa
