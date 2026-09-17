@@ -6,6 +6,17 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **Núcleo v0.3.1-beta.5** vendorizado: core#24, el dry run ya no rechaza un
+  param JSON cuyo valor es todavía un placeholder (`rutas={rutas}` de un nodo
+  anterior). Verificado en los dos sentidos: el mismo flujo pasa de `err` a
+  `ok` en seco con "variables sin resolver" como aviso, y un literal JSON mal
+  escrito sigue muriendo en el dry run.
+- **Librerías desde el runtime equivocado, dicho antes.** Plug ins →
+  Librerías avisa de entrada cuando no hay `runtime-release.json` (el
+  intérprete del repo o un programa anterior): el catálogo cura contra el
+  runtime del `.exe`, así que instalar desde ahí falla por versión de Python
+  y parecía un plugin roto. El error de pip nombra ahora la versión exacta y
+  apunta al programa instalado.
 - **Los Bots fantasma.** En la QA aparecieron dos servidores vivos en el mismo
   puerto, de un día para el otro, y el acceso directo dejó de abrir sin decir
   nada (cinco intentos, todos anotados en un `webapp.log` que nadie mira).

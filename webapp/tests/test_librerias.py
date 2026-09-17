@@ -180,3 +180,16 @@ def test_pip_que_no_termina(tmp_path):
     with pytest.raises(librerias.LibreriasError) as exc:
         librerias.instalar_requisitos(plugin / "requirements.txt", ruta_plugin=plugin, correr=correr)
     assert "no terminó" in str(exc.value)
+
+
+def test_pip_sin_version_dice_que_python_es_y_apunta_al_programa():
+    """
+    Desde el servidor del repo (3.11) el error de pip hacía pensar que el plugin
+    estaba roto, cuando el catálogo lo curó contra el runtime del programa
+    (3.12). El mensaje tiene que nombrar la versión y decir a dónde ir.
+    """
+    lineas = ["ERROR: No matching distribution found for numpy==2.5.3"]
+    [mensaje] = librerias._explicar(lineas)
+    import sys
+    assert sys.version.split()[0] in mensaje
+    assert "programa instalado" in mensaje

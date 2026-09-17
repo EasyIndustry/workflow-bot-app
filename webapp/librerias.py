@@ -246,23 +246,44 @@ def instalar_requisitos(
         lineas = [l for l in salida.splitlines() if l.strip()]
         raise LibreriasError(
             "pip no pudo instalar las librerías del plugin",
-            _explicar(lineas) + lineas[-12:],
+            _explicar(lineas, python=python) + lineas[-12:],
         )
     # Lo que quedó, releído: `importlib.metadata` cachea por proceso, así que
     # el estado se toma del intérprete que instaló, no de este.
     return {"installed": _estado_en_subproceso(requisitos, python), "command": comando, "output": salida[-2000:]}
 
 
-def _explicar(lineas: list[str]) -> list[str]:
+def _explicar(lineas: list[str], python: str | None = None) -> list[str]:
     """Una línea en castellano para los fallos de pip que se pueden anticipar."""
     texto = "\n".join(lineas)
     if "THESE PACKAGES DO NOT MATCH THE HASHES" in texto:
         return ["El hash de una wheel no coincide con el del requirements: no es la que curó el catálogo. No se instaló nada."]
     if "No matching distribution" in texto or "Could not find a version" in texto:
-        return ["No hay una wheel para este runtime (Windows, esta versión de Python) con esa versión exacta, o no hay conexión a PyPI. Sin internet: wheels en la carpeta `wheels/`."]
+        # Con la versión de Python puesta, no "esta versión": el catálogo cura
+        # contra el runtime del programa (3.12), y desde el servidor del repo
+        # (3.11) este error hacía pensar que el plugin estaba roto, cuando lo
+        # que pasa es que se le está pidiendo a otro intérprete.
+        version = _version_de(python) if python else sys.version.split()[0]
+        return [
+            f"No hay una wheel de esa versión exacta para Python {version} en Windows, o no hay conexión a PyPI. "
+            f"Si esto es el servidor de desarrollo, las librerías se instalan desde el programa instalado, "
+            f"que es el runtime contra el que el catálogo cura el plugin. Sin internet: wheels en la carpeta `wheels/`."
+        ]
     if "Access is denied" in texto or "Permission denied" in texto or "WinError 5" in texto:
         return ["No se pudo escribir en el runtime. Si el servidor está corriendo con esa librería cargada, cerrarlo y volver a intentar."]
     return []
+
+
+def _version_de(python: str) -> str:
+    """La versión de otro intérprete, o la de éste si no se pudo preguntar."""
+    try:
+        r = subprocess.run([python, "-c", "import sys; print(sys.version.split()[0])"],
+                           capture_output=True, text=True, timeout=15, shell=False)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return sys.version.split()[0]
 
 
 def _estado_en_subproceso(requisitos: list[dict], python: str | None) -> list[dict]:

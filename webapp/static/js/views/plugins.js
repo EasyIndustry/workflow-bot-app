@@ -163,6 +163,15 @@ function pintarLibrerias(datos, recargar) {
           : h("span", { style: { color: "var(--texto-3)" }, text: " · en vivo (sin runtime-release.json: desarrollo o programa anterior)" }),
       ]),
       h("div", { class: "mono", style: { fontSize: "11px", color: "var(--texto-4)", overflowWrap: "anywhere" }, text: rt.executable || "" }),
+      // Sin la marca del instalador, esto es el intérprete del repo o un
+      // programa anterior: el catálogo cura contra el runtime del .exe, así
+      // que instalar desde acá falla por una versión de Python que no es la
+      // del plugin. Se dice antes de intentar, no después de que pip falle.
+      rt.tag ? null : h("div", { style: { marginTop: "8px" } }, [
+        aviso("falta", "Este no es el runtime del programa",
+          `Las librerías de los plugins se instalan en el runtime que deja el instalador. Acá hay Python ${rt.python || "?"}: ` +
+          `un plugin curado para el programa va a fallar con "no hay una wheel". Instalalas desde el Bot instalado.`),
+      ]),
       h("div", { style: { marginTop: "6px", color: "var(--texto-3)" } }, [
         "Sin internet: copiá las wheels a ",
         h("span", { class: "mono", text: datos.wheels_dir }),
