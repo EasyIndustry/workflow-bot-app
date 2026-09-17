@@ -13,12 +13,11 @@ desarrollo o la PC de un cliente), no sólo con tests.
   ninguna raíz declarada no hay fija, y la primera que se agregue pasa a
   serlo. Aparte, `pasos.instalar(registrar=False)`: crear una instalación de
   prueba ya no pisa cuál abre "Abrir Bot", que fue cómo se llegó a ese estado.
-- **La raíz por defecto no se edita.** Es siempre `workspace/` de la
-  instalación: la pantalla la muestra fija —de sólo lectura, sin tacho— y lo
-  que se agrega va debajo, con su alias. El servidor la impone aunque le
-  manden otra cosa. Poder pisarla era la mitad de cómo una instalación quedó
-  sin arrancar: es la que resuelve toda ruta relativa de todo flujo, así que
-  cambiarla rompe en silencio todo lo escrito hasta ahí.
+- **La raíz por defecto no se edita.** La pantalla la muestra fija —de sólo
+  lectura, sin tacho— y lo que se agrega va debajo, con su alias. El servidor
+  la impone aunque le manden otra cosa. Poder pisarla era la mitad de cómo una
+  instalación quedó sin arrancar: es la que resuelve toda ruta relativa de todo
+  flujo, así que cambiarla rompe en silencio todo lo escrito hasta ahí.
 - **Alcance de archivos: sólo rutas completas.** Una instalación nueva en
   `D:\User\Bot` quedó sin arrancar con `fs_roots=principal=D:,…,C=C:`.
   `D:` sin la barra es "la carpeta actual de esa unidad": pasó la validación
