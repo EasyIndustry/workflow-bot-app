@@ -142,15 +142,28 @@ def revisar(pares: list[tuple[str, str]], *, root: Path, data_dir: Path,
         nombre = f'"{alias}"' if alias else "la raíz por defecto"
         p = Path(ruta)
 
-        # Un UNC sin share es una ruta bien formada que nunca va a existir, y
-        # `pathlib` la trata como relativa: queda reescrita contra la raíz de
-        # la instalación y el mensaje de error habla de una carpeta que no
-        # aparece en ningún lado. Se ataja acá, con el motivo verdadero.
-        if ruta.startswith("\\\\") and not p.is_absolute():
-            problemas.append(
-                f"{nombre}: a {ruta} le falta el nombre del recurso compartido "
-                f"(\\\\servidor\\compartido), no alcanza con el nombre del servidor."
-            )
+        # Sólo rutas completas. Una relativa no es un valor: `D:` o `C:` (sin
+        # la barra) son "el directorio actual de esa unidad", que depende de
+        # desde dónde arrancó el proceso. En una instalación real `D:` pasó
+        # la validación resolviendo a una carpeta inocua, y al reiniciar
+        # resolvió a la raíz de la instalación —con `plugins/` adentro— y el
+        # núcleo se negó a arrancar. Y un UNC sin share es una ruta bien
+        # formada que nunca va a existir, que `pathlib` también trata como
+        # relativa. Cada caso con su motivo, porque el arreglo es distinto.
+        if not p.is_absolute():
+            if ruta.startswith("\\\\"):
+                problemas.append(
+                    f"{nombre}: a {ruta} le falta el nombre del recurso compartido "
+                    f"(\\\\servidor\\compartido), no alcanza con el nombre del servidor."
+                )
+            elif len(ruta) == 2 and ruta[1] == ":":
+                problemas.append(
+                    f"{nombre}: {ruta} es la unidad sin la barra, y eso significa \"la carpeta "
+                    f"actual de esa unidad\", que cambia según desde dónde arranque el Bot. "
+                    f"Escribila con la barra ({ruta}\\) o, mejor, una carpeta puntual ({ruta}\\Casos)."
+                )
+            else:
+                problemas.append(f"{nombre}: {ruta} no es una ruta completa (tiene que empezar por una unidad o por \\\\).")
             continue
 
         if not p.exists():

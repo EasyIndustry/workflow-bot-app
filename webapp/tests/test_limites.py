@@ -176,3 +176,39 @@ def test_con_varias_raices_la_primera_se_guarda_con_nombre(instalacion):
     # Y la primera sigue siendo la primera: es la que resuelve lo relativo.
     from backend.core import boot
     assert next(iter(boot.load(raiz).fs_roots_efectivos.values())) == str(raiz / "workspace")
+
+
+def test_una_unidad_sin_barra_no_se_guarda(instalacion):
+    """
+    `D:` sin la barra es "la carpeta actual de esa unidad", y cambia según
+    desde dónde arranque el proceso. En una instalación real pasó la
+    validación resolviendo a una carpeta inocua y, al reiniciar, resolvió a la
+    raíz de la instalación —con plugins/ adentro— y el núcleo se negó a
+    arrancar. Nunca es lo que alguien quiso escribir.
+    """
+    inst, raiz = instalacion
+
+    with pytest.raises(limites.LimitesError) as exc:
+        _guardar(inst, raiz, [{"alias": "", "ruta": "D:"}])
+
+    assert "sin la barra" in " ".join(exc.value.detalle)
+
+
+def test_una_ruta_relativa_no_se_guarda(instalacion):
+    inst, raiz = instalacion
+
+    with pytest.raises(limites.LimitesError) as exc:
+        _guardar(inst, raiz, [{"alias": "", "ruta": "workspace"}])
+
+    assert "ruta completa" in " ".join(exc.value.detalle)
+
+
+def test_la_unidad_entera_que_contiene_la_instalacion_no_se_guarda(instalacion):
+    """Con la barra ya es válida como ruta, pero se traga data/ y plugins/."""
+    inst, raiz = instalacion
+    unidad = raiz.drive + BARRA  # la unidad donde vive esta instalación
+
+    with pytest.raises(limites.LimitesError) as exc:
+        _guardar(inst, raiz, [{"alias": "", "ruta": unidad}])
+
+    assert "contiene" in " ".join(exc.value.detalle)
