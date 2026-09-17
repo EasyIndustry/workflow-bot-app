@@ -446,9 +446,16 @@ def _config_de_arranque(raiz: Path) -> boot.BootConfig:
 # ── Paso 4: crear ───────────────────────────────────────────────────────
 
 
-def instalar(ruta: str) -> dict:
+def instalar(ruta: str, *, registrar: bool = True) -> dict:
     """
     Crea la instalación. Es el único paso que escribe.
+
+    `registrar=False` la crea sin anotarla como "la última instalación" del
+    usuario. Es para una instalación de prueba: con el default, crear una
+    descartable le cambia a la persona qué abre "Abrir Bot", y si después se
+    borra la carpeta el Bot arranca contra la carpeta del programa — pasó, y
+    desde ahí ni siquiera se podían guardar los límites, porque la raíz por
+    defecto apuntaba a una carpeta inexistente.
 
     Devuelve el resumen para la última pantalla: qué se creó, qué actores
     quedaron, y dónde está la llave —que es lo único que el cliente tiene que
@@ -521,10 +528,11 @@ def instalar(ruta: str) -> dict:
     # carpeta de usuario de sólo lectura) la instalación igual queda hecha: se
     # informa, no se aborta.
     anotada = None
-    try:
-        anotada = str(ubicacion.registrar(raiz))
-    except OSError:
-        pass
+    if registrar:
+        try:
+            anotada = str(ubicacion.registrar(raiz))
+        except OSError:
+            pass
 
     return {
         "raiz": str(raiz),

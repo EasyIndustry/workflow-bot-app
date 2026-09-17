@@ -6,6 +6,13 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **La raíz por defecto sale de lo que la instalación tiene configurado**, no
+  de la regla `<root>/workspace`: asumirla dejó la pantalla sin poder guardar
+  nada en una instalación cuya raíz resolvió a la carpeta del programa — la
+  única fila que no se podía editar era también la que impedía guardar. Sin
+  ninguna raíz declarada no hay fija, y la primera que se agregue pasa a
+  serlo. Aparte, `pasos.instalar(registrar=False)`: crear una instalación de
+  prueba ya no pisa cuál abre "Abrir Bot", que fue cómo se llegó a ese estado.
 - **La raíz por defecto no se edita.** Es siempre `workspace/` de la
   instalación: la pantalla la muestra fija —de sólo lectura, sin tacho— y lo
   que se agrega va debajo, con su alias. El servidor la impone aunque le
