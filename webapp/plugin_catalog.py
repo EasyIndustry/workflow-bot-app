@@ -219,6 +219,57 @@ def anotar_procedencia(carpeta: Path, datos: dict) -> None:
         (carpeta / PROCEDENCIA).write_text(json.dumps(datos, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def cambios_desde(repo: str, base: str, branch: str, abrir=None, token: str | None = None) -> dict | None:
+    """
+    Qué cambió en la rama desde el commit del que salió lo instalado.
+
+    Es lo que permite responder "¿la que tengo es la última?", que hoy no se
+    puede contestar de otra forma: la ficha del catálogo no publica versión
+    —sólo la trae el manifest, adentro del código—, así que lo único
+    comparable contra la procedencia es el commit. Que la ficha publique
+    `version` es workflow-bot-plugins#2.
+
+    Se compara con `compare` y no con "el último commit de esta carpeta"
+    porque la procedencia guarda el commit **de la rama** al instalar (el
+    sufijo del tarball), no el de la carpeta del plugin: comparar uno contra
+    otro marcaba como desactualizado hasta lo que se acababa de instalar. Y
+    una sola llamada alcanza para todos los plugins que salieron de ese mismo
+    commit, en vez de una por plugin.
+
+    Devuelve `{head, fecha, rutas}` con las rutas de los archivos que
+    cambiaron. `None` ante cualquier problema: esto es información de más en
+    una pantalla que ya funciona, y no puede romperla si GitHub no contesta.
+    """
+    if not base:
+        return None
+    abrir = abrir or _abrir_url
+    url = f"https://api.github.com/repos/{repo}/compare/{base}...{branch}"
+    try:
+        datos = _pedir_json(abrir, url, token, f"comparar {base} con {branch}")
+    except CatalogError:
+        return None
+    if not isinstance(datos, dict):
+        return None
+    # La respuesta de `compare` no trae un "head": trae `base_commit` y la
+    # lista `commits` de lo que hay en el medio, del más viejo al más nuevo.
+    # Sin nada en el medio (`status: identical`) la cabeza es la base misma.
+    commits = [c for c in (datos.get("commits") or []) if isinstance(c, dict)]
+    cabeza = commits[-1] if commits else (datos.get("base_commit") or {})
+    detalle = cabeza.get("commit") or {}
+    return {
+        "head": str(cabeza.get("sha") or "")[:7],
+        "fecha": str((detalle.get("author") or {}).get("date") or ""),
+        "adelante": int(datos.get("ahead_by") or 0),
+        "rutas": [str(f.get("filename") or "") for f in (datos.get("files") or []) if isinstance(f, dict)],
+    }
+
+
+def _toca(rutas: list[str], path: str) -> bool:
+    """¿Alguno de los archivos que cambiaron está adentro de la carpeta del plugin?"""
+    prefijo = path.strip("/") + "/"
+    return any(r == path.strip("/") or r.startswith(prefijo) for r in rutas)
+
+
 def listar(instance, abrir=None) -> dict:
     """Lo que dibuja la pantalla: config, ramas, entradas y qué está instalado de cada una."""
     from webapp import plugin_install
@@ -238,6 +289,27 @@ def listar(instance, abrir=None) -> dict:
         instalado = instalados.get(entrada["module"])
         entrada["installed"] = instalado is not None
         entrada["provenance"] = procedencia_de(plugins_dir, entrada["module"]) if instalado else None
+        entrada["upstream"] = None
+        entrada["hay_nueva"] = False
+
+    # Una comparación por cada commit del que salió algo instalado —no una por
+    # plugin—: lo normal es que todos vengan del mismo, y entonces es una sola
+    # llamada. Sin procedencia (instalado a mano) o desde otra rama no hay
+    # contra qué comparar, y decir "hay una nueva" sería inventar.
+    comparables = {}
+    for entrada in salida["entries"]:
+        prov = entrada["provenance"] or {}
+        if (entrada["installed"] and entrada["installable"]
+                and prov.get("commit") and prov.get("branch") == cfg["branch"]):
+            comparables.setdefault(prov["commit"], []).append(entrada)
+
+    for base, entradas_de_ese_commit in comparables.items():
+        cambios = cambios_desde(cfg["repo"], base, cfg["branch"], abrir, token)
+        if cambios is None:
+            continue
+        for entrada in entradas_de_ese_commit:
+            entrada["upstream"] = cambios
+            entrada["hay_nueva"] = _toca(cambios["rutas"], entrada["path"])
     return salida
 
 

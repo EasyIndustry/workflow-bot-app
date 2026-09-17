@@ -191,6 +191,7 @@ function pintarLibrerias(datos, recargar) {
 function filaLibrerias(p, recargar) {
   const faltan = (p.requirements || []).filter((r) => !r.ok);
   const detalle = h("div", { style: { fontSize: "11.5px", color: "var(--rojo)", display: "none", whiteSpace: "pre-wrap" } });
+  const listo = h("div", { style: { fontSize: "11.5px", color: "var(--verde)", display: "none", marginTop: "3px" } });
   const chkOffline = h("input", { type: "checkbox" });
   const boton = faltan.length
     ? h("button", { class: "btn btn--chico btn--primario", text: `Instalar ${faltan.length === 1 ? "la que falta" : `las ${faltan.length} que faltan`}` })
@@ -310,12 +311,26 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
   const estado = !entrada.installed
     ? h("span", { class: "badge", text: "no instalado" })
     : prov
-      ? h("span", { class: "badge badge--ok", title: `commit ${prov.commit || "?"}`,
+      ? h("span", { class: entrada.hay_nueva ? "badge badge--falta" : "badge badge--ok",
+                    title: `commit ${prov.commit || "?"}`,
                     text: `instalado · v${prov.version || "?"} · ${prov.branch || "?"}` })
       : h("span", { class: "badge badge--ok", text: "instalado (a mano)" });
+  // La ficha del catálogo no publica versión (workflow-bot-plugins#2), así
+  // que lo comparable es el commit que tocó esa carpeta por última vez. Dice
+  // "cambió desde que lo instalaste", que es la pregunta real antes de
+  // reinstalar.
+  const novedad = entrada.hay_nueva
+    ? h("span", { class: "badge badge--falta", style: { marginLeft: "6px" },
+                  title: [`el catálogo va por ${entrada.upstream.head}`,
+                          entrada.upstream.fecha ? `del ${entrada.upstream.fecha.slice(0, 10)}` : "",
+                          `${entrada.upstream.adelante} commit${entrada.upstream.adelante === 1 ? "" : "s"} desde el que tenés`,
+                          "Actualizar baja lo de ahora."].filter(Boolean).join("
+"),
+                  text: "hay una versión nueva" })
+    : null;
   const boton = h("button", {
-    class: "btn btn--chico" + (entrada.installed ? "" : " btn--primario"),
-    text: entrada.installed ? "Reinstalar" : "Instalar",
+    class: "btn btn--chico" + (!entrada.installed || entrada.hay_nueva ? " btn--primario" : ""),
+    text: !entrada.installed ? "Instalar" : entrada.hay_nueva ? "Actualizar" : "Reinstalar",
     disabled: !entrada.installable,
     title: entrada.installable ? `Baja la rama ${datos.branch} e instala ${entrada.path}` : "Entrada de índice sin código: no hay nada que instalar desde acá",
   });
@@ -329,15 +344,21 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
     boton.textContent = "Instalando…";
     try {
       const r = await api.instalarDesdeCatalogo(entrada.name, { offline: chkOffline.checked });
+      // Se queda en el catálogo. Antes cerraba el modal y saltaba a la ficha
+      // del plugin: si estabas instalando tres seguidos, después de cada uno
+      // había que volver a abrir "Plugins en línea" y buscar dónde ibas. El
+      // resultado se dice acá, en la fila, y la lista se recarga para que el
+      // estado y el aviso de versión nueva queden al día.
+      listo.textContent = `Listo: v${r.installed.plugin.version}`
+        + `, ${r.installed.plugin.tools.length} tool${r.installed.plugin.tools.length === 1 ? "" : "s"}.`;
+      listo.style.display = "";
       confirmacion = `Se instaló "${r.installed.name}" v${r.installed.plugin.version} desde ${datos.repo} (${datos.branch}).`;
-      cerrarModal();
-      irA("plugins", r.installed.name);
-      await montar(shell, [r.installed.name]);
+      await recargar();
     } catch (e) {
       detalle.textContent = [e.message, ...(e.errores || [])].join("\n");
       detalle.style.display = "";
       boton.disabled = false;
-      boton.textContent = entrada.installed ? "Reinstalar" : "Instalar";
+      boton.textContent = !entrada.installed ? "Instalar" : entrada.hay_nueva ? "Actualizar" : "Reinstalar";
     }
   });
 
@@ -346,11 +367,13 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
       h("div", { style: { display: "flex", alignItems: "center", gap: "8px" } }, [
         h("span", { style: { fontWeight: "600", fontSize: "13px" }, text: entrada.name }),
         estado,
+        novedad,
       ]),
       h("div", { style: { fontSize: "12px", color: "var(--texto-2)", marginTop: "3px" }, text: entrada.description }),
       h("div", { class: "mono", style: { fontSize: "11px", color: "var(--texto-4)", marginTop: "3px" },
         text: [`ports: ${(entrada.ports || []).join(", ") || "—"}`, entrada.compatible_core ? `core ${entrada.compatible_core}` : "", entrada.compatible_runtime ? `runtime ${entrada.compatible_runtime}` : "", entrada.path || entrada.source].filter(Boolean).join(" · ") }),
       detalle,
+      listo,
     ]),
     h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" } }, [
       boton,
