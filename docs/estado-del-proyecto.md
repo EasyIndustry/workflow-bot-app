@@ -6,6 +6,22 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **Config → Alcance de archivos**: las carpetas que un flujo puede tocar se
+  editan desde la app, con alias, sin abrir `boot.env` a mano
+  (`webapp/limites.py`, `GET /limites`, `PUT /limites/raices`). Hacía falta
+  porque el único camino era editar el archivo en la máquina —fuera del
+  alcance de quien opera el Bot, que es el que sabe dónde están los archivos
+  de hoy— y porque desde core#22 una raíz que no existe **impide arrancar**,
+  así que editarlo a mano pasó a poder dejar la instalación sin levantar. El
+  backend valida contra el disco antes de escribir y rechaza lo que no
+  arrancaría: una carpeta inexistente, un UNC sin el nombre del recurso
+  compartido, un alias repetido, y cualquier raíz que contenga `data/` o
+  `plugins/` —esto último el núcleo no lo puede chequear solo, porque `data/`
+  no es un valor declarado cuando se usa el default—. Deja `boot.env.anterior`
+  al lado y ofrece reiniciar. Con varias raíces, la primera se guarda con
+  nombre aunque no se lo hayan puesto: el alias vacío se escribe
+  `fs_roots==ruta` y un núcleo anterior a v0.3.1-beta.4 descarta ese par al
+  releer, y app y núcleo se actualizan por separado.
 - **Los límites de la instalación se ven en Inicio.** `fs_root` era el único
   límite que decidía si un flujo llega a un archivo y el único que no se
   mostraba en ninguna pantalla: en producción se descubrió con un run

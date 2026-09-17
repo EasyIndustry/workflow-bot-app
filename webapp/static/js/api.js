@@ -134,6 +134,9 @@ export const api = {
   descartarAnterior: (componente) => pedir(`/updates/previous?component=${componente}`, { metodo: "DELETE" }),
   reiniciar: () => pedir("/updates/restart", { metodo: "POST" }),
 
+  limites: () => pedir("/limites"),
+  guardarRaices: (raices) => pedir("/limites/raices", { metodo: "PUT", cuerpo: { raices } }),
+
   // Actores: quién ejecuta y qué puede. Identidad y política, no autenticación.
   // Sin `borrar`: la baja es lógica (enabled=false), porque los runs apuntan al
   // actor por nombre.

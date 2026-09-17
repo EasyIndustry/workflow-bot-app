@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import contexto_agente, db_view, librerias, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, librerias, limites, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -256,6 +256,35 @@ def get_config():
 def patch_config(body: ConfigBody):
     """Mergea las claves dadas; el resto queda como está."""
     return {"values": _instance.config.update(body.values)}
+
+
+# ── Límites de archivos ─────────────────────────────────────────────────
+
+
+class RaicesBody(BaseModel):
+    # [{alias, ruta}], en orden: la primera es la de por defecto.
+    raices: list[dict]
+
+
+@router.get("/limites")
+def get_limites():
+    """Hasta dónde llega el port `fs` de esta instalación, y con qué alias."""
+    return limites.leer(_instance, ROOT)
+
+
+@router.put("/limites/raices")
+def put_limites_raices(body: RaicesBody):
+    """
+    Cambia las raíces en `boot.env`. Valida contra el disco antes de escribir:
+    una raíz que no existe impide arrancar desde core#22, así que guardar algo
+    inválido dejaría el Bot sin levantar y sin nadie mirando una consola.
+    """
+    try:
+        return limites.guardar(_instance, ROOT, body.raices)
+    except limites.LimitesError as exc:
+        raise HTTPException(400, {"message": str(exc), "errors": exc.detalle}) from None
+    except OSError as exc:
+        raise HTTPException(500, {"message": f"No se pudo escribir boot.env: {exc}", "errors": []}) from None
 
 
 # ── Variables y secretos ────────────────────────────────────────────────

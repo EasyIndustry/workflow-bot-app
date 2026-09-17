@@ -24,6 +24,7 @@ let confirmacion = null;
 const SECCIONES = [
   { id: "secretos", label: "Secretos y variables", dibujar: dibujarSecretos },
   { id: "almacenamiento", label: "Almacenamiento", dibujar: dibujarAlmacenamiento },
+  { id: "limites", label: "Alcance de archivos", dibujar: dibujarLimites },
   { id: "diagnostico", label: "Diagnóstico", dibujar: dibujarDiagnostico },
   { id: "base", label: "Base de datos", dibujar: dibujarBase },
   { id: "seguridad", label: "Seguridad", dibujar: dibujarSeguridad },
@@ -1102,6 +1103,117 @@ function cuandoTexto(epoch) {
   if (!epoch) return "—";
   const f = new Date(epoch * 1000);
   return `${f.getDate()}/${f.getMonth() + 1}/${f.getFullYear()} ${String(f.getHours()).padStart(2, "0")}:${String(f.getMinutes()).padStart(2, "0")}`;
+}
+
+// ── Alcance de archivos ─────────────────────────────────────────────────
+
+/**
+ * Hasta dónde llega el port `fs`, editable.
+ *
+ * Hasta ahora esto se cambiaba abriendo `boot.env` con un editor de texto, o
+ * sea que sólo lo podía hacer alguien con acceso a la máquina — no quien opera
+ * el Bot, que es el que sabe en qué carpeta están los archivos de hoy. Y desde
+ * el núcleo v0.3.1-beta.4 una raíz que no existe impide arrancar, así que
+ * editar el archivo a mano pasó a poder dejar la instalación sin levantar.
+ *
+ * El backend valida contra el disco **antes** de escribir y rechaza lo que no
+ * arrancaría, así que esta pantalla puede ser un formulario común y no un
+ * campo de minas: lo peor que pasa es que no guarde y diga por qué.
+ */
+async function dibujarLimites() {
+  const datos = await api.limites();
+  // Se edita una copia: cancelar es volver a dibujar, sin deshacer nada.
+  let raices = (datos.raices || []).map((r) => ({ alias: r.alias, ruta: r.ruta }));
+  const hueco = h("div");
+  const mensajes = h("div");
+
+  const redibujar = () => poner(hueco, lista());
+
+  const lista = () => h("div", { class: "tarjeta", style: { padding: "6px 16px 14px" } }, [
+    ...raices.map((r, i) => fila(r, i)),
+    raices.length ? null : h("div", { class: "tabla__vacia", style: { padding: "22px" }, text:
+      "Sin ninguna raíz, un flujo puede leer y escribir en cualquier parte del disco." }),
+    h("div", { style: { marginTop: "10px", display: "flex", gap: "7px" } }, [
+      h("button", { class: "btn btn--chico", text: "+ Carpeta", onClick: () => {
+        raices.push({ alias: "", ruta: "" });
+        redibujar();
+      } }),
+    ]),
+  ]);
+
+  const fila = (r, i) => {
+    const alias = h("input", { class: "entrada entrada--mono", type: "text", value: r.alias,
+                               placeholder: i === 0 ? "(por defecto)" : "nombre corto",
+                               onInput: (e) => { r.alias = e.target.value; } });
+    const ruta = h("input", { class: "entrada entrada--mono", type: "text", value: r.ruta,
+                              placeholder: "C:\carpeta o \\servidor\compartido",
+                              onInput: (e) => { r.ruta = e.target.value; } });
+    return h("div", { class: "campo", style: { alignItems: "flex-start" } }, [
+      h("div", { class: "campo__etiqueta" }, [
+        h("div", { class: "campo__nombre", text: i === 0 ? "Por defecto" : `Carpeta ${i + 1}` }),
+      ]),
+      h("div", { class: "campo__control" }, [
+        h("div", { style: { display: "flex", gap: "6px" } }, [
+          h("div", { style: { flex: "0 0 150px" } }, [alias]),
+          h("div", { style: { flex: "1", minWidth: "0" } }, [ruta]),
+          h("button", { class: "btn btn--chico", title: "Quitar esta carpeta",
+                        onClick: () => { raices.splice(i, 1); redibujar(); } },
+            [icono(ICONOS.basura, 11, 2)]),
+        ]),
+        h("div", { class: "campo__ayuda", text: i === 0
+          ? "Es la que resuelve una ruta relativa de un flujo. Puede ir sin nombre."
+          : "Un flujo la nombra como " + (r.alias || "nombre") + ":archivo, o con su ruta entera." }),
+      ]),
+    ]);
+  };
+
+  const guardar = async (boton) => {
+    boton.disabled = true;
+    poner(mensajes);
+    try {
+      const r = await api.guardarRaices(raices);
+      poner(mensajes, aviso("ok", "Guardado en boot.env", h("div", {}, [
+        h("div", { text: "Se lee al arrancar: hasta que el Bot no reinicie, sigue con las carpetas de antes." }),
+        h("div", { style: { marginTop: "7px", display: "flex", gap: "7px", alignItems: "center" } }, [
+          // `reiniciarApp` es la misma que usa Actualizaciones: pide el
+          // reinicio, espera a que el servidor vuelva a atender y recarga.
+          h("button", { class: "btn btn--primario btn--chico", text: "Reiniciar ahora",
+                        onClick: () => reiniciarApp() }),
+          h("span", { class: "campo__ayuda", style: { margin: "0" }, text: `Copia de lo anterior en ${r.respaldo}` }),
+        ]),
+      ])));
+    } catch (e) {
+      // El backend manda el detalle por raíz: es lo único accionable acá.
+      const detalle = e.errores || [];
+      poner(mensajes, aviso("error", e.message || "No se pudo guardar",
+        h("div", {}, detalle.map((d) => h("div", { text: `· ${d}` })))));
+    }
+    boton.disabled = false;
+  };
+
+  redibujar();
+
+  return [
+    encabezado("Alcance de archivos", [
+      "Las carpetas que un flujo puede leer y escribir con el port ",
+      h("span", { class: "mono", text: "fs" }),
+      ". Fuera de éstas devuelve “ruta fuera del árbol permitido”. Vive en ",
+      h("span", { class: "mono", text: "boot.env" }), ", no en la base: se lee antes de abrirla.",
+    ]),
+    consumirConfirmacion(),
+    mensajes,
+    hueco,
+    h("div", { style: { marginTop: "12px", display: "flex", gap: "7px" } }, [
+      h("button", { class: "btn btn--primario", text: "Guardar",
+                    onClick: (e) => guardar(e.currentTarget) }),
+      h("button", { class: "btn", text: "Descartar", onClick: () => dibujarSeccion(SECCIONES.find((s) => s.id === "limites")) }),
+    ]),
+    h("div", { class: "tabla__pie" }, [
+      "La base y la llave (", h("span", { class: "mono", text: datos.data_dir }),
+      ") y los plugins quedan afuera a propósito, y no se pueden incluir: un flujo con permiso " +
+      "de archivos los alcanzaría.",
+    ]),
+  ];
 }
 
 // ── Diagnóstico ─────────────────────────────────────────────────────────
