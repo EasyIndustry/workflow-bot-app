@@ -39,7 +39,34 @@ import { abrirLog } from "./log-modal.js";
 let shell = null;
 let fuentes = [];
 let flujos = [];
-let confirmacion = null;
+
+// ── Avisos ───────────────────────────────────────────────────────────────
+
+/**
+ * Lo que fue pasando en cada fuente: una ejecución que falló, una tanda sin
+ * flujo, una fuente borrada.
+ *
+ * Antes era un banner arriba de la grilla. Aparecía solo, empujaba la tabla
+ * hacia abajo justo cuando estabas por clickear una fila —el click terminaba
+ * en otra— y se borraba en el redibujo siguiente, así que si mirabas para
+ * otro lado no lo leías nunca. Ahora se acumula acá, por fuente, y se
+ * despliega desde el botón de la cabecera: lo único que cambia de tamaño es
+ * el panel, y la tabla no se mueve.
+ */
+const avisosPorFuente = new Map();
+const MAX_AVISOS = 40;
+let avisosAbiertos = false;
+let cerrarAvisosAlClickearFuera = null;
+
+function anotar(nombre, tono, texto) {
+  const lista = avisosPorFuente.get(nombre) || [];
+  lista.unshift({ tono, texto, at: Math.floor(Date.now() / 1000), sinVer: true });
+  avisosPorFuente.set(nombre, lista.slice(0, MAX_AVISOS));
+}
+
+function avisosDe(nombre) {
+  return avisosPorFuente.get(nombre) || [];
+}
 
 /**
  * Lo que está abierto. Vive fuera de `montar` para que volver a Sources desde
@@ -375,10 +402,6 @@ function dibujar() {
 
   const fuente = a.cfg || fuentes.find((f) => f.name === a.nombre) || { name: a.nombre };
   const partes = [cabecera(a, fuente)];
-  if (confirmacion) {
-    partes.push(aviso("ok", confirmacion, null));
-    confirmacion = null;
-  }
 
   if (a.error) {
     partes.push(aviso("error", "La fuente no se pudo leer", h("div", {}, [
@@ -418,6 +441,7 @@ function cabecera(a, fuente) {
       h("div", { dataset: { barraSeleccion: "1" },
                  style: { display: "flex", alignItems: "center", gap: "7px" } },
         a.seleccion.size ? [barraDeSeleccion(a, fuente, filtrarPorBot(a, fuente, a.filas || []))] : []),
+      botonDeAvisos(a),
       h("button", { class: "btn", text: "Editar fuente",
                     onClick: () => irA("plugins", "connections", "sources", fuente.name) }),
       h("button", { class: "btn", title: "Eliminar la fuente", style: { color: "var(--rojo)" },
@@ -426,6 +450,87 @@ function cabecera(a, fuente) {
                     onClick: () => cargar(a.nombre) }),
     ]),
   ]);
+}
+
+/**
+ * El botón de avisos de la fuente abierta, con el panel colgado de él.
+ *
+ * El panel es `position: absolute` a propósito: desplegarlo no puede correr
+ * la grilla ni un pixel —era justo lo que hacía el banner— así que se dibuja
+ * por encima y se cierra al clickear afuera.
+ */
+function botonDeAvisos(a) {
+  const lista = avisosDe(a.nombre);
+  const sinVer = lista.filter((av) => av.sinVer).length;
+
+  const boton = h("button", {
+    class: "btn" + (sinVer ? " btn--con-avisos" : ""),
+    disabled: !lista.length,
+    title: lista.length
+      ? `Lo que pasó en "${a.nombre}" desde que abriste la app`
+      : `Todavía no pasó nada en "${a.nombre}"`,
+    onClick: () => {
+      avisosAbiertos = !avisosAbiertos;
+      // Abrir es haberlos leído: el contador es "cuántos no miraste", no
+      // "cuántos hay". El detalle queda en la lista mientras la fuente viva.
+      if (avisosAbiertos) for (const av of lista) av.sinVer = false;
+      redibujarQuieto();
+    },
+  }, [
+    icono(ICONOS.alerta, 12, 2),
+    h("span", { text: " Avisos" }),
+    sinVer ? h("span", { class: "badge badge--falta", text: String(sinVer) }) : null,
+  ]);
+
+  const contenedor = h("div", { class: "avisos" }, [
+    boton,
+    avisosAbiertos && lista.length ? panelDeAvisos(a, lista) : null,
+  ]);
+
+  if (avisosAbiertos && lista.length) escucharClickFuera(contenedor);
+  return contenedor;
+}
+
+function panelDeAvisos(a, lista) {
+  return h("div", { class: "avisos__panel" }, [
+    h("div", { class: "avisos__cabecera" }, [
+      h("span", { text: `${lista.length} aviso${lista.length === 1 ? "" : "s"} · ${a.nombre}` }),
+      h("div", { style: { flex: "1" } }),
+      h("button", {
+        class: "btn btn--chico", text: "Limpiar",
+        onClick: () => { avisosPorFuente.delete(a.nombre); avisosAbiertos = false; redibujarQuieto(); },
+      }),
+      h("button", { class: "btn btn--chico", title: "Cerrar",
+                    onClick: () => { avisosAbiertos = false; redibujarQuieto(); } },
+        [icono(ICONOS.cerrar, 11, 2)]),
+    ]),
+    h("div", { class: "avisos__lista" }, lista.map((av) => h("div", { class: "avisos__item" }, [
+      h("span", { class: `avisos__punto avisos__punto--${av.tono}` }),
+      h("div", { style: { flex: "1", minWidth: "0" } }, [
+        h("div", { class: "avisos__texto", text: av.texto }),
+        h("div", { class: "avisos__cuando", text: hace(av.at) }),
+      ]),
+    ]))),
+  ]);
+}
+
+/**
+ * Cierra el panel al clickear afuera. El listener se guarda en una variable
+ * del módulo y se saca antes de poner otro: cada redibujo arma un contenedor
+ * nuevo, y sin esto quedaban listeners apuntando a nodos que ya no existen.
+ */
+function escucharClickFuera(contenedor) {
+  if (cerrarAvisosAlClickearFuera) {
+    document.removeEventListener("pointerdown", cerrarAvisosAlClickearFuera, true);
+  }
+  cerrarAvisosAlClickearFuera = (e) => {
+    if (contenedor.contains(e.target)) return;
+    document.removeEventListener("pointerdown", cerrarAvisosAlClickearFuera, true);
+    cerrarAvisosAlClickearFuera = null;
+    avisosAbiertos = false;
+    redibujarQuieto();
+  };
+  document.addEventListener("pointerdown", cerrarAvisosAlClickearFuera, true);
 }
 
 function resumenDe(a, fuente) {
@@ -596,9 +701,9 @@ async function ejecutarTanda(a, fuente, filas) {
   a.tanda = null;
   a.seleccion.clear();
   if (sinFlujo.length) {
-    confirmacion = `Sin ejecutar por falta de flujo: ${sinFlujo.join(", ")}.`;
+    anotar(a.nombre, "falta", `Sin ejecutar por falta de flujo: ${sinFlujo.join(", ")}.`);
   } else if (sinRed.length) {
-    confirmacion = `No se pudo ejecutar: ${sinRed.join(", ")}.`;
+    anotar(a.nombre, "error", `No se pudo ejecutar: ${sinRed.join(", ")}.`);
   }
   redibujarQuieto();
 }
@@ -766,7 +871,7 @@ async function ejecutarUna(a, fuente, fila, boton) {
   const caseId = claveDe(fuente, fila);
   const flujo = flujoDe(a, fuente, fila);
   if (!flujo) {
-    confirmacion = `${caseId}: elegí un flujo en la columna Flujo, o poné uno por defecto en la fuente.`;
+    anotar(a.nombre, "falta", `${caseId}: elegí un flujo en la columna Flujo, o poné uno por defecto en la fuente.`);
     return dibujar();
   }
   boton.disabled = true;
@@ -776,10 +881,10 @@ async function ejecutarUna(a, fuente, fila, boton) {
   try {
     const r = await api.ejecutar({ flow: flujo, case_id: caseId, source: fuente.name, row: fila });
     if (r.status !== "ok") {
-      confirmacion = `${caseId}: el flujo "${flujo}" falló — ${r.message || r.status}.`;
+      anotar(a.nombre, "error", `${caseId}: el flujo "${flujo}" falló — ${r.message || r.status}.`);
     }
   } catch (e) {
-    confirmacion = `${caseId}: no se pudo ejecutar — ${e.message}`;
+    anotar(a.nombre, "error", `${caseId}: no se pudo ejecutar — ${e.message}`);
   }
   await refrescarRun(a, fuente.name, caseId);
   if (!vigente()) return;
@@ -836,7 +941,9 @@ function borrarFuente(fuente) {
     alConfirmar: async () => {
       await api.borrarFuente(fuente.name);
       fuentes = await api.fuentes();
-      confirmacion = `Se eliminó la fuente "${fuente.name}".`;
+      // El panel es por fuente y ésta ya no existe: el aviso va a la que queda
+      // abierta, que es donde alguien lo va a ver.
+      if (fuentes.length) anotar(fuentes[0].name, "ok", `Se eliminó la fuente "${fuente.name}".`);
       abierto = null;
       dibujarLateral(fuentes[0] || null);
       if (fuentes.length) await cargar(fuentes[0].name, { reiniciar: true });

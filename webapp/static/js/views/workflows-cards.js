@@ -394,10 +394,15 @@ function aristas(id, grafo, alCambiar) {
     }, otros.map((n) => h("option", { value: n, text: etiquetaCorta(n, grafo) })));
     destino.value = arista.to;
 
+    // Tipear no puede redibujar: reconstruir la tarjeta con cada tecla le sacaba
+    // el foco al input y había que volver a hacer click por cada caracter. El
+    // valor se guarda en el grafo igual; el redibujo —que es lo que actualiza
+    // el rótulo de la arista en el diagrama— se hace al salir del campo.
     const condicion = h("input", {
       class: "entrada entrada--mono", type: "text", value: arista.condition || "",
       placeholder: "sin condición",
-      onInput: (e) => { arista.condition = e.target.value || null; alCambiar({ redibujar: true }); },
+      onInput: (e) => { arista.condition = e.target.value || null; alCambiar({ redibujar: false }); },
+      onChange: () => alCambiar({ redibujar: true }),
     });
 
     return h("div", { class: "campo", style: { gap: "8px", alignItems: "center" } }, [

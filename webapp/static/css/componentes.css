@@ -213,6 +213,37 @@
 .aviso__cuerpo { flex: 1; min-width: 0; }
 .aviso__titulo { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
 
+/* El panel de avisos de una fuente (Sources). Cuelga del botón de la
+   cabecera y se pinta por encima: desplegarlo no puede correr la grilla,
+   que es lo que hacía el banner que reemplazó. */
+.avisos { position: relative; display: flex; }
+.btn--con-avisos { border-color: var(--ambar-borde); color: var(--ambar); }
+.avisos__panel {
+  position: absolute; top: calc(100% + 5px); right: 0; z-index: 30;
+  width: 430px; max-width: min(430px, calc(100vw - 32px));
+  border: 1px solid var(--borde-fuerte); background: var(--fondo);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .16);
+}
+.avisos__cabecera {
+  display: flex; align-items: center; gap: 6px; padding: 7px 9px;
+  border-bottom: 1px solid var(--borde); background: var(--fondo-panel);
+  font-size: 11px; color: var(--texto-3);
+}
+/* Alto acotado: veinte avisos no pueden tapar la pantalla entera. */
+.avisos__lista { max-height: 320px; overflow: auto; }
+.avisos__item {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 9px 10px; border-bottom: 1px solid var(--borde-4);
+}
+.avisos__item:last-child { border-bottom: none; }
+.avisos__punto { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; }
+.avisos__punto--ok { background: var(--verde); }
+.avisos__punto--falta { background: var(--ambar); }
+.avisos__punto--error { background: var(--rojo); }
+.avisos__punto--info { background: var(--azul); }
+.avisos__texto { font-size: 11.5px; line-height: 1.5; color: var(--texto-2); overflow-wrap: anywhere; }
+.avisos__cuando { font-size: 10px; color: var(--texto-4); margin-top: 3px; }
+
 /* ── Tabla ───────────────────────────────────────────────────────────── */
 
 .tabla { border: 1px solid var(--borde); font-size: 12.5px; overflow: auto; }
