@@ -58,6 +58,20 @@ carga.
   acciones se dibujan desde el manifest (`GET /tools`). Si hace falta tocar
   `plugins.js` para que un plugin se vea bien, algo se declaró en el lugar
   equivocado.
+- **Lo que un flujo alcanza del disco son las raíces declaradas**, y pueden
+  ser varias. `fs_root` es una sola —la clásica, `workspace/`—; `fs_roots`
+  (núcleo v0.3.1-beta.3, core#23) son varias con alias
+  (`fs_roots=casa=C:\Bot\workspace, origen=\\servidor\share`): la primera
+  resuelve las rutas relativas, a las demás se llega con `origen:archivo`.
+  Existe porque una instalación real necesita el workspace local y un share
+  de red a la vez, y antes había que elegir o vaciar `fs_root`, que es apagar
+  el acotamiento. Una raíz declarada que no existe **impide arrancar**
+  (core#22): antes la instalación levantaba y el error salía mucho después
+  adentro de un run, como `PortError: ruta fuera del árbol permitido`, que
+  parece un error del flujo. Al escribir una ruta UNC tiene que ir el share
+  (`\\servidor\share`), no sólo el host. En la UI esto se lee en Inicio →
+  "Hasta dónde llega", que es la pantalla que muestra los límites; si se
+  agrega un límite nuevo al núcleo, va ahí.
 - **Un plugin pide ports para I/O y declara librerías para cómputo.** Lo que
   toca red, disco, procesos o ventanas va por un port del núcleo. numpy o
   trimesh van en un `requirements.txt` junto al `__init__.py`, con versión y
@@ -101,5 +115,30 @@ carga.
   lo que haya que contarle va en Plug ins → Conocimiento → Notas, no en el
   archivo.
 
+## Lo que muerde en este clon
+
 En Windows fallan algunos tests de `backend/tests` que son del núcleo, no de
-la webapp; no son del cambio que estés haciendo.
+la webapp; no son del cambio que estés haciendo. Contra qué compararlos: la
+actualización deja la carpeta anterior al lado (`backend.anterior/`), así que
+se corren ahí los mismos tests y se ve si ya fallaban antes.
+
+Antes de commitear, mirá **qué** cambió y no sólo qué figura como modificado:
+
+- Muchos archivos de `webapp/` aparecen como modificados con **cero** cambios
+  de contenido: es CRLF contra LF, no código.
+  `git diff --ignore-cr-at-eol --numstat -- <archivo>` devuelve `0` para
+  esos. No los metas en un commit: enterrarían el cambio real.
+- `webapp.anterior/`, `webapp-release.json` y `core-release.anterior.json`
+  son restos de una actualización aplicada sobre el repo; van sin versionar.
+- `backend/VERSION` lo genera el tarball del release y no existe en el tag
+  del núcleo, así que está en `.gitignore`. El hook de pre-commit compara
+  `backend/` contra el tag archivo por archivo, y cualquier cosa que el
+  tarball traiga de más lo frena: la salida del hook nombra el archivo.
+
+Vendorizar un release del núcleo es la misma mecánica que Config →
+Actualizaciones, desde Python: `updates.descargar` → `updates.preparar` →
+`updates.validar` → `updates.aplicar(REPO, nuevo, tag=…, comp=updates.CORE)`.
+`descargar` devuelve el **tarball**, no la carpeta; sin `preparar` en el medio,
+`validar` falla con "no armó el catálogo". Después, verificar los issues que el
+release dice cerrar corriéndolos de verdad contra una instalación, y comentar
+el resultado en cada uno.
