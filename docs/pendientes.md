@@ -12,9 +12,9 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
 ## Webapp
 - **Librerías de plugins, lo que falta**: la pantalla Librerías no muestra
   las huérfanas (instaladas por un plugin ya desinstalado); un botón para
-  subir wheels desde el navegador en vez de copiarlas a `wheels/`; y probar
-  el camino entero con `convertidor` cuando el catálogo lo cure
-  (workflow-bot-plugins#1) contra un release con `runtime-release.json`.
+  subir wheels desde el navegador en vez de copiarlas a `wheels/`. El
+  camino entero ya se probó con `convertidor` (17/09); falta que pase a
+  `cured` (workflow-bot-plugins#1).
 - `BOT_ROOT` y `BOT_PORT` en el entorno aparecen como settings fantasma
   `ROOT` y `PORT` en `effective_config` (el núcleo lee `BOT_<CLAVE>` como
   override de un setting). Se vio en `describe_installation` desde la QA.

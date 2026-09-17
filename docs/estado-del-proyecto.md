@@ -4,6 +4,19 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-09-17
+
+- **Núcleo v0.3.1-beta.2** vendorizado: core#18 (`run_action` por item con
+  el campo clave; `describe_installation` con actions), core#20
+  (`PluginManifest.requires` visible en el catálogo) y core#21 (un param
+  JSON recibe la lista/dict del contexto). Verificado en la QA: el plugin
+  `convertidor` del catálogo (`draft`) instaló numpy/scipy/rtree/trimesh en
+  el runtime 3.12 desde su `requirements.txt` con hash; renombró 50 STL con
+  `reescribir_archivos` alimentado por `archivos.buscar` en un solo run
+  (antes de #21 hacía falta un run por archivo); `parsear_pts` e
+  `inspeccionar_malla` andan con las librerías reales. Primer plugin con
+  dependencias de punta a punta.
+
 ## 2026-09-16
 
 - **Librerías Python para plugins** (decidido con core#20 y
