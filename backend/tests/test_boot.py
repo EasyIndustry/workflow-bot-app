@@ -336,6 +336,159 @@ def test_una_base_en_memoria_no_pide_carpeta_escribible(tmp_path):
     assert boot.validar(c) == []
 
 
+# ── fatal(): el subconjunto que no deja arrancar (issue #22) ────────────
+
+
+def test_fs_root_inexistente_es_fatal(tmp_path):
+    c = boot.load(tmp_path, entorno={f"{boot.PREFIJO}fs_root": "/no/existe"})
+    assert any("fs_root" in p for p in boot.fatal(c))
+
+
+def test_plugins_dir_inexistente_es_fatal(tmp_path):
+    c = boot.load(tmp_path, entorno={f"{boot.PREFIJO}plugins_dir": "/no/existe"})
+    assert any("plugins_dir" in p for p in boot.fatal(c))
+
+
+def test_solapamiento_es_fatal(tmp_path):
+    compartida = tmp_path / "compartida"
+    compartida.mkdir()
+    c = boot.load(tmp_path, entorno={
+        f"{boot.PREFIJO}plugins_dir": str(compartida),
+        f"{boot.PREFIJO}fs_root": str(compartida),
+    })
+    assert any("se solapan" in p for p in boot.fatal(c))
+
+
+def test_allowlist_http_timeout_y_default_actor_no_son_fatales(tmp_path):
+    """
+    Son degradaciones -el valor se ignora y sigue con el default-, no motivo
+    para no arrancar. `validar()` los sigue reportando; `fatal()`, no.
+    """
+    c = boot.load(tmp_path, entorno={
+        f"{boot.PREFIJO}process_allowlist": "no-existe-este-programa",
+        f"{boot.PREFIJO}http_timeout": "treinta",
+        f"{boot.PREFIJO}default_actor": "con espacio",
+    })
+    assert len(boot.validar(c)) == 3
+    assert boot.fatal(c) == []
+
+
+def test_una_instalacion_sana_no_tiene_nada_fatal(tmp_path):
+    assert boot.fatal(boot.load(tmp_path, entorno={})) == []
+
+
+def test_unc_sin_share_suma_una_pista_al_mensaje(tmp_path):
+    """
+    Issue #22, punto 3: un host UNC sin share (`\\server-nuevo`) es una ruta
+    bien formada que nunca va a existir. "no existe" a secas manda a revisar
+    el flujo; el mensaje tiene que decir qué está mal en la configuración.
+    """
+    c = boot.load(tmp_path, entorno={f"{boot.PREFIJO}fs_root": r"\\server-nuevo"})
+    problemas = boot.fatal(c)
+    assert any("no existe" in p and "share" in p for p in problemas)
+
+
+def test_unc_con_share_no_suma_la_pista(tmp_path):
+    """Un UNC bien formado (con share) que no existe es sólo "no existe"."""
+    c = boot.load(tmp_path, entorno={f"{boot.PREFIJO}fs_root": r"\\server-nuevo\casos"})
+    problemas = boot.fatal(c)
+    assert any("no existe" in p for p in problemas)
+    assert not any("UNC" in p for p in problemas)
+
+
+# ── fs_roots: varias raíces con alias (issue #23) ───────────────────────
+
+
+def test_fs_roots_se_parsea_en_pares_alias_ruta(tmp_path):
+    casa = tmp_path / "workspace"
+    origen = tmp_path / "casos"
+    casa.mkdir()
+    origen.mkdir()
+    c = boot.load(tmp_path, entorno={
+        f"{boot.PREFIJO}fs_roots": f"casa={casa}, origen={origen}",
+    })
+    assert c.fs_roots == {"casa": str(casa), "origen": str(origen)}
+    assert boot.fatal(c) == []
+
+
+def test_fs_roots_efectivos_prioriza_fs_roots_sobre_fs_root(tmp_path):
+    casa = tmp_path / "workspace"
+    casa.mkdir()
+    c = boot.load(tmp_path, entorno={
+        f"{boot.PREFIJO}fs_root": "/no/se/usa",
+        f"{boot.PREFIJO}fs_roots": f"casa={casa}",
+    })
+    assert c.fs_roots_efectivos == {"casa": str(casa)}
+
+
+def test_fs_root_singular_se_expresa_como_una_raiz_sin_alias(tmp_path):
+    casa = tmp_path / "workspace"
+    casa.mkdir()
+    c = boot.load(tmp_path, entorno={f"{boot.PREFIJO}fs_root": str(casa)})
+    assert c.fs_roots_efectivos == {"": str(casa)}
+
+
+def test_sin_fs_root_ni_fs_roots_no_hay_nada_que_acotar(tmp_path):
+    c = boot.load(tmp_path, entorno={})
+    assert c.fs_roots_efectivos == {}
+
+
+def test_una_raiz_de_fs_roots_inexistente_es_fatal(tmp_path):
+    casa = tmp_path / "workspace"
+    casa.mkdir()
+    c = boot.load(tmp_path, entorno={
+        f"{boot.PREFIJO}fs_roots": f"casa={casa}, origen=/no/existe",
+    })
+    problemas = boot.fatal(c)
+    assert any("fs_roots[origen]" in p and "no existe" in p for p in problemas)
+    assert not any("fs_roots[casa]" in p for p in problemas)
+
+
+def test_una_raiz_de_fs_roots_solapada_con_plugins_dir_es_fatal(tmp_path):
+    compartida = tmp_path / "compartida"
+    otra = tmp_path / "otra"
+    compartida.mkdir()
+    otra.mkdir()
+    c = boot.load(tmp_path, entorno={
+        f"{boot.PREFIJO}plugins_dir": str(compartida),
+        f"{boot.PREFIJO}fs_roots": f"casa={otra}, origen={compartida}",
+    })
+    problemas = boot.fatal(c)
+    assert any("fs_roots[origen]" in p and "se solapan" in p for p in problemas)
+    assert not any("fs_roots[casa]" in p and "se solapan" in p for p in problemas)
+
+
+def test_fs_roots_unc_sin_share_tambien_suma_la_pista(tmp_path):
+    casa = tmp_path / "workspace"
+    casa.mkdir()
+    c = boot.load(tmp_path, entorno={
+        f"{boot.PREFIJO}fs_roots": f"casa={casa}, origen=\\\\server-nuevo",
+    })
+    problemas = boot.fatal(c)
+    assert any("fs_roots[origen]" in p and "share" in p for p in problemas)
+
+
+def test_un_par_sin_igual_o_sin_alias_se_descarta(tmp_path):
+    """Se descarta en silencio -- termina viéndose como una raíz faltante, no como algo ignorado."""
+    casa = tmp_path / "workspace"
+    casa.mkdir()
+    c = boot.load(tmp_path, entorno={
+        f"{boot.PREFIJO}fs_roots": f"casa={casa}, sin-alias-ni-igual, ={tmp_path}",
+    })
+    assert c.fs_roots == {"casa": str(casa)}
+
+
+def test_render_documenta_fs_roots_y_se_puede_releer(tmp_path):
+    casa = tmp_path / "workspace"
+    origen = tmp_path / "casos"
+    casa.mkdir()
+    origen.mkdir()
+    c = boot.load(tmp_path, entorno={f"{boot.PREFIJO}fs_roots": f"casa={casa}, origen={origen}"})
+    _escribir(tmp_path, boot.render(c))
+    releido = boot.load(tmp_path)
+    assert releido.fs_roots == {"casa": str(casa), "origen": str(origen)}
+
+
 # ── Codificación del archivo ────────────────────────────────────────────
 #
 # `boot.env` se edita a mano, y en Windows —el destino del instalador— las

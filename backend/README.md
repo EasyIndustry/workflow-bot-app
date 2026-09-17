@@ -207,6 +207,15 @@ ignorarlas: `desconocidas()` para una **clave** que no existe, y `validar()`
 para un **valor** que no va a hacer lo que dice —una carpeta que no está, un
 timeout que no es un número—. Las dos las muestran `boot` y `doctor`.
 
+De los valores que `validar()` reporta, un subconjunto es fatal —`fatal()`—:
+un `fs_root`/`plugins_dir` que no resuelve a una carpeta real deja inutilizable
+un límite de seguridad de la instalación, así que `Instance.__init__` lo
+levanta como `BootError` en vez de arrancar a medias y fallar recién adentro de
+un run, con un error que apunta al flujo en lugar de a la configuración. El
+resto —un ejecutable ausente en `process_allowlist`, un `http_timeout`
+inválido— es una degradación: se ignora el valor, se sigue con el default, y
+sólo lo avisa `doctor`.
+
 Dos detalles de los límites, que no son cosméticos:
 
 - `process_allowlist` **ausente** es "cualquier ejecutable"; **presente y
@@ -216,6 +225,15 @@ Dos detalles de los límites, que no son cosméticos:
   instalación, no contra el directorio desde el que se arrancó: `fs_root` es un
   límite de seguridad, y el mismo `boot.env` tiene que dar la misma caja
   siempre.
+
+Cuando una sola raíz no alcanza —un workspace local y un share de red a la
+vez, por ejemplo—, `fs_roots` declara varias con alias
+(`fs_roots = casa=C:\Bot\workspace, origen=\\servidor\share`): la primera es
+la raíz por defecto, y el resto se alcanzan con `alias:resto`
+(`origen:MODELOS/pieza.stl`) o con la ruta absoluta si cae bajo alguna de las
+declaradas. Gana sobre `fs_root` singular si los dos están presentes; cada
+raíz se valida y se solapa con `plugins_dir` igual que `fs_root` —la regla
+vale para todas, no sólo la primera.
 
 El archivo se lee respetando el BOM que traiga —UTF-8, UTF-16 o UTF-32—, y una
 codificación que no se pueda adivinar se lee igual en vez de tumbar el arranque.

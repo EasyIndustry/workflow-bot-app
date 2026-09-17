@@ -67,6 +67,22 @@ class Instance:
         """
         self.root = Path(root)
         self.boot = boot if boot is not None else bootstrap.load(self.root)
+
+        # Issue #22: un `fs_root`/`plugins_dir` que no resuelve a una carpeta
+        # real deja inutilizable un límite de seguridad de la instalación.
+        # `bootstrap.validar()` ya lo detecta, pero antes sólo lo consultaban
+        # `doctor` y la CLI — nunca la construcción misma —, así que una
+        # instalación con `boot.env` editado a mano arrancaba a medias y en
+        # silencio, y el error aparecía recién adentro de un run, apuntando al
+        # flujo y no a la configuración. Acá se corta temprano y fuerte.
+        problemas = bootstrap.fatal(self.boot)
+        if problemas:
+            raise bootstrap.BootError(
+                "No se puede arrancar la instancia en "
+                f"{self.root} — configuración de arranque inválida:\n"
+                + "\n".join(f"- {p}" for p in problemas)
+            )
+
         self.data_dir = self.boot.data_dir
 
         self.db = storage if storage is not None else _default_storage(self.boot)
@@ -836,14 +852,19 @@ def _default_adapters(boot: bootstrap.BootConfig) -> dict:
     """
     Los adapters, atados con los límites que declaró el arranque.
 
-    `fs_root` y `process_allowlist` acotan qué puede tocar esta instalación, y
-    vienen de la capa bootstrap y no de un `Setting`: son de la máquina, y un
-    plugin no debería poder ampliarlos escribiendo en la configuración.
+    `fs_root`/`fs_roots` y `process_allowlist` acotan qué puede tocar esta
+    instalación, y vienen de la capa bootstrap y no de un `Setting`: son de la
+    máquina, y un plugin no debería poder ampliarlos escribiendo en la
+    configuración.
+
+    Se pasa `fs_roots_efectivos` y no los dos campos crudos: es la propiedad
+    de `BootConfig` que ya resolvió la precedencia entre `fs_root` singular y
+    `fs_roots` (issue #23), así que acá no hace falta repetirla.
     """
     from backend.adapters import build_default_adapters
 
     return build_default_adapters(
-        fs_root=boot.fs_root,
+        fs_roots=boot.fs_roots_efectivos or None,
         http_timeout=boot.http_timeout,
         # `is not None`: la allowlist vacía es "ningún ejecutable", y colapsarla
         # a `None` acá desharía, en el último tramo, lo que declaró el arranque.
@@ -947,6 +968,13 @@ def _resumen_instalacion(datos: dict) -> str:
     actores = ", ".join(f"{a['name']} ({a['kind']})" for a in datos["actors"]) or "ninguno"
     boot = datos["boot"]
 
+    if boot.get("fs_roots"):
+        etiqueta_fs = "fs_roots: " + ", ".join(
+            f"{alias or 'default'}={ruta}" for alias, ruta in boot["fs_roots"].items()
+        )
+    else:
+        etiqueta_fs = f"fs_root: {boot['fs_root'] or 'todo el disco'}"
+
     lineas = [
         f"{len(datos['flows'])} flujo(s) guardado(s), {habilitados} habilitado(s).",
         f"{len(datos['plugins'])} plugin(s) instalado(s)"
@@ -954,7 +982,7 @@ def _resumen_instalacion(datos: dict) -> str:
         + ".",
         f"Actores: {actores}.",
         f"Ports disponibles: {', '.join(datos['ports_disponibles']) or 'ninguno'}.",
-        f"fs_root: {boot['fs_root'] or 'todo el disco'} · "
+        f"{etiqueta_fs} · "
         f"process_allowlist: {boot['process_allowlist'] if boot['process_allowlist'] is not None else 'cualquiera'} · "
         f"actor por defecto: {boot['default_actor']}.",
         f"Runs recientes: {datos['runs']['recientes']}, {datos['runs']['fallidos']} fallaron.",

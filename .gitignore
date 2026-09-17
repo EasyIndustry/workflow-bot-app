@@ -16,6 +16,11 @@ __pycache__/
 webapp.log
 webapp/logs/
 
+# El tarball de un release del núcleo trae un VERSION que el repo del núcleo no
+# tiene versionado y que nadie lee. Sin esto, cada actualización del núcleo lo
+# deja suelto y el hook de pre-commit frena el commit de sincronización.
+backend/VERSION
+
 # Lo que construye installer/packaging/build_win.sh
 installer/build/
 
