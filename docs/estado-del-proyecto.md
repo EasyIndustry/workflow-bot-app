@@ -6,6 +6,20 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **Núcleo v0.3.1-beta.7** (core#26): el port `fs` niega la carpeta de la
+  instalación —`data/`, `plugins/` y `boot.env`— venga de donde venga la raíz,
+  y la lista la arma el núcleo solo. Con eso una raíz puede contener la
+  instalación sin entregarla, así que la app dejó de rechazarlas: usar una
+  unidad entera ya no obliga a enumerar carpeta por carpeta. Inicio muestra
+  las negadas junto a las raíces. Verificado contra la instalación real con
+  `D:\` como raíz: `D:\Proyectos` y el workspace se alcanzan, y la base, la
+  llave, `boot.env` y los plugins dan `PortError`. El solapamiento
+  `plugins_dir`/`fs_root` dejó de ser fatal, que era lo que dejaba una
+  instalación sin arrancar.
+- **La raíz por defecto sale de lo que la instalación tiene configurado**, no
+  de la regla `<root>/workspace`. (Se había hecho y se perdió: una
+  actualización aplicada sobre el repo a las 20:18 pisó lo que no estaba
+  commiteado, así que la v0.4.2-beta.8 salió sin este arreglo pese a las notas.)
 - **La raíz por defecto sale de lo que la instalación tiene configurado**, no
   de la regla `<root>/workspace`: asumirla dejó la pantalla sin poder guardar
   nada en una instalación cuya raíz resolvió a la carpeta del programa — la

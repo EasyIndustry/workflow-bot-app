@@ -135,6 +135,14 @@ function limites(r) {
     ...archivos(r),
     fila("Plugins", r.plugins_dir || "sin declarar",
       "Fuera de la caja: ningún flujo puede dejar código ahí."),
+    // Lo que el núcleo niega siempre (core#26). Sin esto, alguien que ve una
+    // raíz que contiene la instalación no tiene cómo saber que la base, la
+    // llave y boot.env quedan afuera igual.
+    ...(r.fs_negadas || []).length
+      ? [fila("Nunca", (r.fs_negadas || []).join("
+"),
+          "Un flujo no las alcanza aunque caigan adentro de una raíz: la base y la llave, los plugins, y el archivo que declara estos límites.")]
+      : [],
   ]);
 }
 

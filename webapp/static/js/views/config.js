@@ -1128,7 +1128,10 @@ async function dibujarLimites() {
   // quedó con `principal=D:` y sin arrancar. Lo que se agrega va debajo.
   let raices = (datos.raices || []).filter((r) => r.ruta !== datos.por_defecto)
     .map((r) => ({ alias: r.alias, ruta: r.ruta }));
-  raices.unshift({ alias: "principal", ruta: datos.por_defecto, fija: true });
+  // Sin raíz por defecto la instalación no acota nada, y entonces no hay
+  // ninguna fija: la primera que se agregue pasa a serlo. Poner una fila fija
+  // con una carpeta que no existe dejaba la pantalla sin poder guardar nada.
+  if (datos.por_defecto) raices.unshift({ alias: "principal", ruta: datos.por_defecto, fija: true });
   const hueco = h("div");
   const mensajes = h("div");
 

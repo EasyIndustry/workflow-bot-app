@@ -172,6 +172,11 @@ def get_overview():
         # singular y las varias raíces con alias de core#23: una sola raíz
         # viene con el alias vacío. Vacío del todo = todo el disco.
         "fs_roots": {a: str(r) for a, r in (_instance.boot.fs_roots_efectivos or {}).items()} or None,
+        # Lo que el núcleo niega siempre (core#26), venga de donde venga la
+        # raíz: la base y la llave, los plugins y `boot.env`. Es lo que
+        # permite que una raíz contenga la instalación sin entregarla, y hasta
+        # que no se muestre nadie sabe que esa red existe.
+        "fs_negadas": [str(x) for x in _negadas()],
         "plugins_dir": str(carpeta) if carpeta else None,
         "plugins": len(plugins),
         "plugins_installed": len(instalados),
@@ -264,6 +269,21 @@ def patch_config(body: ConfigBody):
 class RaicesBody(BaseModel):
     # [{alias, ruta}], en orden: la primera es la de por defecto.
     raices: list[dict]
+
+
+def _negadas() -> list:
+    """
+    Lo que el port `fs` no alcanza nunca. Sale del núcleo si lo expone; si el
+    núcleo es anterior a core#26 devuelve vacío y la pantalla no dice nada,
+    que es lo correcto: ahí esa red no existe.
+    """
+    from backend.core import instance as nucleo
+
+    calcular = getattr(nucleo, "_fs_denied", None)
+    try:
+        return list(calcular(_instance.boot)) if calcular else []
+    except Exception:  # noqa: BLE001 — es informativo; no puede tumbar /overview
+        return []
 
 
 @router.get("/limites")

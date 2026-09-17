@@ -21,11 +21,11 @@ deciden dónde vive la base, de dónde se carga código y quién ejecuta: son de
 la máquina, cambiarlos desde el navegador es otra conversación y ninguna de
 las tres la pide esta pantalla. Se devuelven para mostrar, no para escribir.
 
-Lo que esta capa garantiza, y el núcleo no puede garantizar solo, es que una
-raíz nueva no se trague `data/` ni `plugins/`. El núcleo ya rechaza el
-solapamiento con `plugins_dir`, pero `data/` —la base y la llave de cifrado—
-no es un valor declarado en `boot.env` cuando se usa el default, así que el
-chequeo tiene que estar acá.
+Una raíz que contenga la instalación ya no se rechaza: desde core#26 el port
+`fs` niega la carpeta de la instalación —la base, la llave, los plugins y el
+propio `boot.env`— venga de donde venga la raíz. Antes había que prohibirla
+acá, y eso obligaba a enumerar carpeta por carpeta para usar una unidad
+entera.
 """
 
 from __future__ import annotations
@@ -58,6 +58,29 @@ class LimitesError(Exception):
         self.detalle = detalle or []
 
 
+def por_defecto(instance, root: Path) -> str | None:
+    """
+    La raíz que hoy resuelve las rutas relativas, y que esta pantalla no deja
+    cambiar.
+
+    Se toma de lo que la instalación **tiene configurado**, no de una regla:
+    asumir `<root>/workspace` dejaba la pantalla inservible cuando esa carpeta
+    no existe —pasó con una raíz que resolvió a la carpeta del programa—,
+    porque la única fila que no se puede editar era también la que impedía
+    guardar. `workspace/` es sólo el default para una instalación que todavía
+    no declaró ninguna.
+
+    `None` = esta instalación no acota nada (un flujo llega a todo el disco).
+    Es un estado legítimo, y entonces no hay raíz fija: la primera que se
+    agregue pasa a serlo.
+    """
+    actuales = getattr(instance.boot, "fs_roots_efectivos", None) or {}
+    if actuales:
+        return next(iter(actuales.values()))
+    caja = Path(root) / CAJA
+    return str(caja) if caja.is_dir() else None
+
+
 def leer(instance, root: Path) -> dict:
     """Las raíces que están en efecto, más el contexto para dibujar la pantalla."""
     cfg = instance.boot
@@ -72,9 +95,9 @@ def leer(instance, root: Path) -> dict:
         # que poder decirlo en vez de mostrar una lista vacía.
         "sin_limite": not raices,
         "root": str(root),
-        # La que la pantalla muestra fija en la primera fila, exista o no en
-        # `raices`: es la caja de la instalación y no se edita.
-        "por_defecto": str(Path(root) / CAJA),
+        # La que la pantalla muestra fija en la primera fila. `None` cuando la
+        # instalación no acota nada: ahí no hay ninguna fija todavía.
+        "por_defecto": por_defecto(instance, root),
         "data_dir": str(instance.data_dir),
         "plugins_dir": str(cfg.plugins_dir) if cfg.plugins_dir else None,
         "archivo": str(root / boot.ARCHIVO),
@@ -130,17 +153,18 @@ def normalizar(raices: list[dict]) -> list[tuple[str, str]]:
     return salida
 
 
-def revisar(pares: list[tuple[str, str]], *, root: Path, data_dir: Path,
-            plugins_dir: Path | None) -> list[str]:
+def revisar(pares: list[tuple[str, str]], *, root: Path) -> list[str]:
     """
     Lo que hay que mirar sobre el disco, antes de escribir nada.
 
     Devuelve los problemas; vacío es "se puede guardar".
     """
+    # Ya no se rechaza una raíz por contener la instalación: desde core#26 el
+    # port `fs` niega la carpeta de la instalación —la base, la llave, los
+    # plugins y el propio `boot.env`— venga de donde venga la raíz. Así una
+    # unidad entera es una raíz legítima sin entregar nada de eso, que es lo
+    # que obligaba a enumerar carpeta por carpeta.
     problemas: list[str] = []
-    protegidas = [("la base y la llave", Path(data_dir))]
-    if plugins_dir:
-        protegidas.append(("los plugins", Path(plugins_dir)))
 
     for alias, ruta in pares:
         nombre = f'"{alias}"' if alias else "la raíz por defecto"
@@ -183,24 +207,6 @@ def revisar(pares: list[tuple[str, str]], *, root: Path, data_dir: Path,
             problemas.append(f"{nombre}: no se pudo leer {ruta} ({exc.strerror or exc}).")
             continue
 
-        for que, protegida in protegidas:
-            try:
-                prot = protegida.resolve()
-            except OSError:
-                continue
-            if prot == resuelta or prot.is_relative_to(resuelta):
-                # Con la salida escrita: quien pone `D:\` quiere llegar a
-                # carpetas de esa unidad, y lo que hace falta decirle es que
-                # eso se consigue nombrándolas. Sin esto, la vuelta fue probar
-                # `D:` sin la barra, que pasaba y dejaba la instalación sin
-                # arrancar.
-                problemas.append(
-                    f"{nombre}: {ruta} contiene {que} ({prot}), así que no puede ser una raíz: "
-                    f"un flujo con permiso de archivos las alcanzaría. Para llegar a otras carpetas "
-                    f"de esa unidad, agregá cada una por su ruta (por ejemplo {resuelta.drive}\\Casos), "
-                    f"no la unidad entera."
-                )
-
     return problemas
 
 
@@ -216,28 +222,31 @@ def guardar(instance, root: Path, raices: list[dict]) -> dict:
     pares = normalizar(raices)
     cfg = instance.boot
 
-    # La raíz por defecto es siempre `workspace/` de la instalación, y no se
-    # edita: es la que resuelve toda ruta relativa de todo flujo, y la que el
-    # wizard creó como la caja. Poder pisarla desde la pantalla es exactamente
-    # cómo una instalación quedó con `principal=D:` y sin arrancar. Lo que
-    # llegue en la primera fila se reemplaza —la pantalla la muestra fija—,
-    # y lo que la persona agrega va siempre después.
-    fija = (PRIMERA_POR_DEFECTO, str(Path(root) / CAJA))
-    # Sin alias no se descarta nada: la única raíz que puede ir sin nombre es
-    # la caja, y ésa la pone esta función. Lo que llegue así es el contenido
-    # de la primera fila —de sólo lectura en la pantalla— y se ignora.
-    extras = [(a, r) for a, r in pares if a and r != fija[1]]
-    if any(a == PRIMERA_POR_DEFECTO for a, _ in extras):
-        # Nunca lo manda la pantalla —esa fila es de sólo lectura—, así que
-        # llegó de otro lado: se dice, no se reemplaza en silencio.
-        raise LimitesError("Las raíces no se pueden guardar así.", [
-            f'"{PRIMERA_POR_DEFECTO}" es la raíz por defecto ({fija[1]}) y no se cambia. '
-            f"Las otras carpetas van con otro nombre, debajo."
-        ])
-    pares = [fija, *extras]
+    # La raíz por defecto no se edita: es la que resuelve toda ruta relativa de
+    # todo flujo, así que cambiarla no rompe una carpeta, rompe en silencio
+    # todo lo escrito hasta ahí. Poder pisarla desde la pantalla es cómo una
+    # instalación quedó con `principal=D:` y sin arrancar. Lo que llegue en esa
+    # fila —de sólo lectura— se ignora, y lo agregado va siempre después.
+    actual = por_defecto(instance, root)
+    if actual is not None:
+        fija = (PRIMERA_POR_DEFECTO, actual)
+        # Sin alias no se conserva nada: la única raíz que puede ir sin nombre
+        # es la fija, y ésa la pone esta función.
+        extras = [(a, r) for a, r in pares if a and r != actual]
+        if any(a == PRIMERA_POR_DEFECTO for a, _ in extras):
+            # Nunca lo manda la pantalla —esa fila es de sólo lectura—, así que
+            # llegó de otro lado: se dice, no se reemplaza en silencio.
+            raise LimitesError("Las raíces no se pueden guardar así.", [
+                f'"{PRIMERA_POR_DEFECTO}" es la raíz por defecto ({actual}) y no se cambia. '
+                f"Las otras carpetas van con otro nombre, debajo."
+            ])
+        pares = [fija, *extras]
+    elif len(pares) > 1:
+        # Sin raíz previa, la primera que se agregue pasa a ser la de por
+        # defecto, y desde el guardado siguiente ya no se podrá cambiar.
+        pares = [(pares[0][0] or PRIMERA_POR_DEFECTO, pares[0][1]), *pares[1:]]
 
-    if problemas := revisar(pares, root=root, data_dir=Path(instance.data_dir),
-                            plugins_dir=Path(cfg.plugins_dir) if cfg.plugins_dir else None):
+    if problemas := revisar(pares, root=root):
         raise LimitesError("Las raíces no se pueden guardar así.", problemas)
 
     # Sólo la caja: se escribe como el `fs_root` de siempre, el archivo más

@@ -84,19 +84,19 @@ def test_una_raiz_que_no_existe_no_se_guarda(instalacion):
     assert (raiz / "boot.env").read_text(encoding="utf-8-sig") == antes
 
 
-def test_una_raiz_que_contiene_la_base_no_se_guarda(instalacion):
+def test_una_raiz_que_contiene_la_instalacion_ahora_se_puede(instalacion):
     """
-    `data/` tiene la base y la llave de cifrado. Una raíz que la contenga la
-    deja al alcance de cualquier flujo con el port fs, que es exactamente lo
-    que la instalación acotada evita. El núcleo no lo puede chequear solo:
-    `data/` no es un valor declarado en boot.env cuando se usa el default.
+    Antes se rechazaba acá, porque una raíz que contuviera la instalación
+    dejaba la base, la llave y los plugins al alcance de un flujo. Desde
+    core#26 eso lo niega el port `fs`, venga de donde venga la raíz, así que
+    prohibirla sería impedir el caso que la motivó: usar una unidad entera sin
+    tener que enumerar carpeta por carpeta.
     """
     inst, raiz = instalacion
 
-    with pytest.raises(limites.LimitesError) as exc:
-        _guardar(inst, raiz, [{"alias": "", "ruta": ""}, {"alias": "todo", "ruta": str(raiz)}])
+    r = _guardar(inst, raiz, [{"alias": "todo", "ruta": str(raiz)}])
 
-    assert "base" in " ".join(exc.value.detalle).lower()
+    assert [x["ruta"] for x in r["raices"]] == [str(raiz / "workspace"), str(raiz)]
 
 
 def test_un_unc_sin_recurso_compartido_se_explica(instalacion):
@@ -200,15 +200,14 @@ def test_una_ruta_relativa_no_se_guarda(instalacion):
     assert "ruta completa" in " ".join(exc.value.detalle)
 
 
-def test_la_unidad_entera_que_contiene_la_instalacion_no_se_guarda(instalacion):
-    """Con la barra ya es válida como ruta, pero se traga data/ y plugins/."""
+def test_la_unidad_entera_se_puede_guardar(instalacion):
+    """El caso que motivó core#26: `D:\` con la instalación adentro."""
     inst, raiz = instalacion
-    unidad = raiz.drive + BARRA  # la unidad donde vive esta instalación
+    unidad = raiz.drive + BARRA
 
-    with pytest.raises(limites.LimitesError) as exc:
-        _guardar(inst, raiz, [{"alias": "", "ruta": ""}, {"alias": "unidad", "ruta": unidad}])
+    r = _guardar(inst, raiz, [{"alias": "unidad", "ruta": unidad}])
 
-    assert "contiene" in " ".join(exc.value.detalle)
+    assert r["raices"][-1]["ruta"] == unidad
 
 
 # ── La raíz por defecto no se edita ─────────────────────────────────────
@@ -250,3 +249,51 @@ def test_lo_agregado_va_despues_de_la_caja_y_nunca_la_reemplaza(instalacion):
 def test_leer_dice_cual_es_la_caja(instalacion):
     inst, raiz = instalacion
     assert limites.leer(inst, raiz)["por_defecto"] == str(raiz / "workspace")
+
+
+def test_la_fija_es_la_que_la_instalacion_tiene_configurada(instalacion):
+    """
+    Y no `<root>/workspace` por regla: asumir eso dejó la pantalla sin poder
+    guardar nada en una instalación cuya raíz resolvió a otra carpeta — la
+    única fila que no se podía editar era también la que impedía guardar.
+    """
+    inst, raiz = instalacion
+    otra = raiz / "otra"
+    otra.mkdir()
+    import dataclasses
+    inst.boot = dataclasses.replace(inst.boot, fs_root=str(otra), fs_roots=None)
+
+    assert limites.por_defecto(inst, raiz) == str(otra)
+    r = _guardar(inst, raiz, [{"alias": "share", "ruta": str(raiz / "workspace")}])
+    assert r["raices"][0] == {"alias": limites.PRIMERA_POR_DEFECTO, "ruta": str(otra)}
+
+
+def test_sin_ninguna_raiz_la_primera_que_se_agrega_pasa_a_ser_la_default(instalacion):
+    """
+    Sin raíz declarada un flujo llega a todo el disco: no hay ninguna fija, y
+    bloquear la pantalla ahí sería impedir justamente que se acote.
+    """
+    inst, raiz = instalacion
+    import dataclasses
+    inst.boot = dataclasses.replace(inst.boot, fs_root=None, fs_roots=None)
+    casa, share = raiz / "casa", raiz / "share"
+    casa.mkdir()
+    share.mkdir()
+    (raiz / "workspace").rmdir()
+
+    assert limites.por_defecto(inst, raiz) is None
+
+    r = _guardar(inst, raiz, [{"alias": "", "ruta": str(casa)},
+                              {"alias": "origen", "ruta": str(share)}])
+    assert [x["ruta"] for x in r["raices"]] == [str(casa), str(share)]
+    assert r["raices"][0]["alias"] == limites.PRIMERA_POR_DEFECTO
+
+
+def test_por_defecto_cae_a_workspace_solo_si_existe(instalacion):
+    inst, raiz = instalacion
+    import dataclasses, shutil
+    inst.boot = dataclasses.replace(inst.boot, fs_root=None, fs_roots=None)
+
+    assert limites.por_defecto(inst, raiz) == str(raiz / "workspace")
+    shutil.rmtree(raiz / "workspace")
+    assert limites.por_defecto(inst, raiz) is None
