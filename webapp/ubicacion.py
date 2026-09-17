@@ -68,7 +68,23 @@ def ultima(entorno: dict | None = None) -> Path | None:
 
 
 def es_instalacion(carpeta: Path) -> bool:
-    return any((carpeta / marca).exists() for marca in MARCAS)
+    """
+    ¿Esta carpeta es una instalación?
+
+    En el repo alcanza con `data/` al lado del código: es el caso que la regla
+    2 existe para servir. En un programa instalado, no: ahí `data/` sólo puede
+    haber aparecido por un arranque que no encontró la instalación anotada y
+    cayó en la carpeta del programa. Y como después esa carpeta "es" una
+    instalación, gana sobre la anotada y el error se vuelve permanente: el
+    cliente abre el Bot y ve una instalación vacía, con la suya intacta al
+    lado. Pasó en una máquina de desarrollo.
+
+    Se distinguen por `runtime/`, el CPython que trae el `.exe` y que un
+    checkout nunca tiene. Ahí se exige `boot.env`, que es lo que el wizard
+    escribe y ningún arranque accidental crea.
+    """
+    marcas = ("boot.env",) if (carpeta / "runtime").is_dir() else MARCAS
+    return any((carpeta / marca).exists() for marca in marcas)
 
 
 def resolver_root(programa: Path, explicito: str | None = None, entorno: dict | None = None) -> Path:
