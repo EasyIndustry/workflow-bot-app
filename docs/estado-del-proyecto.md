@@ -6,6 +6,45 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **Los límites de la instalación se ven en Inicio.** `fs_root` era el único
+  límite que decidía si un flujo llega a un archivo y el único que no se
+  mostraba en ninguna pantalla: en producción se descubrió con un run
+  fallando por "ruta fuera del árbol permitido" contra un `fs_root` mal
+  escrito. `GET /overview` lo publica e Inicio lo muestra junto a la raíz y a
+  `plugins_dir` ("Hasta dónde llega"), con "todo el disco" cuando no está
+  declarado.
+- **El diagnóstico de la web corría a medias.** `GET /doctor` llamaba a
+  `run_checks` sin `boot`, sin `workflows` y sin `crypto`, así que salteaba
+  los chequeos que dependen de cada uno: "Flujos" avisaba "no hay ninguno
+  guardado" en una instalación con once (falso positivo), y `check_boot`
+  —el que dice `fs_root: X no existe`— no corría nunca desde la app (falso
+  negativo). Ahora corre completo, e Inicio levanta un aviso con los
+  chequeos que no están en ok, con link al detalle.
+- **Núcleo v0.3.1-beta.3** vendorizado, con core#22 y core#23, los dos
+  abiertos hoy a partir de una instalación de producción cuyo `fs_root`
+  apuntaba a un share de red. Verificado acá: una instalación con
+  `fs_root=\server-nuevo` ya **no construye la `Instance`** —levanta
+  `BootError` diciendo que un UNC necesita el share y no sólo el host— y
+  `fs_roots=casa=…, origen=…` en `boot.env` llega hasta el port `fs` con las
+  dos raíces: una ruta relativa resuelve contra la primera, `origen:pieza.stl`
+  alcanza el share, y lo que cae fuera de las dos sigue dando `PortError`,
+  ahora listando las raíces permitidas. Inicio muestra una fila por raíz con
+  su alias. Quedan dos cosas menores comentadas en core#23: `render()` escribe
+  la raíz sin alias como `fs_roots==ruta` y `load()` la descarta —el viaje de
+  ida y vuelta pierde una raíz sin que `validar()` lo note—, y un alias con un
+  typo se lee como ruta relativa de la raíz por defecto en vez de fallar.
+- **Los avisos de Sources dejaron de empujar la tabla.** Un run que fallaba
+  metía un banner entre la cabecera y la grilla: la tabla bajaba sola justo
+  cuando estabas por clickear una fila, y el aviso se borraba en el redibujo
+  siguiente. Ahora se acumulan por fuente y se despliegan desde el botón
+  "Avisos" de la cabecera, en un panel flotante que no mueve nada (contador
+  de no leídos, "Limpiar", cierra al clickear afuera). De paso cada aviso
+  lleva su tono: un flujo que falla ya no se anuncia con el tilde verde.
+- **Arista con condición editable de verdad.** En el formulario de un nodo
+  (modo tarjetas y panel del diagrama), el campo "si" de A dónde sigue
+  redibujaba la tarjeta en cada tecla y el input perdía el foco al primer
+  caracter. Escribe sin redibujar; el rótulo del diagrama se actualiza al
+  salir del campo.
 - **Núcleo v0.3.1-beta.2** vendorizado: core#18 (`run_action` por item con
   el campo clave; `describe_installation` con actions), core#20
   (`PluginManifest.requires` visible en el catálogo) y core#21 (un param

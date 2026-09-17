@@ -162,6 +162,16 @@ def get_overview():
     actores = _instance.users.list(include_disabled=False)
     return {
         "root": str(ROOT),
+        # `fs_root` es el único límite que decide si un flujo llega o no a un
+        # archivo, y era el único que no se veía en ninguna pantalla: se
+        # descubría en producción como "PortError: ruta fuera del árbol
+        # permitido", que parece un error del flujo. Va acá para que Inicio lo
+        # muestre junto al resto. `None` = todo el disco, y eso también hay
+        # que poder leerlo.
+        # `fs_roots_efectivos` resuelve la precedencia entre el `fs_root`
+        # singular y las varias raíces con alias de core#23: una sola raíz
+        # viene con el alias vacío. Vacío del todo = todo el disco.
+        "fs_roots": {a: str(r) for a, r in (_instance.boot.fs_roots_efectivos or {}).items()} or None,
         "plugins_dir": str(carpeta) if carpeta else None,
         "plugins": len(plugins),
         "plugins_installed": len(instalados),
@@ -189,9 +199,29 @@ def get_tools():
 
 @router.get("/doctor")
 async def get_doctor():
-    """Diagnóstico de la instalación. Mismo informe que `python -m core.doctor`."""
+    """
+    Diagnóstico de la instalación. Mismo informe que `python -m core.doctor`.
+
+    "Mismo informe" no era cierto: faltaban `boot`, `workflows` y `crypto`, y
+    sin ellos `run_checks` saltea los chequeos que dependen de cada uno. Las
+    consecuencias eran las dos peores posibles a la vez.
+
+    - **Un falso positivo**: sin `workflows`, "Flujos" avisaba "no hay ninguno
+      guardado" en una instalación con once. Un diagnóstico que miente en lo
+      que se puede comprobar de un vistazo no se lee más.
+    - **Un falso negativo**: sin `boot` no corría `check_boot`, que es
+      justamente el que dice "fs_root: \server-nuevo no existe". Así que el
+      valor mal escrito que rompió una instalación de producción no aparecía
+      en la única pantalla que estaba para eso.
+    """
     reporte = await run_in_threadpool(
-        run_checks, root=ROOT, registry=_instance.registry, config=_instance.config.read()
+        run_checks,
+        root=ROOT,
+        registry=_instance.registry,
+        config=_instance.config.read(),
+        workflows=_instance.workflows.list(),
+        boot=_instance.boot,
+        crypto=_instance.crypto,
     )
     return reporte.to_dict()
 

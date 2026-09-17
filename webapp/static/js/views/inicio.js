@@ -25,6 +25,7 @@ export async function montar(elShell) {
 
   poner(shell.vista, h("div", { class: "cargando", text: "Cargando…" }));
   const r = await api.resumen();
+  const huecoDiagnostico = h("div");
 
   const pasos = [
     {
@@ -74,6 +75,9 @@ export async function montar(elShell) {
     r.plugin_errors
       ? aviso("error", `${r.plugin_errors} plugin${r.plugin_errors === 1 ? "" : "s"} no cargó`, "Está en la lista de Plug ins con su error.")
       : null,
+    // El hueco donde entra el diagnóstico cuando termina de correr, más abajo.
+    huecoDiagnostico,
+    limites(r),
     ...pasos.map((p, i) => h("div", { class: "tarjeta", style: { display: "flex", gap: "14px", padding: "14px 16px", alignItems: "flex-start" } }, [
       h("div", {
         style: {
@@ -97,4 +101,95 @@ export async function montar(elShell) {
     h("div", { class: "tabla__pie", text:
       `Ejecuta como "${r.default_actor}" salvo que un run nombre a otro actor. Quién puede qué se decide en Config → Seguridad.` }),
   ]));
+
+  mirarDiagnostico(huecoDiagnostico);
+}
+
+/**
+ * Los límites de la instalación, con `fs_root` a la cabeza.
+ *
+ * Hasta ahora la única pantalla que nombraba un límite era el wizard, y una
+ * vez instalado no había forma de ver contra qué carpeta está acotado el port
+ * `fs`. En producción eso se descubrió con un flujo fallando por
+ * "ruta fuera del árbol permitido" contra un `fs_root` mal escrito: el
+ * mensaje culpa al flujo, y el valor que lo explicaba no se veía en ningún
+ * lado.
+ */
+function fila(que, valor, detalle) {
+  return h("div", {
+    style: { display: "flex", gap: "12px", padding: "9px 0", borderBottom: "1px solid var(--borde-4)",
+             alignItems: "baseline", flexWrap: "wrap" },
+  }, [
+    h("div", { style: { flex: "0 0 108px", fontSize: "11.5px", color: "var(--texto-3)" }, text: que }),
+    h("div", { style: { flex: "1", minWidth: "0" } }, [
+      h("div", { class: "mono", style: { fontSize: "11.5px", overflowWrap: "anywhere" }, text: valor }),
+      detalle ? h("div", { style: { fontSize: "11px", color: "var(--texto-4)", marginTop: "2px" }, text: detalle }) : null,
+    ]),
+  ]);
+}
+
+function limites(r) {
+  return h("div", { class: "tarjeta", style: { padding: "12px 16px 4px" } }, [
+    h("div", { style: { fontWeight: "600", fontSize: "13px", marginBottom: "4px" }, text: "Hasta dónde llega" }),
+    fila("Instalación", r.root, "boot.env, data/, plugins/ y workspace/ viven acá."),
+    ...archivos(r),
+    fila("Plugins", r.plugins_dir || "sin declarar",
+      "Fuera de la caja: ningún flujo puede dejar código ahí."),
+  ]);
+}
+
+/**
+ * Las raíces del port `fs`, una fila por cada una.
+ *
+ * Desde core#23 pueden ser varias con alias —un workspace local y un share de
+ * red a la vez—, y la de alias vacío es la de por defecto: la que resuelve
+ * una ruta relativa. Mostrar sólo la primera diría media verdad, y no
+ * mostrarlas diría "todo el disco", que es exactamente lo contrario.
+ */
+function archivos(r) {
+  const raices = Object.entries(r.fs_roots || {});
+  if (!raices.length) {
+    return [fila("Archivos", "todo el disco",
+      "boot.env no declara fs_root ni fs_roots, así que un flujo puede leer y escribir cualquier parte del disco.")];
+  }
+  if (raices.length === 1) {
+    return [fila("Archivos", raices[0][1],
+      "Un flujo con el port fs no sale de esta carpeta: fuera de acá devuelve \"ruta fuera del árbol permitido\".")];
+  }
+  return raices.map(([alias, ruta], i) => fila(
+    i === 0 ? "Archivos" : "",
+    ruta,
+    alias
+      ? `Un flujo la nombra como ${alias}:archivo.${i === 0 ? " Es también la raíz por defecto, la que resuelve una ruta relativa." : ""}`
+      : "La raíz por defecto: es contra ésta que resuelve una ruta relativa."));
+}
+
+/**
+ * El diagnóstico, en segundo plano y sólo si tiene algo que decir.
+ *
+ * Los chequeos ya existían en Config → Diagnóstico, y ahí estaba el aviso de
+ * que `fs_root` apuntaba a una carpeta inexistente —en producción nadie fue a
+ * mirarlo, y el problema apareció mucho después adentro de un run. No bloquea
+ * el dibujo de Inicio: si el diagnóstico tarda o falla, la pantalla ya está.
+ */
+async function mirarDiagnostico(hueco) {
+  let reporte;
+  try {
+    reporte = await api.doctor();
+  } catch {
+    return;  // Sin diagnóstico se sigue igual: no es lo que esta pantalla vino a hacer.
+  }
+  const problemas = (reporte.checks || []).filter((c) => c.level !== "ok");
+  if (!problemas.length || !hueco.isConnected) return;
+
+  const grave = problemas.some((c) => c.level === "error");
+  poner(hueco, aviso(grave ? "error" : "falta",
+    `${problemas.length} chequeo${problemas.length === 1 ? "" : "s"} de la instalación con algo que mirar`,
+    h("div", {}, [
+      h("div", { text: problemas.map((c) => `${c.name}: ${c.message}`).join(" · ") }),
+      h("div", { style: { marginTop: "6px" } }, [
+        h("a", { href: "#", text: "Ver el diagnóstico completo",
+                 onClick: (e) => { e.preventDefault(); irA("config", "diagnostico"); } }),
+      ]),
+    ])));
 }
