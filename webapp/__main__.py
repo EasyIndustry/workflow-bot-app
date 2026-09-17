@@ -32,15 +32,32 @@ PUERTO_POR_DEFECTO = 8000
 
 
 def _puerto_libre(puerto: int) -> bool:
+    """
+    ¿Hay algo escuchando en este puerto?
+
+    Se pregunta con un `connect` y no con un `bind`. El bind con SO_REUSEADDR
+    —que es como estaba— **miente en Windows**: ahí SO_REUSEADDR no quiere
+    decir "reusar la dirección que quedó en TIME_WAIT" como en POSIX, quiere
+    decir "quedarse con ella aunque esté en uso". Comprobado en la máquina de
+    QA: con un servidor escuchando en `127.0.0.1:8099`, el bind seguía
+    diciendo que el puerto estaba libre.
+
+    Lo que salía de ahí son dos Bots en el mismo puerto: el segundo arrancaba
+    creyendo que estaba solo, Windows le entregaba las conexiones a uno de los
+    dos, y el otro quedaba vivo sin atender a nadie y sin forma de darse
+    cuenta. Se encontraron dos así, de un día para el otro, en la instalación
+    de QA.
+
+    Un `connect` no tiene esa ambigüedad: si algo acepta la conexión, hay un
+    servidor. Y de paso resuelve lo que el SO_REUSEADDR venía a tapar, porque
+    un socket en TIME_WAIT no acepta conexiones: no es un falso positivo.
+    """
     with socket.socket() as s:
-        # SO_REUSEADDR, igual que uvicorn: un socket en TIME_WAIT del proceso
-        # que acaba de terminar no cuenta como "en uso".
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.settimeout(0.4)
         try:
-            s.bind(("127.0.0.1", puerto))
-            return True
+            return s.connect_ex(("127.0.0.1", puerto)) != 0
         except OSError:
-            return False
+            return True
 
 
 def _esperar_puerto_libre(puerto: int, segundos: float = 8.0) -> bool:
@@ -59,6 +76,94 @@ def _esperar_puerto_libre(puerto: int, segundos: float = 8.0) -> bool:
 
 
 _salida_actual: Path | None = None
+
+
+# Los nombres con los que el Bot tiene que figurar en el administrador de
+# tareas. Son copias del intérprete del runtime: `Bot.exe` la que corre sin
+# consola (la de la bandeja y el acceso directo) y `BotConsola.exe` la otra.
+NOMBRE_SIN_CONSOLA = "Bot.exe"
+NOMBRE_CON_CONSOLA = "BotConsola.exe"
+
+
+def ejecutable_propio() -> str:
+    """
+    El intérprete con el que relanzarse, con un nombre que se pueda buscar.
+
+    En el administrador de tareas un proceso figura con el nombre de su
+    archivo ejecutable, y como el Bot corre con el intérprete del runtime,
+    figuraba como `python.exe` / `pythonw.exe` — entre todos los demás
+    `python.exe` de la máquina, sin forma de saber cuál es. Cuando algo falla
+    y hay que cerrar uno a mano, eso es lo primero que se necesita y lo único
+    que no había.
+
+    La copia se hace acá y no sólo en el build porque una instalación que ya
+    existe se actualiza cambiando `webapp/`, no el runtime: si dependiera del
+    instalador, las máquinas de hoy nunca lo tendrían. Windows toma el nombre
+    del archivo, así que una copia alcanza; el intérprete encuentra su casa
+    por la carpeta, que es la misma.
+
+    Ante cualquier problema (permisos, disco, otro sistema operativo) se
+    devuelve `sys.executable`: esto es comodidad para diagnosticar, y no puede
+    ser la razón por la que el Bot no arranque.
+    """
+    actual = Path(sys.executable)
+    if os.name != "nt" or actual.stem.startswith("Bot"):
+        return sys.executable
+
+    # `pythonw.exe` no abre consola; `python.exe` sí. Se conserva cuál es,
+    # porque de eso depende que no aparezca una ventana negra al reiniciar.
+    nombre = NOMBRE_CON_CONSOLA if actual.name.lower() == "python.exe" else NOMBRE_SIN_CONSOLA
+    destino = actual.with_name(nombre)
+    try:
+        if not destino.is_file() or destino.stat().st_mtime < actual.stat().st_mtime:
+            import shutil
+
+            shutil.copy2(actual, destino)
+        return str(destino)
+    except OSError as exc:
+        print(f"No se pudo dejar el ejecutable como {nombre}: {exc}", file=sys.stderr, flush=True)
+        return sys.executable
+
+
+def _hay_un_bot_en(url: str) -> bool:
+    """
+    ¿Lo que está escuchando ahí es un Bot, o es otro programa?
+
+    Cambia qué hacer: si es un Bot, abrir la pantalla es exactamente lo que
+    quien hizo doble clic esperaba; si es otro programa, hay que avisar. Se
+    pregunta por una ruta de la API y no por la página, que la podría estar
+    sirviendo cualquier cosa.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{url}/api/core/overview", timeout=2.5) as r:
+            return "root" in json.load(r)
+    except (OSError, ValueError, urllib.error.URLError):
+        return False
+
+
+def _avisar(mensaje: str) -> None:
+    """
+    Un error que quien abrió el programa tiene que ver.
+
+    Con consola alcanza con imprimirlo. Sin consola —el acceso directo y el
+    wizard lanzan con `pythonw`— no hay dónde: el texto termina en un archivo
+    de registro que nadie mira, y desde afuera se ve como que Bot "no abre" y
+    no dice nada. En Windows eso es un cartel del sistema, sin dependencias.
+    """
+    print(mensaje, file=sys.stderr, flush=True)
+    if os.name != "nt" or sys.stderr is not None and sys.stderr.isatty():
+        return
+    try:
+        import ctypes
+
+        # MB_ICONWARNING | MB_SETFOREGROUND
+        ctypes.windll.user32.MessageBoxW(None, mensaje, "Bot", 0x30 | 0x10000)
+    except Exception:  # noqa: BLE001 — sin cartel se sigue: el registro ya lo tiene
+        pass
 
 
 def _asegurar_salida(carpeta: Path) -> None:
@@ -106,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--revertir-webapp", action="store_true",
         help="Vuelve al webapp/ anterior a la última actualización y sale. Si ni esto arranca, "
-        "renombrar a mano webapp/ ↔ webapp.anterior/ en la carpeta del programa.",
+        "renombrar a mano webapp/ y webapp.anterior/ (una por otra) en la carpeta del programa.",
     )
     args = parser.parse_args(argv)
 
@@ -127,9 +232,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No existe la carpeta de instalación {raiz}.", file=sys.stderr)
         return 2
     if not _esperar_puerto_libre(args.port):
-        print(
-            f"El puerto {args.port} ya está en uso. ¿Bot ya está abierto? "
-            f"Si no, probar con --port otro.", file=sys.stderr,
+        # Bot ya abierto es el caso normal de esto, no un error: alguien hizo
+        # doble clic en el acceso directo y lo que quiere es la pantalla. Se
+        # abre el navegador y listo. Antes salía con código 3 y, como el
+        # acceso directo usa `pythonw` —sin consola—, no aparecía nada: el
+        # mensaje terminaba en el webapp.log de la carpeta del programa, que
+        # nadie mira. En la QA se juntaron cinco intentos así, todos en
+        # silencio, con el usuario clickeando el acceso directo sin respuesta.
+        url = f"http://127.0.0.1:{args.port}"
+        if _hay_un_bot_en(url):
+            print(f"Bot ya está abierto en {url}; se abre la pantalla.", flush=True)
+            if not args.no_abrir:
+                webbrowser.open(url)
+            return 0
+        _avisar(
+            f"El puerto {args.port} está ocupado por otro programa, así que Bot no puede abrir ahí.\n\n"
+            f"Cerrá ese programa, o abrí Bot en otro puerto con --port."
         )
         return 3
 
@@ -213,6 +331,15 @@ def main(argv: list[str] | None = None) -> int:
                 icono.stop()
             except Exception:  # noqa: BLE001 — cerrar el ícono no puede impedir salir
                 pass
+            # El hilo que pystray levanta con `run_detached` **no es daemon**:
+            # mientras siga vivo, el proceso no sale aunque `main` haya
+            # terminado. Y el `except` de arriba se traga cualquier error de
+            # `stop()`, así que una falla ahí dejaba un Bot sin servidor,
+            # invisible, imposible de cerrar desde la bandeja —porque el menú
+            # que lo cerraría es el de ese mismo ícono— y que sólo se iba con
+            # el administrador de tareas. Es de donde salen los Bots que no se
+            # pueden cerrar.
+            _matar_el_proceso_si_no_sale()
 
     if pedido_reinicio["si"]:
         print("Reiniciando…", flush=True)
@@ -220,9 +347,37 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+# Cuánto se espera a que los hilos que quedan terminen solos antes de bajar el
+# proceso por la fuerza. Generoso: lo normal es salir mucho antes.
+GRACIA_AL_SALIR = 6.0
+
+
+def _matar_el_proceso_si_no_sale(segundos: float = GRACIA_AL_SALIR) -> Timer:
+    """
+    La garantía de que "Cerrar" cierra.
+
+    Un temporizador daemon que baja el proceso si sigue vivo pasado ese rato.
+    Si todo salió bien, el proceso ya terminó y esto no llega a correr nunca:
+    es daemon, así que no retrasa la salida limpia ni un milisegundo.
+
+    `os._exit` y no `sys.exit`: lo que hay que cortar es justamente un hilo que
+    no se muere, y `sys.exit` en un temporizador sólo termina ese hilo. Para
+    cuando esto corre ya se cerró el servidor y se soltó la base; lo que queda
+    es un hilo de interfaz colgado.
+    """
+    def _bajar() -> None:
+        print("Los hilos de la interfaz no terminaron; se cierra igual.", file=sys.stderr, flush=True)
+        os._exit(0)
+
+    guardia = Timer(segundos, _bajar)
+    guardia.daemon = True
+    guardia.start()
+    return guardia
+
+
 def comando_relanzar(raiz: Path, puerto: int, *, red: bool, sin_bandeja: bool = False) -> list[str]:
     """El mismo comando con el que se arrancó, sin abrir otra pestaña. Separado para probarlo."""
-    comando = [sys.executable, "-m", "webapp", "--root", str(raiz), "--port", str(puerto), "--no-abrir"]
+    comando = [ejecutable_propio(), "-m", "webapp", "--root", str(raiz), "--port", str(puerto), "--no-abrir"]
     if red:
         comando.append("--red")
     if sin_bandeja:

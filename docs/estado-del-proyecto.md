@@ -6,6 +6,37 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **Los Bots fantasma.** En la QA aparecieron dos servidores vivos en el mismo
+  puerto, de un día para el otro, y el acceso directo dejó de abrir sin decir
+  nada (cinco intentos, todos anotados en un `webapp.log` que nadie mira).
+  Tres causas, las tres arregladas en `webapp/__main__.py`:
+  - `_puerto_libre` preguntaba con un `bind` y `SO_REUSEADDR`, y en Windows
+    eso no significa "reusar lo que quedó en TIME_WAIT" sino "quedarse con la
+    dirección aunque esté en uso": decía "libre" con un servidor escuchando.
+    De ahí salían dos Bots en un puerto. Ahora pregunta con un `connect`, que
+    además resuelve el falso positivo que el `SO_REUSEADDR` venía a tapar.
+  - Con el puerto ocupado por **otro Bot**, ahora abre la pantalla de ése y
+    sale bien: es lo que quería quien hizo doble clic. Si lo ocupa otro
+    programa, lo dice con un cartel del sistema, porque sin consola el mensaje
+    no llegaba a ningún lado.
+  - El hilo del ícono de la bandeja (`pystray.run_detached`) **no es daemon**,
+    y el `stop()` estaba envuelto en un `except` que se tragaba cualquier
+    error: si fallaba, quedaba un proceso sin servidor, imposible de cerrar
+    desde la bandeja —el menú que lo cerraría es el de ese mismo ícono— y que
+    sólo se iba con el administrador de tareas. Un guardia daemon baja el
+    proceso si a los 6 s sigue vivo.
+- **Bot figura como Bot en el administrador de tareas.** Corría con el
+  intérprete del runtime, así que aparecía como un `python.exe` más entre
+  todos los de la máquina: justo cuando hay que cerrar uno a mano no había con
+  qué encontrarlo. El build deja `Bot.exe` y `BotConsola.exe` (copias de
+  `pythonw.exe` y `python.exe`), los accesos directos lanzan el primero, y la
+  app las crea al vuelo si faltan —una instalación que ya existe actualiza
+  `webapp/` y no el runtime, así que si dependiera del instalador las máquinas
+  de hoy no lo tendrían nunca—. El ícono propio necesita editar los recursos
+  del `.exe`; queda pendiente.
+- `python -m webapp --help` moría con `UnicodeEncodeError` en una consola de
+  Windows por un `↔` en el texto de ayuda — justo el comando que alguien corre
+  cuando la app no abre.
 - **Config → Alcance de archivos**: las carpetas que un flujo puede tocar se
   editan desde la app, con alias, sin abrir `boot.env` a mano
   (`webapp/limites.py`, `GET /limites`, `PUT /limites/raices`). Hacía falta

@@ -46,6 +46,10 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
 - `actions/checkout@v4` y `setup-python@v5` apuntan a Node 20; GitHub los
   corre en 24 y avisa. Subir cuando publiquen las versiones nuevas.
 - El `.exe` no está firmado: SmartScreen puede avisar la primera vez.
+- `Bot.exe` tiene el nombre pero no el ícono: el administrador de tareas lo
+  muestra con el de Python. Cambiarlo es escribir los recursos `RT_ICON` /
+  `RT_GROUP_ICON` del ejecutable copiado (se puede con `ctypes` y
+  `UpdateResource`, sin dependencias nuevas) usando `installer/packaging/bot.ico`.
 
 ## Plugins (catálogo)
 - `bots`: falta el reclamo atómico para Bots colaborativos con la misma

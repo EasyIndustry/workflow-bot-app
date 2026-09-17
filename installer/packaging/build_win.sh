@@ -64,6 +64,18 @@ find "${CARGA}/runtime" -name "*.pdb" -delete
 find "${CARGA}/runtime/DLLs" \( -name "tcl*" -o -name "tk*" -o -name "_tkinter*" \) -delete
 find "${CARGA}/runtime" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
+# El Bot con nombre propio en el administrador de tareas. Un proceso figura
+# ahí con el nombre de su ejecutable, y corriendo con el intérprete del
+# runtime aparecía como un `python.exe` más, imposible de distinguir de
+# cualquier otro de la máquina: cuando algo falla y hay que cerrarlo a mano,
+# eso es lo primero que hace falta. Copias y no renombres: `pip`, el wizard y
+# cualquier `-m` siguen funcionando con los nombres de siempre. La webapp hace
+# lo mismo en caliente (`ejecutable_propio`), para las instalaciones que ya
+# existen y que sólo actualizan webapp/.
+echo "==> Bot.exe / BotConsola.exe (nombre propio en el administrador de tareas)"
+cp "${CARGA}/runtime/pythonw.exe" "${CARGA}/runtime/Bot.exe"
+cp "${CARGA}/runtime/python.exe"  "${CARGA}/runtime/BotConsola.exe"
+
 # ── 3. Dependencias ─────────────────────────────────────────────────────
 # `cryptography` es lo que el núcleo necesita para guardar secretos. Lo demás
 # es lo que la webapp necesita para correr en la máquina del cliente: el

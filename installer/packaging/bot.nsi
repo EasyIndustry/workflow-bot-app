@@ -66,7 +66,7 @@ FunctionEnd
 Function CrearIconoEscritorio
   ; Lo mismo que "Abrir Bot" del menú Inicio, en el escritorio.
   CreateShortCut "$DESKTOP\Bot.lnk" \
-    "$INSTDIR\runtime\pythonw.exe" '-m webapp --red' \
+    "$INSTDIR\runtime\Bot.exe" '-m webapp --red' \
     "$INSTDIR\bot.ico" 0 SW_SHOWNORMAL "" "Abrir Bot en el navegador"
 FunctionEnd
 
@@ -80,12 +80,13 @@ Section "Programa" SEC_PRINCIPAL
     "$INSTDIR\runtime\python.exe" '"$INSTDIR\installer\instalar.py"' \
     "$INSTDIR\bot.ico" 0
   ; Abre la última instalación que anotó el wizard (webapp/ubicacion.py). Con
-  ; pythonw.exe para que no quede una consola abierta al lado del navegador:
+  ; Bot.exe es una copia de pythonw.exe: sin consola al lado del navegador, y
+  ; con un nombre que se puede encontrar en el administrador de tareas.
   ; el servidor queda como ícono en la bandeja (webapp/bandeja.py), y desde
   ; ahí se abre, se reinicia y se cierra. --red: accesible desde otras PCs de
   ; la red local; la primera vez Windows pregunta por el firewall.
   CreateShortCut "$SMPROGRAMS\Bot\Abrir Bot.lnk" \
-    "$INSTDIR\runtime\pythonw.exe" '-m webapp --red' \
+    "$INSTDIR\runtime\Bot.exe" '-m webapp --red' \
     "$INSTDIR\bot.ico" 0 SW_SHOWNORMAL "" "Abrir Bot en el navegador"
 
   WriteRegStr HKCU "Software\Bot" "InstallDir" "$INSTDIR"
