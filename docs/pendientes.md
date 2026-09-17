@@ -4,6 +4,13 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
 `estado-del-proyecto.md`.
 
 ## Depende del núcleo
+- **core#26**: que el port `fs` pueda negar subárboles adentro de una raíz,
+  armados por el núcleo con lo que sabe de su instalación (su raíz, `data/`,
+  `plugins/`). Sin eso, una raíz que contenga la instalación entrega la base,
+  la llave, el código de los plugins y —peor— el propio `boot.env`, así que la
+  app la rechaza y usar una unidad entera obliga a enumerar carpeta por
+  carpeta. Cuando exista: sacar ese rechazo de `webapp/limites.py` y mostrar
+  en Inicio qué queda negado.
 - Nada abierto que frene a la webapp: core#15 (`on_step`), #16 (root y
   plugins por defecto en el MCP) y #17 (tools de orientación) llegaron en
   v0.3.1-beta.1. Los issues quedan abiertos hasta verificarlos en la QA y
