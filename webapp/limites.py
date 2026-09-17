@@ -185,10 +185,16 @@ def revisar(pares: list[tuple[str, str]], *, root: Path, data_dir: Path,
             except OSError:
                 continue
             if prot == resuelta or prot.is_relative_to(resuelta):
+                # Con la salida escrita: quien pone `D:\` quiere llegar a
+                # carpetas de esa unidad, y lo que hace falta decirle es que
+                # eso se consigue nombrándolas. Sin esto, la vuelta fue probar
+                # `D:` sin la barra, que pasaba y dejaba la instalación sin
+                # arrancar.
                 problemas.append(
-                    f"{nombre}: {ruta} contiene {que} ({prot}). Un flujo con permiso de "
-                    f"archivos las alcanzaría, y eso es justo lo que la instalación "
-                    f"acotada evita."
+                    f"{nombre}: {ruta} contiene {que} ({prot}), así que no puede ser una raíz: "
+                    f"un flujo con permiso de archivos las alcanzaría. Para llegar a otras carpetas "
+                    f"de esa unidad, agregá cada una por su ruta (por ejemplo {resuelta.drive}\\Casos), "
+                    f"no la unidad entera."
                 )
 
     return problemas
