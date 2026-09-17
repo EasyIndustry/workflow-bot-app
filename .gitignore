@@ -21,6 +21,14 @@ webapp/logs/
 # deja suelto y el hook de pre-commit frena el commit de sincronización.
 backend/VERSION
 
+# Lo que deja aplicar una actualización sobre el repo (Config -> Actualizaciones
+# contra este checkout): la carpeta anterior al lado, para poder revertir, y la
+# marca de qué release se aplicó. La versión que vale la dice git; estas son
+# locales de esta máquina.
+*.anterior/
+core-release.anterior.json
+webapp-release.json
+
 # Lo que construye installer/packaging/build_win.sh
 installer/build/
 

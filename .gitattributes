@@ -1,34 +1,17 @@
-# Normalización de finales de línea.
+# Git guarda todo con LF, y cada quien lo ve en su sistema como corresponda.
 #
-# Los .bat DEBEN quedar con CRLF en disco. cmd.exe tolera LF en scripts simples,
-# pero se rompe de formas raras con bloques entre paréntesis y saltos `goto`, que
-# es exactamente lo que usa iniciar_bot.bat. Sin esta regla el resultado depende
-# de cómo tenga configurado core.autocrlf cada máquina: funciona en una y falla
-# en otra, sin explicación aparente.
-*.bat text eol=crlf
-*.cmd text eol=crlf
-*.ps1 text eol=crlf
+# Sin esto, un archivo escrito con LF en una máquina Windows configurada con
+# `core.autocrlf=true` figuraba modificado sin tener un solo cambio de
+# contenido: cincuenta archivos de `webapp/` aparecían así en `git status`,
+# tapando el cambio de verdad y haciendo que cada commit hubiera que armarlo a
+# mano, archivo por archivo.
+* text=auto
 
-# Los hooks son scripts de shell sin extensión: sin esto, un checkout con
-# core.autocrlf=true los entrega con CRLF y `sh` los rompe (el shebang y cada
-# línea terminan con un \r colgando).
-.githooks/* text eol=lf
-
-# El resto se guarda con LF y se entrega tal cual en cada sistema.
-*.py text
-*.md text
-*.json text
-*.mmd text
-*.html text
-*.css text
-*.js text
-*.yml text
-*.yaml text
-*.gql text
-
-# Binarios: que git no los toque.
-*.stl binary
+# Los binarios no se tocan: una conversión de fin de línea los corrompe.
+*.ico binary
+*.exe binary
 *.png binary
 *.jpg binary
-*.ico binary
-*.pdf binary
+*.gz binary
+*.zip binary
+*.whl binary
