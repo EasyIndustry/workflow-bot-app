@@ -32,6 +32,17 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
   proxy.
 
 ## Instalador y releases
+- **Al llegar a la 1.0, limpiar las prereleases** (decidido el 17/09/2026):
+  se borran todas menos la inmediatamente anterior a la oficial, que queda
+  como el último paso antes del salto. No es por espacio —los assets de un
+  release no cuentan para el tamaño del repo, y un repo público no tiene
+  cuota para ellos: al 17/09 son 220 MB en 9 releases contra 1,4 MB de git—,
+  es por ruido: `updates.disponibles` lista los últimos 30 y Config →
+  Actualizaciones los muestra todos, así que con cuarenta prereleases nadie
+  sabe cuál instalar. Lo que se borra es el asset (el `.exe`, 31 MB, casi
+  todo el CPython embebido); conviene dejar el release con sus notas, que
+  son el historial, y el `.exe` se puede reconstruir del tag si hiciera
+  falta.
 - `actions/checkout@v4` y `setup-python@v5` apuntan a Node 20; GitHub los
   corre en 24 y avisa. Subir cuando publiquen las versiones nuevas.
 - El `.exe` no está firmado: SmartScreen puede avisar la primera vez.
