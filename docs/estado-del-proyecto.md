@@ -33,6 +33,11 @@ desarrollo o la PC de un cliente), no sólo con tests.
   la raíz sin alias como `fs_roots==ruta` y `load()` la descarta —el viaje de
   ida y vuelta pierde una raíz sin que `validar()` lo note—, y un alias con un
   typo se lee como ruta relativa de la raíz por defecto en vez de fallar.
+- **Núcleo v0.3.1-beta.4**: los dos pendientes del punto anterior, arreglados.
+  El `boot.env` con `fs_roots` sobrevive al viaje de ida y vuelta sin perder
+  la raíz por defecto, y un alias con typo es `PortError` listando los alias
+  declarados — con una letra de unidad (`C:\…`) siguiendo tratada como ruta
+  y no como alias, que era lo que ese arreglo podía romper.
 - **Los avisos de Sources dejaron de empujar la tabla.** Un run que fallaba
   metía un banner entre la cabecera y la grilla: la tabla bajaba sola justo
   cuando estabas por clickear una fila, y el aviso se borraba en el redibujo
