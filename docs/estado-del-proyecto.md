@@ -17,16 +17,15 @@ desarrollo o la PC de un cliente), no sólo con tests.
   `plugins_dir`/`fs_root` dejó de ser fatal, que era lo que dejaba una
   instalación sin arrancar.
 - **La raíz por defecto sale de lo que la instalación tiene configurado**, no
-  de la regla `<root>/workspace`. (Se había hecho y se perdió: una
-  actualización aplicada sobre el repo a las 20:18 pisó lo que no estaba
-  commiteado, así que la v0.4.2-beta.8 salió sin este arreglo pese a las notas.)
-- **La raíz por defecto sale de lo que la instalación tiene configurado**, no
   de la regla `<root>/workspace`: asumirla dejó la pantalla sin poder guardar
   nada en una instalación cuya raíz resolvió a la carpeta del programa — la
   única fila que no se podía editar era también la que impedía guardar. Sin
   ninguna raíz declarada no hay fija, y la primera que se agregue pasa a
   serlo. Aparte, `pasos.instalar(registrar=False)`: crear una instalación de
   prueba ya no pisa cuál abre "Abrir Bot", que fue cómo se llegó a ese estado.
+  (Se hizo, se perdió y se rehízo: una actualización aplicada sobre el repo a
+  las 20:18 pisó lo que no estaba commiteado, así que la v0.4.2-beta.8 salió
+  sin este arreglo pese a anunciarlo en sus notas.)
 - **La raíz por defecto no se edita.** La pantalla la muestra fija —de sólo
   lectura, sin tacho— y lo que se agrega va debajo, con su alias. El servidor
   la impone aunque le manden otra cosa. Poder pisarla era la mitad de cómo una
@@ -39,8 +38,7 @@ desarrollo o la PC de un cliente), no sólo con tests.
   la raíz de la instalación —con `plugins/` adentro— y el núcleo se negó
   (core#22, como corresponde). La pantalla rechaza ahora cualquier ruta no
   absoluta, cada caso con su motivo: unidad sin barra, relativa, UNC sin
-  share. La unidad entera con la barra ya se rechazaba porque contiene
-  `data/`. Se restauró el `boot.env` de esa instalación (respaldo
+  share. Se restauró el `boot.env` de esa instalación (respaldo
   `boot.env.roto-2026-09-17`).
 - **Detener un run desde la grilla, y una fila no corre dos veces.** Se vio a
   distancia: una fila ejecutada desde otra PC se veía arrancar en la original
@@ -104,9 +102,8 @@ desarrollo o la PC de un cliente), no sólo con tests.
   así que editarlo a mano pasó a poder dejar la instalación sin levantar. El
   backend valida contra el disco antes de escribir y rechaza lo que no
   arrancaría: una carpeta inexistente, un UNC sin el nombre del recurso
-  compartido, un alias repetido, y cualquier raíz que contenga `data/` o
-  `plugins/` —esto último el núcleo no lo puede chequear solo, porque `data/`
-  no es un valor declarado cuando se usa el default—. Deja `boot.env.anterior`
+  compartido y un alias repetido. (El rechazo de una raíz que contuviera
+  `data/` o `plugins/` salió con core#26: eso lo niega el núcleo.) Deja `boot.env.anterior`
   al lado y ofrece reiniciar. Con varias raíces, la primera se guarda con
   nombre aunque no se lo hayan puesto: el alias vacío se escribe
   `fs_roots==ruta` y un núcleo anterior a v0.3.1-beta.4 descarta ese par al
