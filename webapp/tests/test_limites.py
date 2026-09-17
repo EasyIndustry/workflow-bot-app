@@ -44,15 +44,13 @@ def _guardar(inst, raiz, raices):
 
 
 def test_una_sola_raiz_se_escribe_como_fs_root(instalacion):
-    """El caso común no tiene por qué hablar de alias."""
+    """Sólo la caja: el caso común no tiene por qué hablar de alias."""
     inst, raiz = instalacion
-    otra = raiz / "otra"
-    otra.mkdir()
 
-    _guardar(inst, raiz, [{"alias": "", "ruta": str(otra)}])
+    _guardar(inst, raiz, [])
 
     escrito = (raiz / "boot.env").read_text(encoding="utf-8-sig")
-    assert f"fs_root={otra}" in escrito
+    assert f"fs_root={raiz / 'workspace'}" in escrito
     # `render` documenta todas las claves, así que `# fs_roots=` aparece
     # comentado; lo que no tiene que haber es una activa.
     assert "\nfs_roots=" not in escrito
@@ -63,15 +61,14 @@ def test_varias_raices_se_escriben_con_alias_y_se_releen(instalacion):
     share = raiz / "share"
     share.mkdir()
 
-    r = _guardar(inst, raiz, [{"alias": "casa", "ruta": str(raiz / "workspace")},
-                              {"alias": "origen", "ruta": str(share)}])
+    r = _guardar(inst, raiz, [{"alias": "origen", "ruta": str(share)}])
 
     assert r["restart_required"] is True
     # Releerlo con el núcleo es la prueba que importa: que el archivo escrito
     # vuelva a entrar tal cual, que es donde ya se nos escapó una raíz una vez.
     from backend.core import boot
     leido = boot.load(raiz)
-    assert leido.fs_roots == {"casa": str(raiz / "workspace"), "origen": str(share)}
+    assert leido.fs_roots == {limites.PRIMERA_POR_DEFECTO: str(raiz / "workspace"), "origen": str(share)}
     assert not boot.fatal(leido)
 
 
@@ -81,7 +78,7 @@ def test_una_raiz_que_no_existe_no_se_guarda(instalacion):
     antes = (raiz / "boot.env").read_text(encoding="utf-8-sig")
 
     with pytest.raises(limites.LimitesError) as exc:
-        _guardar(inst, raiz, [{"alias": "", "ruta": str(raiz / "no-existe")}])
+        _guardar(inst, raiz, [{"alias": "", "ruta": ""}, {"alias": "fantasma", "ruta": str(raiz / "no-existe")}])
 
     assert "no existe" in " ".join(exc.value.detalle)
     assert (raiz / "boot.env").read_text(encoding="utf-8-sig") == antes
@@ -97,7 +94,7 @@ def test_una_raiz_que_contiene_la_base_no_se_guarda(instalacion):
     inst, raiz = instalacion
 
     with pytest.raises(limites.LimitesError) as exc:
-        _guardar(inst, raiz, [{"alias": "", "ruta": str(raiz)}])
+        _guardar(inst, raiz, [{"alias": "", "ruta": ""}, {"alias": "todo", "ruta": str(raiz)}])
 
     assert "base" in " ".join(exc.value.detalle).lower()
 
@@ -111,7 +108,7 @@ def test_un_unc_sin_recurso_compartido_se_explica(instalacion):
     inst, raiz = instalacion
 
     with pytest.raises(limites.LimitesError) as exc:
-        _guardar(inst, raiz, [{"alias": "", "ruta": UNC_SIN_COMPARTIDO}])
+        _guardar(inst, raiz, [{"alias": "", "ruta": ""}, {"alias": "servidor", "ruta": UNC_SIN_COMPARTIDO}])
 
     assert "compartido" in " ".join(exc.value.detalle)
 
@@ -141,7 +138,7 @@ def test_guardar_deja_el_boot_env_anterior_al_lado(instalacion):
     otra.mkdir()
     antes = (raiz / "boot.env").read_text(encoding="utf-8-sig")
 
-    _guardar(inst, raiz, [{"alias": "", "ruta": str(otra)}])
+    _guardar(inst, raiz, [{"alias": "", "ruta": ""}, {"alias": "otra", "ruta": str(otra)}])
 
     assert (raiz / limites.RESPALDO).read_text(encoding="utf-8-sig") == antes
 
@@ -167,7 +164,7 @@ def test_con_varias_raices_la_primera_se_guarda_con_nombre(instalacion):
     share = raiz / "share"
     share.mkdir()
 
-    r = _guardar(inst, raiz, [{"alias": "", "ruta": str(raiz / "workspace")},
+    r = _guardar(inst, raiz, [{"alias": "", "ruta": ""},
                               {"alias": "origen", "ruta": str(share)}])
 
     assert r["raices"][0]["alias"] == limites.PRIMERA_POR_DEFECTO
@@ -189,7 +186,7 @@ def test_una_unidad_sin_barra_no_se_guarda(instalacion):
     inst, raiz = instalacion
 
     with pytest.raises(limites.LimitesError) as exc:
-        _guardar(inst, raiz, [{"alias": "", "ruta": "D:"}])
+        _guardar(inst, raiz, [{"alias": "", "ruta": ""}, {"alias": "unidad", "ruta": "D:"}])
 
     assert "sin la barra" in " ".join(exc.value.detalle)
 
@@ -198,7 +195,7 @@ def test_una_ruta_relativa_no_se_guarda(instalacion):
     inst, raiz = instalacion
 
     with pytest.raises(limites.LimitesError) as exc:
-        _guardar(inst, raiz, [{"alias": "", "ruta": "workspace"}])
+        _guardar(inst, raiz, [{"alias": "", "ruta": ""}, {"alias": "rel", "ruta": "workspace"}])
 
     assert "ruta completa" in " ".join(exc.value.detalle)
 
@@ -209,6 +206,47 @@ def test_la_unidad_entera_que_contiene_la_instalacion_no_se_guarda(instalacion):
     unidad = raiz.drive + BARRA  # la unidad donde vive esta instalación
 
     with pytest.raises(limites.LimitesError) as exc:
-        _guardar(inst, raiz, [{"alias": "", "ruta": unidad}])
+        _guardar(inst, raiz, [{"alias": "", "ruta": ""}, {"alias": "unidad", "ruta": unidad}])
 
     assert "contiene" in " ".join(exc.value.detalle)
+
+
+# ── La raíz por defecto no se edita ─────────────────────────────────────
+
+
+def test_la_primera_fila_es_siempre_la_caja_aunque_manden_otra_cosa(instalacion):
+    """
+    Poder pisar la raíz por defecto desde la pantalla es exactamente cómo una
+    instalación quedó con `principal=D:` y sin arrancar. Lo que llegue en la
+    primera fila se ignora; la caja es workspace/ y punto.
+    """
+    inst, raiz = instalacion
+    otra = raiz / "otra"
+    otra.mkdir()
+
+    # Sin nombre: lo que mande la primera fila se ignora, gana la caja.
+    r = _guardar(inst, raiz, [{"alias": "", "ruta": str(otra)}])
+    assert r["raices"] == [{"alias": limites.PRIMERA_POR_DEFECTO, "ruta": str(raiz / "workspace")}]
+
+    # Con el nombre reservado: eso no puede venir de la pantalla, así que se
+    # dice en vez de reemplazarlo en silencio.
+    with pytest.raises(limites.LimitesError) as exc:
+        _guardar(inst, raiz, [{"alias": limites.PRIMERA_POR_DEFECTO, "ruta": str(otra)}])
+    assert "no se cambia" in " ".join(exc.value.detalle)
+
+
+def test_lo_agregado_va_despues_de_la_caja_y_nunca_la_reemplaza(instalacion):
+    inst, raiz = instalacion
+    share = raiz / "share"
+    share.mkdir()
+
+    r = _guardar(inst, raiz, [{"alias": "origen", "ruta": str(share)}])
+
+    assert [x["alias"] for x in r["raices"]] == [limites.PRIMERA_POR_DEFECTO, "origen"]
+    from backend.core import boot
+    assert next(iter(boot.load(raiz).fs_roots_efectivos.values())) == str(raiz / "workspace")
+
+
+def test_leer_dice_cual_es_la_caja(instalacion):
+    inst, raiz = instalacion
+    assert limites.leer(inst, raiz)["por_defecto"] == str(raiz / "workspace")

@@ -1122,8 +1122,13 @@ function cuandoTexto(epoch) {
  */
 async function dibujarLimites() {
   const datos = await api.limites();
-  // Se edita una copia: cancelar es volver a dibujar, sin deshacer nada.
-  let raices = (datos.raices || []).map((r) => ({ alias: r.alias, ruta: r.ruta }));
+  // Se edita una copia: cancelar es volver a dibujar, sin deshacer nada. La
+  // primera fila es siempre la caja de la instalación y no se edita: es la
+  // que resuelve toda ruta relativa, y poder pisarla es cómo una instalación
+  // quedó con `principal=D:` y sin arrancar. Lo que se agrega va debajo.
+  let raices = (datos.raices || []).filter((r) => r.ruta !== datos.por_defecto)
+    .map((r) => ({ alias: r.alias, ruta: r.ruta }));
+  raices.unshift({ alias: "principal", ruta: datos.por_defecto, fija: true });
   const hueco = h("div");
   const mensajes = h("div");
 
@@ -1143,25 +1148,28 @@ async function dibujarLimites() {
 
   const fila = (r, i) => {
     const alias = h("input", { class: "entrada entrada--mono", type: "text", value: r.alias,
-                               placeholder: i === 0 ? "(por defecto)" : "nombre corto",
+                               placeholder: "nombre corto", readOnly: Boolean(r.fija),
                                onInput: (e) => { r.alias = e.target.value; } });
     const ruta = h("input", { class: "entrada entrada--mono", type: "text", value: r.ruta,
-                              placeholder: "C:\carpeta o \\servidor\compartido",
+                              placeholder: "C:\\carpeta o \\\\servidor\\compartido", readOnly: Boolean(r.fija),
                               onInput: (e) => { r.ruta = e.target.value; } });
     return h("div", { class: "campo", style: { alignItems: "flex-start" } }, [
       h("div", { class: "campo__etiqueta" }, [
-        h("div", { class: "campo__nombre", text: i === 0 ? "Por defecto" : `Carpeta ${i + 1}` }),
+        h("div", { class: "campo__nombre", text: r.fija ? "Por defecto" : `Carpeta ${i + 1}` }),
+        r.fija ? h("span", { class: "badge", text: "fija" }) : null,
       ]),
       h("div", { class: "campo__control" }, [
         h("div", { style: { display: "flex", gap: "6px" } }, [
           h("div", { style: { flex: "0 0 150px" } }, [alias]),
           h("div", { style: { flex: "1", minWidth: "0" } }, [ruta]),
-          h("button", { class: "btn btn--chico", title: "Quitar esta carpeta",
-                        onClick: () => { raices.splice(i, 1); redibujar(); } },
-            [icono(ICONOS.basura, 11, 2)]),
+          r.fija
+            ? h("span", { style: { flex: "0 0 30px" } })
+            : h("button", { class: "btn btn--chico", title: "Quitar esta carpeta",
+                            onClick: () => { raices.splice(i, 1); redibujar(); } },
+                [icono(ICONOS.basura, 11, 2)]),
         ]),
-        h("div", { class: "campo__ayuda", text: i === 0
-          ? "Es la que resuelve una ruta relativa de un flujo. Puede ir sin nombre."
+        h("div", { class: "campo__ayuda", text: r.fija
+          ? "El workspace de la instalación: resuelve toda ruta relativa de todo flujo. No se cambia; las otras carpetas se agregan debajo."
           : "Un flujo la nombra como " + (r.alias || "nombre") + ":archivo, o con su ruta entera." }),
       ]),
     ]);
@@ -1171,7 +1179,9 @@ async function dibujarLimites() {
     boton.disabled = true;
     poner(mensajes);
     try {
-      const r = await api.guardarRaices(raices);
+      // Sólo lo que esta pantalla edita. La caja la pone el servidor: mandarla
+      // sería pedirle que confíe en un valor que no se puede cambiar acá.
+      const r = await api.guardarRaices(raices.filter((x) => !x.fija));
       poner(mensajes, aviso("ok", "Guardado en boot.env", h("div", {}, [
         h("div", { text: "Se lee al arrancar: hasta que el Bot no reinicie, sigue con las carpetas de antes." }),
         h("div", { style: { marginTop: "7px", display: "flex", gap: "7px", alignItems: "center" } }, [

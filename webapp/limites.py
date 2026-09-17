@@ -44,8 +44,9 @@ PROHIBIDOS_EN_ALIAS = (",", "=", ":")
 # carpetas: lo que se pisa es la configuración que hoy arranca.
 RESPALDO = "boot.env.anterior"
 
-# El nombre que se le pone a la raíz por defecto cuando hay varias y quien la
-# cargó no le puso ninguno. Ver el comentario en `guardar`.
+# La raíz por defecto: `workspace/` de la instalación, la caja que creó el
+# wizard (`installer/source/pasos.py`, CAJA). No se edita desde la pantalla.
+CAJA = "workspace"
 PRIMERA_POR_DEFECTO = "principal"
 
 
@@ -71,6 +72,9 @@ def leer(instance, root: Path) -> dict:
         # que poder decirlo en vez de mostrar una lista vacía.
         "sin_limite": not raices,
         "root": str(root),
+        # La que la pantalla muestra fija en la primera fila, exista o no en
+        # `raices`: es la caja de la instalación y no se edita.
+        "por_defecto": str(Path(root) / CAJA),
         "data_dir": str(instance.data_dir),
         "plugins_dir": str(cfg.plugins_dir) if cfg.plugins_dir else None,
         "archivo": str(root / boot.ARCHIVO),
@@ -212,29 +216,41 @@ def guardar(instance, root: Path, raices: list[dict]) -> dict:
     pares = normalizar(raices)
     cfg = instance.boot
 
+    # La raíz por defecto es siempre `workspace/` de la instalación, y no se
+    # edita: es la que resuelve toda ruta relativa de todo flujo, y la que el
+    # wizard creó como la caja. Poder pisarla desde la pantalla es exactamente
+    # cómo una instalación quedó con `principal=D:` y sin arrancar. Lo que
+    # llegue en la primera fila se reemplaza —la pantalla la muestra fija—,
+    # y lo que la persona agrega va siempre después.
+    fija = (PRIMERA_POR_DEFECTO, str(Path(root) / CAJA))
+    # Sin alias no se descarta nada: la única raíz que puede ir sin nombre es
+    # la caja, y ésa la pone esta función. Lo que llegue así es el contenido
+    # de la primera fila —de sólo lectura en la pantalla— y se ignora.
+    extras = [(a, r) for a, r in pares if a and r != fija[1]]
+    if any(a == PRIMERA_POR_DEFECTO for a, _ in extras):
+        # Nunca lo manda la pantalla —esa fila es de sólo lectura—, así que
+        # llegó de otro lado: se dice, no se reemplaza en silencio.
+        raise LimitesError("Las raíces no se pueden guardar así.", [
+            f'"{PRIMERA_POR_DEFECTO}" es la raíz por defecto ({fija[1]}) y no se cambia. '
+            f"Las otras carpetas van con otro nombre, debajo."
+        ])
+    pares = [fija, *extras]
+
     if problemas := revisar(pares, root=root, data_dir=Path(instance.data_dir),
                             plugins_dir=Path(cfg.plugins_dir) if cfg.plugins_dir else None):
         raise LimitesError("Las raíces no se pueden guardar así.", problemas)
 
-    # Una sola raíz sin alias se escribe como el `fs_root` de siempre: el
-    # archivo más simple posible para el caso más común, y una instalación que
-    # nunca necesitó alias no empieza a hablar de ellos.
-    if len(pares) == 1 and not pares[0][0]:
+    # Sólo la caja: se escribe como el `fs_root` de siempre, el archivo más
+    # simple para el caso más común, y una instalación que nunca necesitó
+    # alias no empieza a hablar de ellos. Con más raíces, `fs_roots` con la
+    # primera **nombrada**: el alias vacío se escribe `fs_roots==ruta` y un
+    # núcleo anterior a v0.3.1-beta.4 descarta ese par al releer —la
+    # instalación arrancaba con una raíz de menos y la segunda pasaba a
+    # resolver las rutas relativas, sin un solo error—. La app y el núcleo se
+    # actualizan por separado, así que no se da por sentado cuál está abajo.
+    if len(pares) == 1:
         nuevo = dataclasses.replace(cfg, fs_root=pares[0][1], fs_roots=None)
-    elif not pares:
-        nuevo = dataclasses.replace(cfg, fs_root=None, fs_roots=None)
     else:
-        # Con varias raíces, la primera se guarda **con nombre** aunque quien
-        # la cargó no le haya puesto uno. El alias vacío se escribe como
-        # `fs_roots==ruta`, y un núcleo anterior a v0.3.1-beta.4 descarta ese
-        # par al releer: la instalación arrancaba con una raíz de menos y la
-        # segunda pasaba a resolver las rutas relativas, sin un solo error. La
-        # app y el núcleo se actualizan por separado, así que no se puede dar
-        # por sentado cuál está abajo. Nombrarla no cambia nada para los
-        # flujos —la primera resuelve las rutas relativas se llame como se
-        # llame— y saca al archivo de esa dependencia.
-        alias_primero = pares[0][0] or PRIMERA_POR_DEFECTO
-        pares = [(alias_primero, pares[0][1]), *pares[1:]]
         nuevo = dataclasses.replace(cfg, fs_root=None, fs_roots={a: r for a, r in pares})
 
     # La última red: lo que el núcleo no dejaría arrancar no se guarda. Sin
