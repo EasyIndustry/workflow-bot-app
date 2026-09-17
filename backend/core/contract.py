@@ -24,6 +24,7 @@ consume ese catálogo en vez de mantener una lista propia.
 
 from __future__ import annotations
 
+import json
 import traceback
 from dataclasses import dataclass, field
 from enum import Enum
@@ -98,7 +99,24 @@ def _coerce(name: str, raw: Any, ptype: ParamType, choices: Sequence[str]) -> An
             return False
         raise ParamError(f"{name}: '{raw}' no es un booleano")
 
-    # JSON: ya viene estructurado desde el store de configuración.
+    if ptype is ParamType.JSON:
+        # Ya viene estructurado: desde el store de configuración, o desde
+        # resolve() cuando el template era un único {placeholder} que
+        # apuntaba a una lista/dict (ver flow/context.py).
+        if not isinstance(raw, str):
+            return raw
+        # Desde un .mmd siempre llega como texto: un literal JSON en el nodo,
+        # o un {var} que no pudo resolverse como objeto (texto con más cosas
+        # alrededor, o variable inexistente).
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            raise ParamError(
+                f"{name}: '{raw}' no es JSON válido. Un param JSON en el .mmd "
+                "va como literal JSON (ej. [1,2,3] o {\"a\":1}) o como {var} "
+                "de un output que sea lista/dict."
+            ) from None
+
     return raw
 
 
@@ -467,6 +485,11 @@ class PluginManifest:
     # en el catálogo la superficie de riesgo real de cada plugin — quién puede
     # salir a la red, quién puede tocar el disco, quién puede correr comandos.
     ports: tuple[str, ...] = ()
+    # Dependencias de cómputo puro, una línea por librería como en un
+    # requirements.txt ("numpy==1.26.0"): nunca de I/O -- eso es un port. La
+    # instalación decide cómo resolverlas (issue #20); el núcleo sólo las
+    # declara y, en el catálogo, dice si están presentes en este intérprete.
+    requires: tuple[str, ...] = ()
     doc: str = ""
     contract: int = CONTRACT_VERSION
 
@@ -515,6 +538,7 @@ class PluginManifest:
             "resources": [r.to_dict() for r in self.resources],
             "actions": [a.to_dict() for a in self.actions],
             "ports": list(self.ports),
+            "requires": list(self.requires),
             "doc": self.doc,
             "contract": self.contract,
         }

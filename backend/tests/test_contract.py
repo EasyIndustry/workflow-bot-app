@@ -359,6 +359,35 @@ def test_int_invalido_da_param_error():
         assert "no es un entero" in str(exc)
 
 
+def test_json_literal_desde_el_mmd_parsea_a_objeto():
+    manifest = ToolManifest(
+        id="t.x", label="x", category="X", params=(Param("items", ParamType.JSON),)
+    )
+    resolved = manifest.resolve_params({"items": "[1, 2, 3]"}, {})
+    assert resolved == {"items": [1, 2, 3]}
+
+
+def test_json_ya_estructurado_pasa_directo():
+    """Viene así desde resolve() cuando el template era un único {placeholder}
+    apuntando a una lista/dict, o desde el store de configuración."""
+    manifest = ToolManifest(
+        id="t.x", label="x", category="X", params=(Param("items", ParamType.JSON),)
+    )
+    resolved = manifest.resolve_params({"items": ["a.stl", "b.stl"]}, {})
+    assert resolved == {"items": ["a.stl", "b.stl"]}
+
+
+def test_json_invalido_da_param_error():
+    manifest = ToolManifest(
+        id="t.x", label="x", category="X", params=(Param("items", ParamType.JSON),)
+    )
+    try:
+        manifest.resolve_params({"items": "no es json"}, {})
+        raise AssertionError("debió rechazar texto no-JSON")
+    except ParamError as exc:
+        assert "no es JSON válido" in str(exc)
+
+
 def test_enum_invalido_da_param_error():
     manifest = ToolManifest(
         id="t.x",
@@ -499,6 +528,33 @@ def test_el_catalogo_publica_que_ports_usa_cada_plugin():
     plugin = catalogo["plugins"][0]
     assert set(plugin["ports"]) == {"http", "fs", "process", "clock"}
     assert set(catalogo["ports"]) == {"http", "fs", "process", "clock", "browser", "window"}
+
+
+# ── Dependencias de cómputo puro (issue #20) ─────────────────────────────
+
+
+def test_el_catalogo_dice_si_una_dependencia_declarada_esta_instalada():
+    """
+    Observabilidad, no un instalador (issue #19/#20): el núcleo no resuelve
+    numpy/trimesh, pero un agente que ve "trimesh: falta" sabe qué pasó antes
+    de tropezar con un ImportError a mitad de un tool.
+    """
+    manifest = PluginManifest(
+        name="convertidor", label="Convertidor", requires=("pytest", "no-existe-esta-lib==1.0")
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("convertidor", "test", Plugin(manifest=manifest))
+
+    requiere = reg.catalog()["plugins"][0]["requires"]
+    assert {"spec": "pytest", "package": "pytest", "present": True} in requiere
+    assert {
+        "spec": "no-existe-esta-lib==1.0", "package": "no-existe-esta-lib", "present": False,
+    } in requiere
+
+
+def test_sin_requires_declarado_el_catalogo_no_inventa_nada():
+    catalogo = _registry().catalog()  # demo_plugin no declara requires
+    assert catalogo["plugins"][0]["requires"] == []
 
 
 # ── Acciones ────────────────────────────────────────────────────────────
