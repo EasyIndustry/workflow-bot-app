@@ -139,8 +139,7 @@ function limites(r) {
     // raíz que contiene la instalación no tiene cómo saber que la base, la
     // llave y boot.env quedan afuera igual.
     ...(r.fs_negadas || []).length
-      ? [fila("Nunca", (r.fs_negadas || []).join("
-"),
+      ? [fila("Nunca", (r.fs_negadas || []).join("\n"),
           "Un flujo no las alcanza aunque caigan adentro de una raíz: la base y la llave, los plugins, y el archivo que declara estos límites.")]
       : [],
   ]);

@@ -324,8 +324,7 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
                   title: [`el catálogo va por ${entrada.upstream.head}`,
                           entrada.upstream.fecha ? `del ${entrada.upstream.fecha.slice(0, 10)}` : "",
                           `${entrada.upstream.adelante} commit${entrada.upstream.adelante === 1 ? "" : "s"} desde el que tenés`,
-                          "Actualizar baja lo de ahora."].filter(Boolean).join("
-"),
+                          "Actualizar baja lo de ahora."].filter(Boolean).join("\n"),
                   text: "hay una versión nueva" })
     : null;
   const boton = h("button", {
