@@ -455,7 +455,12 @@ function etiquetaCorta(id, grafo) {
 
 // ── Alta y baja de nodos ────────────────────────────────────────────────
 
-function agregar(grafo, tipo, alCambiar, alSeleccionar) {
+/**
+ * Un nodo nuevo, vacío, sin aristas. Compartido con el lienzo
+ * (workflows.js), que lo engancha donde el usuario hizo clic; la pila lo
+ * engancha al final del recorrido (`agregar`).
+ */
+export function crearNodo(grafo, tipo) {
   // Ids numerados como los del archivo, para que un flujo editado desde acá se
   // lea igual que uno escrito a mano.
   let n = Object.keys(grafo.nodes).length + 1;
@@ -465,6 +470,11 @@ function agregar(grafo, tipo, alCambiar, alSeleccionar) {
   grafo.nodes[id] = tipo === "decision"
     ? { type: "decision", variable: "", display: "", line: null }
     : { type: "action", fn: "", params: {}, display: "", line: null };
+  return id;
+}
+
+function agregar(grafo, tipo, alCambiar, alSeleccionar) {
+  const id = crearNodo(grafo, tipo);
 
   // Se engancha al final del recorrido: un nodo suelto es un error del parser,
   // y agregarlo desconectado obligaría a acordarse de conectarlo.
@@ -481,7 +491,11 @@ function ultimoDelRecorrido(grafo, excepto) {
   return ids.reverse().find((n) => !conSalida.has(n)) || ids[0] || null;
 }
 
-function quitar(grafo, id, alCambiar, alSeleccionar) {
+/**
+ * Saca un nodo del grafo y vuelve a coser el flujo. Compartido con el lienzo
+ * (`workflows.js`), que lo llama desde la "×" del nodo tras confirmar.
+ */
+export function quitarNodo(grafo, id) {
   // Las aristas que entraban se re-enganchan a lo que seguía, para no dejar el
   // flujo partido en dos al borrar un nodo del medio.
   const entrantes = grafo.edges.filter((a) => a.to === id);
@@ -493,6 +507,10 @@ function quitar(grafo, id, alCambiar, alSeleccionar) {
     }
   }
   delete grafo.nodes[id];
+}
+
+function quitar(grafo, id, alCambiar, alSeleccionar) {
+  quitarNodo(grafo, id);
   alSeleccionar(null);
   alCambiar({ redibujar: true });
 }

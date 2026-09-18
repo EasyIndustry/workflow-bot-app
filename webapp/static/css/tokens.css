@@ -43,6 +43,15 @@
   --rojo-borde: #f5c6c2;
   --rojo-boton: #e04a3f;
 
+  /* El lienzo del diagrama (workflows-graph.js): gris apenas más oscuro que
+     el fondo, con puntos, como el de n8n — la caja blanca de cada nodo tiene
+     que despegarse de él. */
+  --grafo-lienzo: #f4f5f7;
+  --grafo-punto: #cfd2d8;
+  --grafo-linea: #a6adb8;
+  --grafo-puerto: #8a93a0;
+  --grafo-borde-nodo: #d5d8de;
+
   --lateral: #1b1b1b;
   --lateral-sel: #2f2f2f;
   --lateral-hover: #262626;

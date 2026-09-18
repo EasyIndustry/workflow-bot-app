@@ -26,8 +26,8 @@ import { aviso } from "../components/aviso.js";
 import { crearEditorDeCodigo } from "../components/editor-codigo.js";
 import { dibujarGrafo } from "./workflows-graph.js";
 import { dibujarMermaid } from "./workflows-mermaid.js";
-import { pilaDeTarjetas, textoBuscable } from "./workflows-cards.js";
-import { tarjetaFlotante } from "./workflows-node-panel.js";
+import { pilaDeTarjetas, textoBuscable, crearNodo, quitarNodo } from "./workflows-cards.js";
+import { panelDeNodo } from "./workflows-node-panel.js";
 
 let shell = null;
 let flujos = [];
@@ -237,6 +237,7 @@ async function abrirFlujo(nombre) {
     seleccionado: null,
     sucio: false,
     dryRun: null,
+    dryCorriendo: false,
     dryAbierto: false,
     diagnosticoAbierto: false,
   };
@@ -246,6 +247,9 @@ async function abrirFlujo(nombre) {
 function dibujar() {
   if (!vigente()) return;
   const a = abierto;
+  // El encuadre del diagrama sobrevive al redibujo: agregar un nodo desde la
+  // pila o desde el lienzo rearma el SVG, y sin esto volvía al origen.
+  if (a.diagramaEl && a.diagramaEl.lienzo) a.vista = a.diagramaEl.lienzo.obtenerVista();
   const errores = a.diagnosticos.filter((d) => d.severity === "error");
   const avisos = a.diagnosticos.filter((d) => d.severity === "warning");
 
@@ -618,75 +622,103 @@ function marcarSucio(a) {
 
 // ── Render ──────────────────────────────────────────────────────────────
 
-function panelRender(a) {
+/**
+ * Lo que el lienzo pinta de un dry run, sacado del trace: el estado de cada
+ * nodo, su paso (para la tarjeta y el tooltip) y las aristas por las que pasó
+ * el recorrido — los pares consecutivos del trace, que es un camino lineal.
+ */
+function pinturaDry(a) {
+  const trace = (a.dryRun && a.dryRun.run && a.dryRun.run.trace) || [];
   const estados = {};
-  for (const paso of (a.dryRun && a.dryRun.run && a.dryRun.run.trace) || []) {
-    estados[paso.node_id || paso.node] = paso.status === "err" ? "err" : "ok";
-  }
-
-  // El clic en un nodo NO pasa por `dibujar()`: eso reconstruye la pantalla
-  // entera, y con ella el diagrama de cero — perdiendo el paneo y el zoom que
-  // ya se habían armado. En cambio, se resalta el nodo mutando el SVG
-  // (`actualizarSeleccion`, ver workflows-graph.js) y se refresca sólo la
-  // tarjeta flotante, que vive en su propio hueco.
-  let diagramaEl;
-  const huecoFlotante = h("div");
-
-  const refrescarFlotante = () => {
-    // "tarjetas" es el modo por default al abrir cualquier flujo: excluirlo
-    // acá dejaba el panel sin mostrarse casi siempre, que es lo contrario de
-    // la idea. Se muestra siempre que haya un nodo elegido, sea cual sea la
-    // pestaña — ver el mismo nodo dos veces (acá y en la pila) no molesta;
-    // no verlo en ningún lado, sí.
-    const mostrar = a.seleccionado && a.grafo.nodes[a.seleccionado];
-    poner(huecoFlotante, mostrar
-      ? tarjetaFlotante(a.seleccionado, a.grafo, catalogo, {
-          alCambiar: ({ redibujar }) => {
-            a.sucio = true;
-            // El grafo manda al guardar aunque `a.modo` siga en "texto": esto
-            // edita el grafo, no el texto, sin cambiar de pestaña.
-            a.fuenteDeVerdad = "grafo";
-            marcarSucio(a);
-            // Sólo si cambió la estructura de la tarjeta (tool, aristas): un
-            // simple tipeo no necesita reconstruirla, y hacerlo igual le haría
-            // perder el foco al input a la primera tecla.
-            if (redibujar) refrescarFlotante();
-          },
-          alCerrar: () => {
-            a.seleccionado = null;
-            diagramaEl.actualizarSeleccion(null);
-            refrescarFlotante();
-          },
-          alAbrirCompleta: () => {
-            // Pasa a la pila y cierra el flotante: un solo editor a la vista.
-            a.abierta = a.seleccionado;
-            a.seleccionado = null;
-            a.modo = "tarjetas";
-            dibujar();
-            const tarjeta = shell.vista.querySelector(`.tarjeta[data-nodo="${a.abierta}"]`);
-            if (tarjeta) tarjeta.scrollIntoView({ block: "nearest" });
-          },
-        })
-      : null);
+  const pasos = {};
+  const recorridas = new Set();
+  trace.forEach((paso, i) => {
+    const id = paso.node_id || paso.node;
+    estados[id] = paso.status === "err" ? "err" : "ok";
+    pasos[id] = paso;
+    if (i > 0) recorridas.add(`${trace[i - 1].node_id || trace[i - 1].node}→${id}`);
+  });
+  const fallo = trace.find((p) => p.status === "err");
+  return {
+    estados, pasos, recorridas,
+    dry: {
+      corriendo: Boolean(a.dryCorriendo),
+      hayResultado: Boolean(a.dryRun),
+      resumen: a.dryCorriendo ? "" : a.dryRun ? resumenDry(a) : "",
+      tono: !a.dryRun || a.dryCorriendo ? null : (fallo || a.dryRun.error || a.dryRun.runnable === false) ? "err" : "ok",
+    },
   };
+}
+
+function panelRender(a) {
+  const pintura = pinturaDry(a);
+
+  /**
+   * El editor del nodo elegido, para que el lienzo lo dibuje **adentro** de su
+   * caja (el nodo se agranda; ver workflows-node-panel.js). Antes era una
+   * tarjeta flotante anclada abajo del visor.
+   *
+   * Que el nodo se abra cambia el layout —su fila se agranda y el resto se
+   * corre—, así que elegir un nodo sí pasa por `dibujar()`. Eso no devuelve el
+   * lienzo al origen: el encuadre se guarda y se repone (`a.vista`).
+   */
+  let diagramaEl;
+  const armarPanel = (id) => panelDeNodo(id, a.grafo, catalogo, {
+    paso: pinturaDry(a).pasos[id] || null,
+    hayCorrida: Boolean(a.dryRun),
+    alCambiar: ({ redibujar }) => {
+      a.sucio = true;
+      // El grafo manda al guardar aunque `a.modo` siga en "texto": esto
+      // edita el grafo, no el texto, sin cambiar de pestaña.
+      a.fuenteDeVerdad = "grafo";
+      marcarSucio(a);
+      // Sólo si cambió la estructura (tool, aristas) se rearma el panel: un
+      // simple tipeo no lo necesita, y hacerlo igual le haría perder el foco
+      // al input a la primera tecla. Se rearma el panel solo, no el dibujo:
+      // las medidas del nodo abierto son fijas, así que el layout no cambia.
+      if (redibujar) diagramaEl.actualizarPanel();
+    },
+    alCerrar: () => { a.seleccionado = null; dibujar(); },
+    alAbrirCompleta: () => {
+      // Pasa a la pila y cierra el nodo: un solo editor a la vista.
+      a.abierta = id;
+      a.seleccionado = null;
+      a.modo = "tarjetas";
+      dibujar();
+      const tarjeta = shell.vista.querySelector(`.tarjeta[data-nodo="${a.abierta}"]`);
+      if (tarjeta) tarjeta.scrollIntoView({ block: "nearest" });
+    },
+  });
 
   diagramaEl = dibujarGrafo(a.grafo, {
     seleccionado: a.seleccionado,
-    estados,
+    ...pintura,
+    panelDeNodo: armarPanel,
     // Un segundo clic sobre el mismo nodo lo cierra, igual que en la pila de
     // Tarjetas.
     alClic: (id) => {
-      const nuevo = a.seleccionado === id ? null : id;
-      a.seleccionado = nuevo;
-      diagramaEl.actualizarSeleccion(nuevo);
-      refrescarFlotante();
+      a.seleccionado = a.seleccionado === id ? null : id;
+      dibujar();
     },
+    // Clic en el lienzo vacío: el nodo abierto vuelve a su tamaño.
+    alClicFondo: () => {
+      if (!a.seleccionado) return;
+      a.seleccionado = null;
+      dibujar();
+    },
+    // El dry run se dispara desde el lienzo, como el "Test workflow" de n8n,
+    // y su resultado se pinta ahí mismo sin rearmar el diagrama. Al lado, con
+    // qué registro de qué fuente se corre.
+    alCorrer: () => correrDry(a),
+    extras: selectorDeRegistro(a),
+    edicion: edicionDesdeElLienzo(a),
+    vista: a.vista || null,
+    aristaSeleccionada: a.aristaSel || null,
   });
-  // El buscador de la cabecera vive en otra función y no tiene forma de ver
-  // este cierre: se cuelga del propio estado del flujo para llegar al mismo
-  // diagrama sin recrearlo.
+  // El buscador de la cabecera y el dry run viven en otras funciones y no
+  // tienen forma de ver este cierre: se cuelgan del propio estado del flujo
+  // para llegar al mismo diagrama sin recrearlo.
   a.diagramaEl = diagramaEl;
-  refrescarFlotante();
 
   // `flex:"1", width:"100%"`: es el único hijo de una fila flex (la columna
   // derecha), y sin esto no se estira a ocupar el ancho real que le toca —
@@ -699,7 +731,7 @@ function panelRender(a) {
         class: "seccion__suave",
         text: render === "mermaid"
           ? " · el archivo tal cual lo dibuja Mermaid"
-          : " · clic en un nodo para editarlo acá mismo",
+          : " · clic en un nodo para abrirlo y editarlo acá mismo",
       })]),
       // El buscador vive al lado del diagrama porque actúa sobre él (lo
       // centra en el nodo); el filtro de la pila está al lado de "Nodos".
@@ -711,8 +743,102 @@ function panelRender(a) {
       // `position:relative`: es el que aloja la tarjeta flotante del nodo
       // elegido, anclada adentro del propio visor.
       style: { flex: "1", minHeight: "0", minWidth: "0", position: "relative", border: "1px solid var(--borde)", background: "var(--fondo)" },
-    }, render === "mermaid" ? [visorMermaid(a)] : [diagramaEl, huecoFlotante]),
+    }, render === "mermaid" ? [visorMermaid(a)] : [diagramaEl]),
   ]);
+}
+
+/**
+ * Lo que el lienzo puede pedir sobre el grafo: agregar un nodo colgado de
+ * otro (el "+" del nodo, o soltar un cable en el vacío), meterlo en el medio
+ * de una arista (el "+" de la arista), conectar dos nodos arrastrando, y
+ * quitar una arista. El lienzo no toca el grafo: describe el gesto y acá se
+ * decide, con las mismas reglas que la pila de Tarjetas (`crearNodo`).
+ *
+ * Todo pasa por `dibujar()` porque cambia la estructura y el layout se
+ * recalcula; el encuadre se conserva (`a.vista`). Una arista nueva no lleva
+ * condición: se le pone en la tarjeta del nodo, que se abre sola al agregar.
+ */
+function edicionDesdeElLienzo(a) {
+  const cambio = (seleccionar) => {
+    a.sucio = true;
+    a.fuenteDeVerdad = "grafo";
+    if (seleccionar !== undefined) a.seleccionado = seleccionar;
+    dibujar();
+  };
+  return {
+    // El catálogo entero: el menú de alta ofrece los tools instalados,
+    // agrupados por plugin, desde el manifest. El lienzo no conoce ninguno por
+    // nombre — sólo dibuja lo que hay acá.
+    tools: (catalogo && catalogo.tools) || [],
+    alAgregar: (tipo, { desde = null, arista = null, fn = null } = {}) => {
+      const id = crearNodo(a.grafo, tipo);
+      // El tool elegido en el propio menú: agregar un paso es un gesto, no
+      // "crear la caja" y después "buscarle el tool" en otra pantalla. El
+      // nombre visible arranca con el del tool —igual que en n8n, donde el
+      // nodo se llama como la integración— así la caja no queda mostrando dos
+      // veces el mismo id; se renombra en su tarjeta.
+      if (fn) {
+        const manifest = ((catalogo && catalogo.tools) || []).find((t) => t.id === fn);
+        a.grafo.nodes[id].fn = fn;
+        a.grafo.nodes[id].display = (manifest && manifest.label) || "";
+      }
+      if (arista) {
+        // En el medio: la arista existente pasa a terminar en el nuevo, que
+        // sigue hacia donde iba aquélla. La condición se queda en el primer
+        // tramo, que es el que sale del nodo que la evalúa.
+        a.grafo.edges.push({ from: id, to: arista.to, condition: null });
+        arista.to = id;
+      } else if (desde) {
+        a.grafo.edges.push({ from: desde, to: id, condition: null });
+      }
+      cambio(id);
+    },
+    alConectar: (from, to) => {
+      if (from === to) return;
+      // La misma arista dos veces no agrega nada; el parser lo marcaría raro.
+      if (a.grafo.edges.some((e) => e.from === from && e.to === to)) return;
+      a.grafo.edges.push({ from, to, condition: null });
+      cambio(from);
+    },
+    alQuitarArista: (arista) => {
+      const i = a.grafo.edges.indexOf(arista);
+      if (i < 0) return;
+      a.grafo.edges.splice(i, 1);
+      cambio();
+    },
+    // La condición, editada en la propia línea. Redibuja porque cambia el
+    // rótulo y, si pasa a `loop`, también el punteado y el orden con que se
+    // recorren las salidas al romper ciclos.
+    alCambiarCondicion: (arista, valor) => {
+      const nuevo = valor || null;
+      if (arista.condition === nuevo) return;
+      arista.condition = nuevo;
+      cambio();
+    },
+    // Eliminar un nodo se confirma: no hay deshacer, y el re-cosido de las
+    // aristas que lo atravesaban no es obvio de reconstruir a mano.
+    alQuitarNodo: (id) => {
+      const nodo = a.grafo.nodes[id];
+      if (!nodo) return;
+      const entran = a.grafo.edges.filter((e) => e.to === id).length;
+      const salen = a.grafo.edges.filter((e) => e.from === id).length;
+      confirmar({
+        titulo: `Eliminar "${nodo.display || nodo.label || nodo.variable || nodo.fn || id}"`,
+        texto: entran && salen
+          ? `Se borra el nodo ${id}. Lo que le entraba (${entran}) se engancha con lo que salía `
+            + `(${salen}) para no partir el flujo en dos, heredando la condición de la arista de entrada.`
+          : `Se borra el nodo ${id} y sus ${entran + salen} arista${entran + salen === 1 ? "" : "s"}.`,
+        alConfirmar: () => {
+          quitarNodo(a.grafo, id);
+          if (a.abierta === id) a.abierta = null;
+          cambio(a.seleccionado === id ? null : a.seleccionado);
+        },
+      });
+    },
+    // Cuál arista quedó seleccionada, para que sobreviva al redibujo que hace
+    // falta después de editar su condición.
+    alSeleccionarArista: (clave) => { a.aristaSel = clave; },
+  };
 }
 
 /** Propio ↔ Mermaid. Dos dibujos del mismo archivo; el propio es el que se edita. */
@@ -752,50 +878,231 @@ function visorMermaid(a) {
 
 // ── Dry run ─────────────────────────────────────────────────────────────
 
+/**
+ * La barra del pie: el detalle completo del dry run (tabla nodo por nodo, lo
+ * que falta configurar). El disparador principal ahora está en el lienzo; el
+ * botón de acá queda porque la tabla es lo que se mira cuando el lienzo no
+ * alcanza, y desde la tabla uno quiere volver a correr sin subir.
+ *
+ * Se guarda el elemento (`a.barraDryEl`) para poder rellenarlo en el lugar:
+ * el resultado de una corrida no pasa por `dibujar()`, que reconstruye el
+ * diagrama y tira el paneo/zoom que uno tenía justo cuando más lo mira.
+ */
 function barraDryRun(a) {
   const barra = h("div", {
     style: {
       flexShrink: "0", marginTop: "12px", borderTop: "1px solid var(--borde)",
       background: "var(--fondo-panel)",
     },
-  }, [
+  });
+  a.barraDryEl = barra;
+  rellenarBarraDry(a);
+  return barra;
+}
+
+function rellenarBarraDry(a) {
+  if (!a.barraDryEl) return;
+  poner(a.barraDryEl,
     h("div", {
       style: { display: "flex", alignItems: "center", gap: "10px", height: "42px", padding: "0 4px" },
     }, [
       h("button", {
         class: "btn btn--chico",
         text: a.dryAbierto ? "▾ Dry run" : "▸ Dry run",
-        onClick: () => { a.dryAbierto = !a.dryAbierto; dibujar(); },
+        onClick: () => { a.dryAbierto = !a.dryAbierto; rellenarBarraDry(a); },
       }),
       h("span", { style: { fontSize: "11.5px", color: "var(--texto-3)", flex: "1" } },
-        [resumenDry(a)]),
-      h("button", { class: "btn btn--chico", text: "Correr en seco",
-                    onClick: (e) => correrDry(a, e.currentTarget) }),
+        [a.dryCorriendo ? "Corriendo…" : resumenDry(a)]),
+      h("button", { class: "btn btn--chico", text: a.dryCorriendo ? "Corriendo…" : "Correr en seco",
+                    disabled: Boolean(a.dryCorriendo), onClick: () => correrDry(a) }),
     ]),
     a.dryAbierto ? detalleDry(a) : null,
-  ].filter(Boolean));
-  return barra;
+  );
 }
 
 function resumenDry(a) {
   if (!a.dryRun) return "Resuelve todas las variables y no toca nada. Es lo que hay que mirar antes de ejecutar de verdad.";
   const d = a.dryRun;
+  if (d.error) return `No se pudo correr: ${d.error}`;
   if (!d.runnable && !d.run) return "El flujo tiene errores: no se llegó a resolver nada.";
   const pasos = (d.run && d.run.trace) || [];
+  const fallo = pasos.find((p) => p.status === "err");
   return `${pasos.length} nodo${pasos.length === 1 ? "" : "s"} recorrido${pasos.length === 1 ? "" : "s"} · ` +
-         (d.runnable ? "sin problemas" : "se detuvo antes del final");
+         (fallo ? `se detuvo en ${fallo.node_id || fallo.node}` : d.runnable ? "sin problemas" : "se detuvo antes del final");
 }
 
-async function correrDry(a, boton) {
-  boton.disabled = true;
-  boton.textContent = "Corriendo…";
+/**
+ * Corre en seco y pinta el resultado **donde ya está**: el lienzo
+ * (`actualizarDryRun`), la tarjeta flotante del nodo elegido y la barra del
+ * pie. Nada de esto pasa por `dibujar()` a propósito — ver `barraDryRun`.
+ */
+async function correrDry(a) {
+  if (a.dryCorriendo) return;
+  a.dryCorriendo = true;
+  refrescarDry(a);
   try {
-    a.dryRun = await api.validar({ flow: a.nombre, case_id: "dry-run", row: {} });
+    // Con un registro elegido, las variables `{row.*}` resuelven a valores de
+    // verdad, que es lo que hace que el dry run muestre algo útil. Sin él, la
+    // fila vacía sigue sirviendo para ver el recorrido y qué tool corre.
+    const r = a.registro;
+    a.dryRun = await api.validar({
+      flow: a.nombre,
+      case_id: r ? r.clave : "dry-run",
+      row: r ? r.fila : {},
+      source: r ? r.fuente : "",
+    });
   } catch (e) {
     a.dryRun = { runnable: false, diagnostics: [], missing_config: {}, run: null, error: e.message };
   }
+  a.dryCorriendo = false;
   a.dryAbierto = true;
-  dibujar();
+  // Si mientras corría el usuario se fue a otra pantalla, no hay nada que
+  // pintar: los elementos ya no están y `abierto` puede ser otro flujo.
+  if (!vigente() || abierto !== a) return;
+  refrescarDry(a);
+}
+
+function refrescarDry(a) {
+  if (a.diagramaEl && a.diagramaEl.actualizarDryRun) a.diagramaEl.actualizarDryRun(pinturaDry(a));
+  // El nodo que esté abierto suma la sección con sus params ya resueltos.
+  if (a.diagramaEl && a.diagramaEl.actualizarPanel) a.diagramaEl.actualizarPanel();
+  rellenarBarraDry(a);
+}
+
+// ── Con qué registro se corre en seco ───────────────────────────────────
+
+const FILAS_SELECTOR = 50;
+
+/**
+ * El botón "Registro: …" al lado de "Correr en seco", con su desplegable para
+ * elegir una fila de una fuente. Sin esto el dry run corría siempre con la
+ * fila vacía y las variables `{row.*}` quedaban sin resolver — se veía el
+ * recorrido pero no los parámetros de verdad, que es lo que justifica correr
+ * en seco.
+ *
+ * Las fuentes y sus filas salen de lo mismo que usa la pantalla Sources
+ * (`api.fuentes`, `api.filasDeFuente`): no hay un endpoint nuevo. La fuente
+ * propuesta es la que tiene a este flujo como `default_flow`; si ninguna,
+ * la primera. La elección vive en `a.registro` y sobrevive a un redibujo.
+ */
+function selectorDeRegistro(a) {
+  const valor = h("span", { class: "lienzo__registro-valor" });
+  const contenedor = h("div", { style: { position: "relative", display: "flex" } });
+  let menu = null;
+
+  const pintarBoton = () => {
+    poner(valor, a.registro
+      ? `${a.registro.fuente} · ${a.registro.clave}`
+      : h("span", { class: "lienzo__registro-suave", text: "fila vacía" }));
+  };
+
+  const cerrar = () => {
+    if (menu) { menu.remove(); menu = null; }
+    document.removeEventListener("click", alClicAfuera, true);
+  };
+  const alClicAfuera = (e) => { if (!contenedor.contains(e.target)) cerrar(); };
+
+  const abrir = async () => {
+    if (menu) return cerrar();
+    menu = h("div", { class: "lienzo__registro-menu" }, [
+      h("div", { class: "lienzo__registro-pie", text: "Leyendo las fuentes…" }),
+    ]);
+    contenedor.appendChild(menu);
+    document.addEventListener("click", alClicAfuera, true);
+    let fuentes;
+    try {
+      fuentes = await api.fuentes();
+    } catch (e) {
+      if (menu) poner(menu, h("div", { class: "lienzo__registro-pie", text: `No se pudieron leer las fuentes: ${e.message}` }));
+      return;
+    }
+    if (!menu) return;
+    if (!fuentes.length) {
+      poner(menu, h("div", { class: "lienzo__registro-pie", text: "No hay ninguna fuente. Se crean en Sources; mientras, el dry run corre con la fila vacía." }));
+      return;
+    }
+    const propuesta = (a.registro && fuentes.find((f) => f.name === a.registro.fuente))
+      || fuentes.find((f) => f.default_flow === a.nombre) || fuentes[0];
+    armarMenu(fuentes, propuesta);
+  };
+
+  const armarMenu = (fuentes, fuente) => {
+    const lista = h("div", { class: "lienzo__registro-lista" });
+    const pie = h("div", { class: "lienzo__registro-pie" });
+    const busqueda = h("input", { type: "text", placeholder: "Buscar en la fuente…" });
+    const selFuente = h("select", {
+      onChange: (e) => armarMenu(fuentes, fuentes.find((f) => f.name === e.target.value)),
+    }, fuentes.map((f) => h("option", { value: f.name, text: f.name, selected: f.name === fuente.name })));
+
+    let temporizador = null;
+    busqueda.addEventListener("input", () => {
+      clearTimeout(temporizador);
+      temporizador = setTimeout(() => cargarFilas(fuente, busqueda.value, lista, pie), 300);
+    });
+
+    poner(menu,
+      h("div", { class: "lienzo__registro-cab" }, [selFuente, busqueda]),
+      lista,
+      pie,
+    );
+    cargarFilas(fuente, "", lista, pie);
+    busqueda.focus();
+  };
+
+  const cargarFilas = async (fuente, texto, lista, pie) => {
+    poner(lista, h("div", { class: "lienzo__registro-pie", text: "Leyendo filas…" }));
+    poner(pie, "");
+    let filas = [];
+    let total = 0;
+    try {
+      const resp = await api.filasDeFuente(fuente, { search: texto, limit: FILAS_SELECTOR });
+      if (resp.result.status !== "ok") throw new Error(resp.result.message || "no se pudo leer la fuente");
+      filas = resp.result.outputs.rows || [];
+      total = resp.result.outputs.total ?? filas.length;
+    } catch (e) {
+      poner(lista, h("div", { class: "lienzo__registro-pie", text: `No se pudo leer "${fuente.name}": ${e.message}` }));
+      return;
+    }
+    if (!lista.isConnected) return;
+
+    const sinRegistro = h("div", {
+      class: "lienzo__registro-fila" + (a.registro ? "" : " lienzo__registro-fila--activa"),
+      onClick: () => { a.registro = null; pintarBoton(); cerrar(); },
+    }, [
+      h("span", { class: "clave", text: "—" }),
+      h("span", { class: "resto", text: "Sin registro: correr con la fila vacía" }),
+    ]);
+
+    poner(lista, sinRegistro, ...filas.map((fila) => {
+      const clave = String(fila[fuente.key_field] ?? "");
+      // Las dos primeras columnas que no son la clave, para reconocer la fila
+      // sin tener que abrirla — la fuente decide cuáles son, no esta pantalla.
+      const resto = Object.entries(fila)
+        .filter(([k]) => k !== fuente.key_field)
+        .slice(0, 3).map(([, v]) => String(v ?? "")).filter(Boolean).join(" · ");
+      const activa = a.registro && a.registro.fuente === fuente.name && a.registro.clave === clave;
+      return h("div", {
+        class: "lienzo__registro-fila" + (activa ? " lienzo__registro-fila--activa" : ""),
+        onClick: () => {
+          a.registro = { fuente: fuente.name, clave, fila };
+          pintarBoton();
+          cerrar();
+        },
+      }, [h("span", { class: "clave", text: clave || "(sin clave)" }), h("span", { class: "resto", text: resto })]);
+    }));
+    poner(pie, filas.length < total
+      ? `${filas.length} de ${total} filas · buscá para acotar`
+      : `${filas.length} fila${filas.length === 1 ? "" : "s"}`);
+  };
+
+  const boton = h("button", { class: "lienzo__registro", title: "Con qué registro de la fuente correr en seco", onClick: (e) => { e.stopPropagation(); abrir(); } }, [
+    h("span", { text: "Registro:" }),
+    valor,
+    h("span", { class: "lienzo__registro-suave", text: "▴" }),
+  ]);
+  pintarBoton();
+  contenedor.appendChild(boton);
+  return contenedor;
 }
 
 function detalleDry(a) {

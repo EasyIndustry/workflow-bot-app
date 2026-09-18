@@ -70,3 +70,24 @@ Sin build: `index.html` carga `main.js`, que enruta por hash
 `#plugins`). Ninguna vista conoce un plugin por nombre: settings,
 colecciones y acciones se dibujan desde `GET /tools`. Sondeos: Sources
 (`runs/en-vuelo`, 1.5/5 s) y Workflows (lista, 5 s).
+
+El diagrama de un flujo lo dibuja `views/workflows-graph.js` en SVG a mano,
+sin librería, con la estética de n8n (lienzo de puntos, cajas con ícono y
+nombre adentro, puertos, curvas; el flujo baja como en el `.mmd`). El layout
+es Sugiyama (capas por camino más largo, barycenter, nodos fantasma para los
+saltos largos). El mismo módulo aloja el dry run: el botón del pie del lienzo
+pide `POST /validate` con la fila elegida en **Registro** (una fuente y una
+fila, vía `api.filasDeFuente`), y pinta el trace sobre el dibujo sin
+reconstruirlo (`actualizarDryRun`, `enfocarNodo` y `actualizarPanel` mutan el
+SVG en el lugar para no perder el paneo/zoom). Se edita ahí mismo: "+" en nodos
+y aristas (con la lista de tools del manifest), "×" para borrar, arrastrar un
+cable o doble clic en un puerto para conectar, y el lápiz de una arista para su
+condición; el lienzo sólo describe el gesto (`edicion.*`) y `workflows.js` muta
+el grafo con las reglas de la pila (`crearNodo`/`quitarNodo` en
+`workflows-cards.js`). El nodo elegido se dibuja **abierto**, con el editor de
+`workflows-node-panel.js` adentro en un `foreignObject`: el layout reserva su
+tamaño (las medidas van por nodo en `posicion`, y el alto de cada fila es el de
+su nodo más alto), así que elegir un nodo sí rearma el dibujo — el encuadre se
+guarda y se repone (`obtenerVista`/`aplicarVista`). El render Mermaid
+(`views/workflows-mermaid.js`, librería embarcada en `static/vendor`) comparte
+el visor (`envolverEnLienzo`) y queda como segunda vista para comparar.

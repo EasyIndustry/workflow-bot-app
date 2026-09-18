@@ -414,3 +414,201 @@
 }
 .entrada--filtro:focus { outline: none; border-color: var(--azul); }
 .selector--chico { padding: 2px 4px; font-size: 11px; height: 24px; }
+
+/* ── El lienzo del diagrama (workflows-graph.js) ─────────────────────── */
+
+.lienzo {
+  background-color: var(--grafo-lienzo);
+  background-image: radial-gradient(circle, var(--grafo-punto) 1px, transparent 1px);
+}
+/* Los textos del SVG no se seleccionan al arrastrar: el gesto es paneo. */
+.lienzo svg text { user-select: none; pointer-events: none; }
+
+/* Zoom abajo a la izquierda y correr abajo en el medio: el mismo lugar en el
+   que los pone n8n, para no tener que explicar dónde están. */
+.lienzo__controles {
+  position: absolute; left: 10px; bottom: 10px; display: flex; gap: 2px;
+  background: var(--fondo); border: 1px solid var(--borde); border-radius: 6px;
+  padding: 3px; box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+.lienzo__boton {
+  min-width: 26px; height: 26px; padding: 0 6px; border: none; border-radius: 4px;
+  background: transparent; color: var(--texto-2); font: 13px/1 var(--fuente); cursor: pointer;
+}
+.lienzo__boton:hover { background: var(--fondo-cabecera); color: var(--texto); }
+
+.lienzo__pie {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none;
+}
+.lienzo__correr {
+  pointer-events: auto; display: inline-flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 16px 0 14px; border-radius: 17px; border: none;
+  background: var(--texto); color: var(--fondo); font: 600 12.5px/1 var(--fuente);
+  cursor: pointer; white-space: nowrap; box-shadow: 0 3px 12px rgba(0,0,0,.22);
+}
+.lienzo__correr:hover { background: var(--texto-2); }
+.lienzo__correr:disabled { cursor: default; opacity: .75; }
+.lienzo__correr-glifo { font-size: 10px; }
+.lienzo__correr--corriendo .lienzo__correr-glifo { animation: lienzo-giro 1s linear infinite; }
+@keyframes lienzo-giro { to { transform: rotate(360deg); } }
+
+.lienzo__correr-resumen {
+  pointer-events: auto; font-size: 11px; color: var(--texto-3);
+  background: var(--fondo); border: 1px solid var(--borde); border-radius: 10px;
+  padding: 3px 10px; max-width: 420px; text-align: center;
+}
+.lienzo__correr-resumen:empty { display: none; }
+.lienzo__correr-resumen--ok { color: var(--verde); border-color: var(--verde-borde); }
+.lienzo__correr-resumen--err { color: var(--rojo); border-color: var(--rojo-borde); }
+
+/* La fila del pie del lienzo: el selector de registro a la izquierda del
+   botón de correr, del mismo alto, para que se lean como una sola cosa. */
+.lienzo__pie-fila { display: flex; align-items: center; gap: 8px; pointer-events: auto; position: relative; }
+.lienzo__registro {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px;
+  border-radius: 17px; border: 1px solid var(--borde); background: var(--fondo);
+  color: var(--texto-2); font: 12px/1 var(--fuente); cursor: pointer; max-width: 260px; white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+.lienzo__registro:hover { border-color: var(--borde-fuerte); color: var(--texto); }
+.lienzo__registro-valor { font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lienzo__registro-suave { color: var(--texto-4); }
+
+/* El desplegable para elegir el registro: arriba del botón, como un menú. */
+.lienzo__registro-menu {
+  position: absolute; bottom: calc(100% + 8px); left: 0;
+  width: 440px; max-width: calc(100vw - 40px); max-height: 320px; display: flex; flex-direction: column;
+  background: var(--fondo); border: 1px solid var(--borde); border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.18); pointer-events: auto; text-align: left; z-index: 25;
+}
+.lienzo__registro-cab { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--borde); flex-shrink: 0; }
+.lienzo__registro-cab select, .lienzo__registro-cab input {
+  font: 12px var(--fuente); padding: 4px 7px; border: 1px solid var(--borde); border-radius: 4px; background: var(--fondo); min-width: 0;
+}
+.lienzo__registro-cab input { flex: 1; }
+.lienzo__registro-lista { overflow: auto; flex: 1; min-height: 0; }
+.lienzo__registro-fila {
+  display: flex; gap: 10px; align-items: baseline; padding: 6px 10px; cursor: pointer;
+  border-bottom: 1px solid var(--borde-2); font-size: 11.5px;
+}
+.lienzo__registro-fila:hover { background: var(--fondo-cabecera); }
+.lienzo__registro-fila--activa { background: var(--azul-fondo); }
+.lienzo__registro-fila .clave { font-family: var(--mono); font-weight: 600; flex-shrink: 0; }
+.lienzo__registro-fila .resto { color: var(--texto-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lienzo__registro-pie { padding: 6px 10px; font-size: 11px; color: var(--texto-3); border-top: 1px solid var(--borde); flex-shrink: 0; }
+
+/* El tooltip del nodo: HTML encima del visor, no `<title>` del SVG. */
+.lienzo__tooltip {
+  position: absolute; z-index: 30; max-width: 340px; pointer-events: none;
+  background: var(--fondo); border: 1px solid var(--borde); border-radius: 5px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.16); padding: 8px 10px; font-size: 11.5px; line-height: 1.45;
+}
+.lienzo__tooltip-titulo { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 12px; }
+.lienzo__tooltip-estado { font-size: 10px; font-weight: 600; border-radius: 3px; padding: 1px 6px; }
+.lienzo__tooltip-estado--ok { background: var(--verde-fondo); color: var(--verde); }
+.lienzo__tooltip-estado--err { background: var(--rojo-fondo); color: var(--rojo); }
+.lienzo__tooltip-estado--skip { background: var(--fondo-cabecera); color: var(--texto-3); }
+.lienzo__tooltip-sub { color: var(--texto-4); font-size: 10.5px; margin-top: 2px; }
+.lienzo__tooltip-params {
+  display: grid; grid-template-columns: max-content 1fr; gap: 1px 10px;
+  margin-top: 6px; font-size: 10.5px; word-break: break-all;
+}
+.lienzo__tooltip-k { color: var(--texto-3); }
+.lienzo__tooltip-msg { margin-top: 6px; color: var(--texto-2); }
+.lienzo__tooltip-msg--err { color: var(--rojo); }
+
+/* Editar desde el lienzo: el "+" y la "×" de cada nodo y las herramientas de
+   cada arista aparecen al pasar el mouse, como en n8n — siempre visibles
+   serían ruido en un flujo de treinta nodos. Mientras se arrastra un cable,
+   los "+" de todos los nodos se muestran (son los destinos posibles) y las
+   "×" se esconden: ahí no se borra nada. */
+.lienzo__nodo .lienzo__mas, .lienzo__nodo .lienzo__borrar { opacity: 0; transition: opacity .12s; }
+.lienzo__nodo:hover .lienzo__mas, .lienzo--conectando .lienzo__mas { opacity: 1; }
+.lienzo__nodo:hover .lienzo__borrar { opacity: 1; }
+.lienzo--conectando .lienzo__borrar { opacity: 0 !important; pointer-events: none; }
+.lienzo__puerto { cursor: crosshair; }
+.lienzo__puerto:hover { r: 6; }
+.lienzo__arista .lienzo__arista-tools { opacity: 0; pointer-events: none; transition: opacity .12s; }
+.lienzo__arista:hover .lienzo__arista-tools,
+.lienzo__arista--sel .lienzo__arista-tools { opacity: 1; pointer-events: auto; }
+.lienzo__arista:hover > path[marker-end] { stroke-width: 2.4; }
+/* La seleccionada queda marcada aunque el mouse se haya ido: es la única
+   forma de poder llegar a sus botones sin que se escondan en el camino. */
+.lienzo__arista--sel > path[marker-end] { stroke-width: 2.8; }
+.lienzo--conectando, .lienzo--conectando * { cursor: crosshair !important; }
+
+/* Los paneles del lienzo: el menú de alta, la lista de destinos y el editor de
+   una condición. `[hidden]` primero: `display:flex` le ganaría al
+   `display:none` que el navegador le da a `hidden`, y el panel "cerrado"
+   seguía tapando el lienzo debajo, sin verse. */
+.lienzo__panel[hidden] { display: none; }
+.lienzo__panel {
+  position: absolute; z-index: 35; display: flex; flex-direction: column;
+  background: var(--fondo); border: 1px solid var(--borde); border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.18); text-align: left; overflow: hidden;
+}
+.lienzo__menu { min-width: 230px; max-width: 330px; padding: 4px; }
+.lienzo__destinos { width: 320px; padding: 4px; }
+.lienzo__cond { width: 300px; padding: 4px; }
+
+.lienzo__menu-opcion {
+  display: flex; flex-direction: column; gap: 1px; align-items: flex-start;
+  padding: 7px 10px; border: none; border-radius: 4px; background: transparent;
+  font: 12px var(--fuente); color: var(--texto); cursor: pointer; text-align: left;
+}
+.lienzo__menu-opcion:hover { background: var(--azul-fondo); }
+.lienzo__menu-opcion b { font-weight: 600; display: flex; align-items: center; gap: 5px; }
+.lienzo__menu-opcion span { font-size: 11px; color: var(--texto-3); }
+.lienzo__menu-flecha { color: var(--texto-4); font-size: 13px; line-height: 1; }
+
+.lienzo__menu-cab {
+  display: flex; align-items: center; gap: 7px; padding: 5px 7px 6px;
+  border-bottom: 1px solid var(--borde-2); font-size: 12px;
+}
+.lienzo__menu-cab b { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lienzo__menu-volver, .lienzo__menu-suelto {
+  border: 1px solid var(--borde); background: var(--fondo); border-radius: 4px;
+  color: var(--texto-2); font: 11px var(--fuente); cursor: pointer; padding: 2px 7px;
+}
+.lienzo__menu-volver { padding: 0 6px; font-size: 14px; line-height: 1.3; }
+.lienzo__menu-volver:hover, .lienzo__menu-suelto:hover { border-color: var(--borde-fuerte); color: var(--texto); }
+
+.lienzo__menu-buscador {
+  margin: 6px 4px; padding: 5px 8px; border: 1px solid var(--borde); border-radius: 4px;
+  font: 12px var(--fuente); background: var(--fondo); color: var(--texto);
+}
+.lienzo__menu-buscador:focus { outline: none; border-color: var(--azul); }
+.lienzo__menu-lista { max-height: 280px; overflow: auto; }
+.lienzo__menu-grupo {
+  padding: 5px 8px 2px; font-size: 10px; font-weight: 600; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--texto-4);
+}
+.lienzo__menu-tool {
+  display: flex; flex-direction: column; gap: 0; align-items: flex-start; width: 100%;
+  padding: 5px 9px; border: none; border-radius: 4px; background: transparent;
+  font: 12px var(--fuente); color: var(--texto); cursor: pointer; text-align: left;
+}
+.lienzo__menu-tool:hover { background: var(--azul-fondo); }
+.lienzo__menu-tool b { font-weight: 500; }
+.lienzo__menu-tool span { font-size: 10px; color: var(--texto-4); }
+.lienzo__menu-vacio, .lienzo__menu-pie {
+  padding: 8px 9px; font-size: 11px; color: var(--texto-3); line-height: 1.5;
+}
+.lienzo__menu-pie { border-top: 1px solid var(--borde-2); }
+
+.lienzo__cond-entrada {
+  margin: 6px 4px 0; padding: 5px 8px; border: 1px solid var(--borde); border-radius: 4px;
+  font-size: 12px; background: var(--fondo); color: var(--texto);
+}
+.lienzo__cond-entrada:focus { outline: none; border-color: var(--azul); }
+.lienzo__cond-acciones { display: flex; justify-content: flex-end; gap: 6px; padding: 7px 4px 4px; }
+
+/* El panel del nodo abierto en el lienzo: la caja mide unos 400 px, así que
+   los campos se apilan (etiqueta arriba, control abajo) en vez de repartirse
+   en dos columnas como en la pila de Tarjetas. */
+.nodo-panel .campo { flex-direction: column; gap: 4px; padding: 9px 11px; }
+.nodo-panel .campo__etiqueta { width: auto; flex: none; padding-top: 0; }
+.nodo-panel .campo__ayuda { font-size: 10.5px; }
+.nodo-panel .seccion { margin: 12px 11px 6px; }
+.nodo-panel .entrada, .nodo-panel .selector { width: 100%; }

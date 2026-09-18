@@ -6,6 +6,77 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **El diagrama propio se ve como n8n y el dry run se corre desde ahí.**
+  `workflows-graph.js` dibuja el flujo hacia abajo con lienzo de puntos,
+  cajas casi cuadradas con la pastilla del ícono (monograma del prefijo del
+  tool: `fs.copy_file` → "FS"; rayo para el inicio, bifurcación para la
+  decisión) y el nombre **adentro**, puertos en los bordes, curvas
+  verticales, rótulos de condición sobre el cable a la salida, zoom abajo a
+  la izquierda y "Correr en seco" abajo al medio con el botón **Registro**
+  al lado para elegir una fila de una fuente (`api.fuentes` +
+  `api.filasDeFuente`, lo mismo que Sources) y mandarla como `row` a
+  `POST /validate`. El resultado se pinta encima sin rearmar el dibujo
+  (`actualizarDryRun`): tilde/alerta en la esquina de cada nodo, aristas
+  recorridas en verde, y la tarjeta flotante muestra los params ya
+  resueltos arriba del editor. El nombre largo, el tool y los params van en
+  un tooltip HTML sobre el visor (no `<title>`: tarda y no formatea). Nada
+  de esto pasa por `dibujar()`: la barra del pie se rellena en el lugar
+  (`rellenarBarraDry`) para no perder el paneo/zoom. **Los ciclos se rompen
+  como en dagre**, no por el rótulo `loop`: con el flujo real de Toothform,
+  `N30 -->|loop| gate --> esperar --> N30` dejaba al gate sin ninguna
+  entrada "hacia adelante" y subía a la primera fila como si fuera un
+  inicio; ahora un DFS desde el inicio marca la arista que **cierra** cada
+  ciclo (`esperar --> N30`) y sólo esa se dibuja rodeando por el costado
+  (`romperCiclos`). El rótulo `loop` queda para el punteado. Y cada nodo se
+  **baja hasta justo encima de su sucesor más cercano** (lo que dagre logra al
+  rankear): los "Comentario …" que desembocan en el mismo cierre quedaban
+  arriba con un cable de media pantalla; ahora quedan al lado del cierre.
+  **Se edita sobre el lienzo**, como en n8n: al pasar por un nodo aparece un
+  "+" (menú Acción/Decisión, el nuevo queda colgado de ése); al pasar por una
+  arista, "+" para meter un nodo en el medio y "×" para quitarla; y desde un
+  puerto de salida o el "+" se arrastra un cable hasta otro nodo para
+  conectarlos, o se suelta en el vacío para crear uno ya conectado. El lienzo
+  no muta el grafo: describe el gesto (`edicion.alAgregar/alConectar/
+  alQuitarArista/alQuitarNodo/alCambiarCondicion`) y `workflows.js` decide con
+  las mismas reglas que la pila (`crearNodo`/`quitarNodo`, compartidos). El
+  encuadre sobrevive al redibujo (`a.vista`). Lo demás que se edita ahí:
+  - **El menú de Acción trae los tools instalados**, agrupados por plugin y
+    con buscador (Enter toma el primero); el nodo nace con su tool y con el
+    nombre del tool como nombre visible, en vez de vacío. Sale de
+    `GET /tools`; el lienzo no conoce ningún plugin por nombre.
+  - **La "×" del nodo lo elimina**, con confirmación que dice cuántas aristas
+    se re-cosen (el re-enganche no es obvio de reconstruir a mano y no hay
+    deshacer). El inicio no se puede borrar.
+  - **Una arista se selecciona con un clic** y sus herramientas quedan fijas:
+    llegar hasta ellas con el mouse salía del área de la línea y
+    desaparecían justo antes de poder apretarlas. Son tres: "+" (nodo en el
+    medio), lápiz (**editar la condición ahí mismo**, sin abrir la tarjeta) y
+    "×". La selección sobrevive al redibujo (`a.aristaSel`).
+  - **Doble clic en un puerto** abre la lista de destinos con buscador, sin
+    los que ya están conectados: arrastrar hasta un nodo diez filas más abajo
+    obliga a tener los dos en pantalla, y con treinta nodos eso no pasa.
+  Lo que sigue sin existir: arrastrar un nodo para moverlo (el layout es
+  automático) y reconectar una arista por su extremo.
+- **Un nodo se abre en el lienzo con sus parámetros adentro**, en vez de la
+  tarjeta flotante anclada abajo del visor: al elegirlo, su caja pasa de
+  116×100 a 400×420 y adentro va el editor de siempre
+  (`workflows-node-panel.js` → `panelDeNodo`, en un `foreignObject`); clic en
+  otro nodo, en el fondo o en su "×" y vuelve al tamaño original. El layout le
+  hace lugar de verdad —el alto de cada fila es el del nodo más alto que
+  tiene, y las medidas viajan por nodo en `posicion`—, así que no tapa a sus
+  vecinos; y si al crecer queda medio afuera, el lienzo corre lo mínimo para
+  dejarlo entero a la vista (`asegurarVisible`). La tarjeta flotante tapaba
+  una franja del dibujo justo cuando uno quiere mirarlo y nada la ataba al
+  nodo que estaba editando. Sin animaciones, por ahora. Se mantuvo todo lo que
+  había: clic para editar, buscador con `enfocarNodo`, divisor, toggle
+  Mermaid, la tabla del pie. **Verificado** en Chrome headless contra una
+  instalación de scratch (`--root` temporal) con un flujo de builtins: el
+  trace de `/validate` trae `node_id/status/params/message` y el lienzo lo
+  pinta; falta mirarlo en la QA con un flujo real y plugins instalados. Hay
+  un sandbox publicado como Artifact con el mismo `workflows-graph.js`, dos
+  flujos de ejemplo, dry run simulado y un cuadro para pegar un `.mmd` con
+  un parser **aproximado** traducido del núcleo (sólo para esa página; la
+  app sigue parseando en el backend).
 - **Alcance de archivos: sólo rutas completas.** Una instalación nueva en
   `D:\User\Bot` quedó sin arrancar con `fs_roots=principal=D:,…,C=C:`.
   `D:` sin la barra es "la carpeta actual de esa unidad": pasó la validación
