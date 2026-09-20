@@ -24,6 +24,12 @@ let shell = null;
 // borra con el redibujo. Se deja acá y lo consume el próximo `dibujarPlugin`.
 let confirmacion = null;
 
+// Lo mismo adentro del catálogo: instalar recarga la lista entera, así que el
+// "Listo" de la fila no puede vivir en el DOM de la fila que se está tirando.
+// Se anota por nombre de plugin y lo consume la fila nueva. Se vacía al abrir
+// el modal: es el resultado de esta pasada, no de la anterior.
+let instaladosEnCatalogo = {};
+
 export async function montar(elShell, partes) {
   shell = elShell;
   shell.ponerRotulo("PLUG INS");
@@ -239,6 +245,7 @@ function filaLibrerias(p, recargar) {
  * curado; cualquier otra (`draft`) es trabajo sin terminar y se dice.
  */
 async function abrirCatalogo() {
+  instaladosEnCatalogo = {};
   const cuerpo = h("div", {}, [h("div", { class: "cargando", style: { padding: "22px" }, text: "Leyendo el catálogo…" })]);
   const { cerrar } = abrirModal({
     titulo: "Plugins en línea",
@@ -334,6 +341,9 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
     title: entrada.installable ? `Baja la rama ${datos.branch} e instala ${entrada.path}` : "Entrada de índice sin código: no hay nada que instalar desde acá",
   });
   const detalle = h("div", { style: { fontSize: "11.5px", color: "var(--rojo)", display: "none", whiteSpace: "pre-wrap" } });
+  const hecho = instaladosEnCatalogo[entrada.name];
+  const listo = h("div", { style: { fontSize: "11.5px", color: "var(--verde)", display: hecho ? "" : "none", marginTop: "3px" },
+                           text: hecho || "" });
   // Si el plugin trae librerías, "sin internet" las toma sólo de la carpeta
   // wheels/ (del plugin o de la instalación) en vez de salir a PyPI.
   const chkOffline = h("input", { type: "checkbox" });
@@ -348,9 +358,8 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
       // había que volver a abrir "Plugins en línea" y buscar dónde ibas. El
       // resultado se dice acá, en la fila, y la lista se recarga para que el
       // estado y el aviso de versión nueva queden al día.
-      listo.textContent = `Listo: v${r.installed.plugin.version}`
+      instaladosEnCatalogo[entrada.name] = `Listo: v${r.installed.plugin.version}`
         + `, ${r.installed.plugin.tools.length} tool${r.installed.plugin.tools.length === 1 ? "" : "s"}.`;
-      listo.style.display = "";
       confirmacion = `Se instaló "${r.installed.name}" v${r.installed.plugin.version} desde ${datos.repo} (${datos.branch}).`;
       await recargar();
     } catch (e) {
