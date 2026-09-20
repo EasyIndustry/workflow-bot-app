@@ -65,6 +65,27 @@ const codificar = (s) => encodeURIComponent(s);
 export const api = {
   // Catálogo y salud
   tools: () => pedir("/tools"),
+
+  // Las claves de una colección de un plugin: lo que ofrece como lista un
+  // param que declara `options_from`. Sólo las claves, nunca los items — un
+  // Resource puede tener campos secretos. Cuál es la clave lo dice el propio
+  // resource (`key_field`), así que esto no sabe de ningún plugin.
+  clavesDeColeccion: async (plugin, coleccion) => {
+    const r = await pedir(`/resources/${codificar(plugin)}/${codificar(coleccion)}`);
+    const clave = (r.resource && r.resource.key_field) || "name";
+    return (r.items || []).map((i) => i[clave]).filter(Boolean);
+  },
+
+  // Los params extra que acepta un tool según lo que el nodo ya tenga cargado
+  // — una Action de Connections define sus {variables} en la URL y el payload,
+  // así que hasta que no está elegida no se sabe cuáles son. Vienen con la
+  // misma forma que un param del manifest. El tool que no tenga cómo
+  // describirlos devuelve la lista vacía.
+  paramsExtra: async (toolId, params) => {
+    const q = new URLSearchParams(params || {}).toString();
+    const r = await pedir(`/tools/${codificar(toolId)}/params-extra` + (q ? `?${q}` : ""));
+    return r.params || [];
+  },
   doctor: () => pedir("/doctor"),
   // Qué tiene la instalación, en una mirada; y si está recién hecha.
   resumen: () => pedir("/overview"),

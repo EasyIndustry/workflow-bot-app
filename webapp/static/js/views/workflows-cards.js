@@ -13,6 +13,7 @@
  */
 
 import { h, poner, icono, ICONOS } from "../dom.js";
+import { api } from "../api.js";
 import { crearCampo } from "../components/campo.js";
 
 /**
@@ -151,6 +152,9 @@ export function textoBuscable(id, nodo) {
 function contenido(id, grafo, manifest, catalogo, alCambiar) {
   const nodo = grafo.nodes[id];
   const partes = [];
+  // El bloque de params extra, si el tool acepta: necesita la tarjeta ya
+  // armada para escuchar los cambios de los params de arriba.
+  let extra = null;
 
   if (nodo.type === "start") {
     partes.push(nota("El nodo de arranque. No hace nada: marca por dónde empieza el recorrido."));
@@ -214,8 +218,11 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
 
   if (manifest) {
     partes.push(subtitulo("Parámetros", "salen del manifest del tool"));
+    // De qué plugin es el tool: lo dice el catálogo, y hace falta para que un
+    // param que declara su colección pueda ofrecerla.
+    const plugin = (catalogo.plugins || []).find((p) => (p.tools || []).includes(manifest.id));
     for (const p of manifest.params || []) {
-      partes.push(paramDelCatalogo(nodo, p, alCambiar));
+      partes.push(paramDelCatalogo(nodo, p, alCambiar, plugin && plugin.name));
     }
     if (!(manifest.params || []).length) {
       partes.push(nota("Este tool no declara parámetros."));
@@ -223,17 +230,16 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
     if (manifest.extra_params) {
       partes.push(nota(manifest.extra_params_doc
         || "Acepta parámetros extra además de los declarados."));
-    }
-
-    // Params que están en el nodo y el tool no declara. El diagnóstico los
-    // reporta como ignorados; acá se pueden ver y borrar.
-    const declarados = new Set((manifest.params || []).flatMap((p) => [p.name, ...(p.aliases || [])]));
-    const sobrantes = Object.keys(nodo.params || {}).filter((k) => !declarados.has(k));
-    if (sobrantes.length) {
-      partes.push(subtitulo("Parámetros no declarados",
-        manifest.extra_params ? "los acepta este tool" : "el tool los ignora al ejecutar"));
-      for (const clave of sobrantes) {
-        partes.push(paramLibre(nodo, clave, alCambiar, manifest.extra_params));
+      // Cuáles son depende de lo elegido en el propio nodo, así que se
+      // preguntan y se dibujan aparte; ese bloque también se hace cargo de los
+      // sobrantes, para no dibujar dos veces el mismo param.
+      extra = bloqueParamsExtra(nodo, manifest, alCambiar, plugin && plugin.name);
+      partes.push(extra.elemento);
+    } else {
+      // Params que están en el nodo y el tool no declara. El diagnóstico los
+      // reporta como ignorados; acá se pueden ver y borrar.
+      for (const parte of sobrantesDelNodo(nodo, manifest, [], alCambiar)) {
+        partes.push(parte);
       }
     }
 
@@ -250,7 +256,9 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
   partes.push(variablesDisponibles(id, grafo, catalogo));
   partes.push(...aristas(id, grafo, alCambiar));
 
-  return h("div", { style: { borderTop: "1px solid var(--borde)" } }, partes);
+  const caja = h("div", { style: { borderTop: "1px solid var(--borde)" } }, partes);
+  if (extra) extra.escuchar(caja);
+  return caja;
 }
 
 // ── Piezas ──────────────────────────────────────────────────────────────
@@ -285,7 +293,7 @@ function campoTexto(rotulo, valor, ayuda, alEscribir) {
  * asistente de fuentes — pero **todo se guarda como texto**: el DSL no tiene
  * tipos, y el valor puede ser `{una.interpolación}` en lugar de un número.
  */
-function paramDelCatalogo(nodo, p, alCambiar) {
+function paramDelCatalogo(nodo, p, alCambiar, plugin) {
   const actual = (nodo.params || {})[p.name]
     ?? (p.aliases || []).map((a) => (nodo.params || {})[a]).find((v) => v !== undefined);
 
@@ -295,6 +303,12 @@ function paramDelCatalogo(nodo, p, alCambiar) {
     // input numérico no lo dejaría escribir.
     type: p.type === "json" || p.type === "bool" || p.type === "enum" ? p.type : "str",
     label: p.name, required: p.required, choices: p.choices, default: p.default,
+    // El param dice de qué colección salen sus valores y el campo la ofrece
+    // como buscador: la tarjeta no sabe cuál es, la trae del manifest.
+    options_from: plugin ? p.options_from : "",
+    opciones: plugin && p.options_from
+      ? () => api.clavesDeColeccion(plugin, p.options_from)
+      : null,
     doc: [p.doc, p.config_key ? `Si se deja vacío, sale de la configuración (${p.config_key}).` : ""]
       .filter(Boolean).join(" "),
   }, actual);
@@ -316,6 +330,91 @@ function paramDelCatalogo(nodo, p, alCambiar) {
     el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", escribir);
   });
   return campo.elemento;
+}
+
+/**
+ * Los params extra que el tool acepta, según lo que el nodo ya tiene elegido.
+ *
+ * El manifest dice `extra_params: true` —"acepto más de los declarados"— pero
+ * no cuáles: dependen del propio nodo. Una Action de Connections define sus
+ * `{variables}` en la URL y el payload, así que hasta no elegirla no hay lista;
+ * antes de esto había que abrir la otra pantalla, anotar los nombres y
+ * escribirlos a mano en el .mmd. Se le preguntan al backend y se dibujan con el
+ * mismo campo que los declarados.
+ *
+ * Esta tarjeta sigue sin conocer un tool por nombre: le pregunta a cualquiera
+ * que acepte extras y dibuja lo que venga, que para casi todos es nada.
+ */
+function bloqueParamsExtra(nodo, manifest, alCambiar, plugin) {
+  const caja = h("div", {});
+  let pedido = 0;
+  let ultima = null;
+  let descubiertos = [];
+
+  // Lo que puede cambiar la lista es el valor de los params declarados; no hace
+  // falta volver a preguntar mientras se escribe en uno de los descubiertos.
+  const huella = () => JSON.stringify((manifest.params || []).map((p) => (nodo.params || {})[p.name] ?? ""));
+
+  function pintar() {
+    poner(caja,
+      descubiertos.length ? subtitulo("Parámetros de lo elegido", "los declara la conexión") : null,
+      ...descubiertos.map((p) => paramDelCatalogo(nodo, p, alCambiar, plugin)),
+      ...sobrantesDelNodo(nodo, manifest, descubiertos.map((p) => p.name), alCambiar));
+  }
+
+  async function refrescar() {
+    const actual = huella();
+    if (actual === ultima) return;
+    ultima = actual;
+    const mio = ++pedido;
+    let extras = [];
+    try {
+      extras = await api.paramsExtra(manifest.id, nodo.params || {});
+    } catch {
+      // Que no se pueda describir no puede romper la edición del flujo: la
+      // tarjeta sigue andando como antes, con los sobrantes a mano.
+      extras = [];
+    }
+    if (mio !== pedido) return;  // llegó tarde: ya hay una respuesta más nueva
+    const declarados = new Set((manifest.params || []).flatMap((p) => [p.name, ...(p.aliases || [])]));
+    descubiertos = extras.filter((p) => !declarados.has(p.name));
+    pintar();
+  }
+
+  pintar();
+  refrescar();
+
+  return {
+    elemento: caja,
+    /** Escucha los params de arriba; cambiar la conexión cambia la lista entera. */
+    escuchar(raiz) {
+      let timer = null;
+      const alTocar = () => {
+        clearTimeout(timer);
+        timer = setTimeout(refrescar, 250);
+      };
+      raiz.addEventListener("input", alTocar);
+      raiz.addEventListener("change", alTocar);
+    },
+  };
+}
+
+/**
+ * Params que están en el nodo y no los cubre nadie: ni el manifest ni lo que se
+ * descubrió. El diagnóstico los reporta como ignorados; acá se ven y se borran.
+ */
+function sobrantesDelNodo(nodo, manifest, descubiertos, alCambiar) {
+  const cubiertos = new Set([
+    ...(manifest.params || []).flatMap((p) => [p.name, ...(p.aliases || [])]),
+    ...descubiertos,
+  ]);
+  const sobrantes = Object.keys(nodo.params || {}).filter((k) => !cubiertos.has(k));
+  if (!sobrantes.length) return [];
+  return [
+    subtitulo("Parámetros no declarados",
+      manifest.extra_params ? "los acepta este tool" : "el tool los ignora al ejecutar"),
+    ...sobrantes.map((clave) => paramLibre(nodo, clave, alCambiar, manifest.extra_params)),
+  ];
 }
 
 function paramLibre(nodo, clave, alCambiar, aceptado) {

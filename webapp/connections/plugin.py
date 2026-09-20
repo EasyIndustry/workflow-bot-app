@@ -33,6 +33,7 @@ módulo aparte a propósito — no contamina este.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
@@ -54,6 +55,22 @@ from backend.core.contract import (
     ToolManifest,
     ToolResult,
 )
+
+def _si_el_nucleo_sabe(cls, **campos) -> dict:
+    """
+    Los kwargs que el contrato vendorizado realmente declara.
+
+    `options_from` y `describe_extra_params` llegaron en el núcleo
+    v0.3.1-beta.8 (core#27), y núcleo y web app se actualizan por separado en
+    Config → Actualizaciones: actualizar sólo la app es un caso real. Con un
+    núcleo anterior estos kwargs no existen y `Param(...)`/`FunctionTool(...)`
+    reventarían **al importar**, o sea que no cargaría el plugin entero y
+    Sources y Actions desaparecerían de la pantalla. Así, con un núcleo viejo
+    lo único que falta es el buscador y los params descubiertos.
+    """
+    declarados = {f.name for f in dataclasses.fields(cls)}
+    return {k: v for k, v in campos.items() if k in declarados}
+
 
 # ── Resources ─────────────────────────────────────────────────────────────
 
@@ -327,7 +344,8 @@ LLAMAR = ToolManifest(
         "deja la respuesta en {response} y, si la Action declara 'camino al "
         "resultado', también en {result}."
     ),
-    params=(Param("connection", required=True, doc="Nombre de la Action guardada."),),
+    params=(Param("connection", required=True, doc="Nombre de la Action guardada.",
+                  **_si_el_nucleo_sabe(Param, options_from="actions")),),
     extra_params=True,
     extra_params_doc="Cualquier otro param pisa al {variable} de mismo nombre en la Action, antes que el contexto del run.",
     outputs=(
@@ -408,7 +426,8 @@ FUSIONAR = ToolManifest(
         "mismo nombre). Para cuando un nodo más adelante necesita leer un "
         "campo de la fila recién traída directo por su nombre."
     ),
-    params=(Param("connection", required=True, doc="Nombre de la Action guardada."),),
+    params=(Param("connection", required=True, doc="Nombre de la Action guardada.",
+                  **_si_el_nucleo_sabe(Param, options_from="actions")),),
     extra_params=True,
     extra_params_doc="Cualquier otro param pisa al {variable} de mismo nombre en la Action, antes que el contexto del run.",
     outputs=(
@@ -554,6 +573,68 @@ def _probar_llamada(ctx: ToolContext) -> ToolResult:
     )
 
 
+# ── Qué variables pide la Action elegida ────────────────────────────────
+
+
+def _variables_en(valor) -> list[str]:
+    """Los nombres de `{var}` adentro de un valor, en orden y sin repetir."""
+    fuera: list[str] = []
+
+    def _ver(v):
+        if isinstance(v, str):
+            for m in _PATRON_VAR.finditer(v):
+                if m.group(1) not in fuera:
+                    fuera.append(m.group(1))
+        elif isinstance(v, dict):
+            for x in v.values():
+                _ver(x)
+        elif isinstance(v, list):
+            for x in v:
+                _ver(x)
+
+    _ver(valor)
+    return fuera
+
+
+def _describir_extras(node_params: dict, leer_item) -> tuple[Param, ...]:
+    """
+    Los params extra que acepta un nodo, según la Action que tenga elegida.
+
+    Es el `Tool.describe_extra_params` del contrato (core#27): los dos tools de
+    acá aceptan params extra que pisan las `{variables}` de la Action (ver
+    `extra_params_doc`), pero quien edita el flujo no tenía cómo saber
+    *cuáles* — había que abrir Connections, leer la URL y el payload y
+    escribir los nombres a mano en el `.mmd`. Ahora la tarjeta los ofrece,
+    diciendo en qué campo aparece cada uno.
+
+    Se recorren los mismos tres campos que recorre `_resolver` al ejecutar, así
+    lo que se ofrece es exactamente lo que se va a sustituir: un campo con un
+    literal —`"texto": ""`— no tiene variable y no aparece, porque tampoco se
+    podría pisar desde el nodo.
+
+    Corre mientras alguien edita, no en un run: `leer_item` lo liga el núcleo,
+    es de sólo lectura y no ve los campos `secret`.
+    """
+    nombre = (node_params.get("connection") or "").strip()
+    if not nombre:
+        return ()
+    guardada = leer_item("actions", nombre)
+    if not guardada:
+        return ()
+
+    donde: dict[str, list[str]] = {}
+    for campo in ("url", "headers", "payload"):
+        for var in _variables_en(guardada.get(campo)):
+            donde.setdefault(var, []).append(campo)
+
+    return tuple(
+        Param(
+            var,
+            doc=f"Pisa a {{{var}}} en {' y '.join(campos)} de «{nombre}». "
+                "Vacío, sale del contexto del run.",
+        )
+        for var, campos in donde.items()
+    )
 # ── Manifest y armado ───────────────────────────────────────────────────
 
 MANIFEST = PluginManifest(
@@ -577,8 +658,10 @@ def build_plugin() -> Plugin:
     return Plugin(
         manifest=MANIFEST,
         tools=[
-            FunctionTool(manifest=LLAMAR, fn=_llamar),
-            FunctionTool(manifest=FUSIONAR, fn=_llamar_y_fusionar),
+            FunctionTool(manifest=LLAMAR, fn=_llamar,
+                         **_si_el_nucleo_sabe(FunctionTool, describe_extra_params=_describir_extras)),
+            FunctionTool(manifest=FUSIONAR, fn=_llamar_y_fusionar,
+                         **_si_el_nucleo_sabe(FunctionTool, describe_extra_params=_describir_extras)),
         ],
         actions=[
             FunctionAction(action=PREVIEW, fn=_preview),

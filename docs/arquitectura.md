@@ -54,6 +54,7 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `POST /runs` → `GET /runs/ticket/<t>` | correr sin esperar |
 | `GET /runs`, `GET /runs/<id>`, `GET /runs/en-vuelo`, `GET /logs/<case>` | historial, traza, en vuelo, registro |
 | `GET /tools`, `GET /plugins`, `POST /plugins/install`, `GET /plugins/catalog`, `POST /plugins/catalog/install` | plugins |
+| `GET /tools/<tool>/params-extra?<params>` | los params extra que ese tool acepta según lo que el nodo ya tiene elegido |
 | `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…) |
 | `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar) |
 | `GET /env`, `PUT /env/<N>` | variables y secretos |

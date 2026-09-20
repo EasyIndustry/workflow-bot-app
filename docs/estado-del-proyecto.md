@@ -4,6 +4,37 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-09-20
+
+- **Núcleo v0.3.1-beta.8** (core#27): un `Param` puede declarar de qué
+  colección salen sus valores (`options_from`) y un tool puede describir sus
+  params extra según lo que el nodo ya eligió (`Tool.describe_extra_params`,
+  optativo). `options_from` es informativo a propósito: si validara como
+  `choices`, `connection={variable}` dejaría de ser un valor válido y se
+  rompería interpolar el nombre desde el contexto del run. El lector de items
+  que el núcleo le da al describer no ve los campos `secret`.
+- **Elegir la conexión de una lista, sin salir del flujo.** El param
+  `connection` declara su colección y la tarjeta lo dibuja como texto con
+  buscador (`<datalist>`), no como un `<select>`: la lista es una ayuda para
+  no acordarse del nombre exacto, y el campo sigue aceptando una `{variable}`.
+  Antes había que volver a Plug ins a ver cómo se llamaba la Action.
+- **La tarjeta de un nodo ofrece los params extra de lo que tiene elegido.** Un
+  tool con `extra_params` dice que acepta más params que los declarados, pero
+  no cuáles: los de `connections.llamar` son las `{variables}` que la Action
+  elegida tenga en la URL, los headers y el payload. Había que abrir
+  Connections, anotar los nombres y escribirlos a mano en el `.mmd`. Ahora la
+  tarjeta pregunta `GET /tools/<tool>/params-extra` con lo que el nodo ya
+  tiene y los dibuja con el mismo campo que los declarados; un tool que no
+  sepa describirlos contesta vacío. La tarjeta sigue sin conocer un tool por
+  nombre: quién lee la Action es el plugin (`webapp/connections/plugin.py`),
+  y desde el núcleo v0.3.1-beta.8 lo puede hacer cualquier plugin
+  instalado, no sólo el de la app.
+  Un campo con un literal —`"texto": ""`— no aparece, porque un param del nodo
+  no lo pisaría: sólo se sustituye lo que tiene `{llaves}`. Verificado en el
+  navegador contra una instalación, con la Action y el flujo creados por API.
+- **Plugins en línea no listaba nada** (v0.4.2-beta.11): se usaba un elemento
+  que nunca se creaba y el error cortaba el dibujo de todas las filas.
+
 ## 2026-09-17
 
 - **Núcleo v0.3.1-beta.7** (core#26): el port `fs` niega la carpeta de la

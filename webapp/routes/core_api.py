@@ -24,7 +24,7 @@ import importlib.util
 import json
 import re
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
@@ -188,6 +188,33 @@ def get_overview():
         "key_exists": _llave_existe(),
         "fresh": not instalados and fuentes == 0 and not flujos,
     }
+
+
+@router.get("/tools/{tool_id}/params-extra")
+def get_params_extra(tool_id: str, request: Request):
+    """
+    Los params extra que un tool acepta *dado lo que el nodo ya tiene cargado*.
+
+    Un tool con `extra_params` dice que acepta más de los declarados, pero no
+    cuáles: depende de lo elegido en el propio nodo —una Action de Connections
+    define sus `{variables}` en la URL y el payload—. Sin esto había que abrir
+    la otra pantalla, anotar los nombres y escribirlos a mano en el `.mmd`.
+
+    Los params actuales del nodo van como query. Devuelve la misma forma que un
+    param del manifest, para que la tarjeta los dibuje con el mismo campo.
+
+    Quien sabe describirlos es el tool (`Tool.describe_extra_params`, core#27),
+    y el núcleo le da un lector de items sin secretos: acá no hay ninguna tabla
+    que nombre un plugin, así que un plugin instalado ofrece lo mismo que el de
+    la app. Con un núcleo anterior a v0.3.1-beta.8 la fachada no existe y la
+    respuesta es vacía, que es exactamente lo que había antes.
+    """
+    if _instance.registry.manifest(tool_id) is None:
+        raise HTTPException(404, f"no existe el tool '{tool_id}'")
+    describir = getattr(_instance, "describe_extra_params", None)
+    if describir is None:
+        return {"params": []}
+    return {"params": describir(tool_id, dict(request.query_params))}
 
 
 @router.get("/tools")

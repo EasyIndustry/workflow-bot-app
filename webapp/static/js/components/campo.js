@@ -8,12 +8,35 @@
  * declaró en el lugar equivocado.
  */
 
-import { h } from "../dom.js";
+import { h, poner } from "../dom.js";
 import { crearEditorDeCodigo } from "./editor-codigo.js";
+
+// Para que cada `<datalist>` tenga su id sin que nadie lo invente a mano.
+let _seqOpciones = 0;
 
 /** Los siete tipos de `ParamType`. Cualquier otro cae en texto. */
 function control(esq, valor, alCambiar) {
   const comun = { class: "entrada", onInput: alCambiar };
+
+  // Un param que declara de qué colección salen sus valores (`options_from`,
+  // core#27): texto con buscador, **no** un `<select>`. La lista es una ayuda
+  // para no tener que acordarse del nombre exacto, no una lista cerrada — el
+  // valor puede ser una `{variable}` que recién se resuelve al correr, y por
+  // eso el núcleo declara `options_from` como informativo y no lo valida.
+  // Quién sabe traer los valores es quien arma el campo; sin eso, texto pelado.
+  if (esq.options_from && esq.opciones) {
+    const lista = h("datalist", { id: `opciones-${++_seqOpciones}` });
+    const entrada = h("input", {
+      ...comun, type: "text", list: lista.id, value: valor ?? esq.default ?? "",
+      placeholder: `escribí, o elegí de ${esq.options_from}`,
+    });
+    Promise.resolve(esq.opciones())
+      .then((valores) => poner(lista, ...(valores || []).map((v) => h("option", { value: v }))))
+      // Que no se pueda traer la lista no puede dejar el campo sin usar: sigue
+      // siendo un texto, que es lo que era antes de esto.
+      .catch(() => {});
+    return h("div", {}, [entrada, lista]);
+  }
 
   if (esq.type === "enum" && (esq.choices || []).length) {
     const sel = h("select", { class: "selector", onChange: alCambiar },

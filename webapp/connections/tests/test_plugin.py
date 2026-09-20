@@ -16,11 +16,11 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from backend.core.contract import Action, ToolContext, ToolManifest  # noqa: E402
+from backend.core.contract import Action, ParamType, ToolContext, ToolManifest  # noqa: E402
 from backend.core.registry import ToolRegistry  # noqa: E402
 from backend.tests.fakes import FakeHttp  # noqa: E402
 
-from webapp.connections.plugin import _dig, _fetch_page, build_plugin  # noqa: E402
+from webapp.connections.plugin import ACTIONS, _describir_extras, _dig, _fetch_page, build_plugin  # noqa: E402
 
 
 def _ctx_factory(node_params, config=None, context=None, resources=None):
@@ -423,3 +423,71 @@ def test_probar_llamada_no_necesita_nada_guardado():
 
     assert resultado.status == "ok"
     assert resultado.outputs["status"] == 200
+
+
+# ── Los params extra que la tarjeta del flujo ofrece ────────────────────
+
+
+def _leer(guardada):
+    """El `leer_item` que liga el núcleo: sólo lectura, sin secretos."""
+    def leer(coleccion, clave, key_field="name"):
+        return guardada if (coleccion, clave) == ("actions", "Comentario") else None
+    return leer
+
+
+def test_params_extra_son_las_variables_de_la_action():
+    """Lo que ofrece la tarjeta es exactamente lo que se va a sustituir."""
+    guardada = {
+        "url": "https://api.test/bandeja/{id_externo}",
+        "payload": {"texto": "{texto}", "pais": "{pais}"},
+        "headers": {"X-Origen": "{origen}"},
+    }
+
+    extras = _describir_extras({"connection": "Comentario"}, _leer(guardada))
+
+    assert [p.name for p in extras] == ["id_externo", "origen", "texto", "pais"]
+    assert all(p.type is ParamType.STR and not p.required for p in extras)
+    assert "url" in extras[0].doc and "Comentario" in extras[0].doc
+
+
+def test_un_campo_con_literal_no_se_ofrece():
+    """
+    `"texto": ""` no tiene variable, así que un param del nodo no lo pisaría:
+    ofrecerlo sería prometer algo que al ejecutar no pasa.
+    """
+    guardada = {"url": "https://api.test/x", "payload": {"texto": "", "pais": "{pais}"}}
+
+    extras = _describir_extras({"connection": "Comentario"}, _leer(guardada))
+
+    assert [p.name for p in extras] == ["pais"]
+
+
+def test_params_extra_sin_conexion_elegida_o_inexistente():
+    guardada = {"url": "https://api.test/{x}", "payload": {}}
+    assert _describir_extras({}, _leer(guardada)) == ()
+    assert _describir_extras({"connection": "No existe"}, _leer(guardada)) == ()
+
+
+def test_los_dos_tools_saben_describirse():
+    """Es el optativo del contrato (core#27), colgado de los dos FunctionTool."""
+    tools = {t.manifest.id: t for t in build_plugin().tools}
+    for tool in tools.values():
+        assert callable(getattr(tool, "describe_extra_params", None))
+        assert tool.manifest.extra_params
+
+
+def test_el_param_connection_declara_su_coleccion():
+    """`options_from` es lo que hace que la tarjeta ofrezca un buscador."""
+    for tool in build_plugin().tools:
+        [param] = [p for p in tool.manifest.params if p.name == "connection"]
+        assert param.options_from == ACTIONS.name
+        # Informativo: si entrara en `choices`, `connection={var}` dejaría de
+        # validar y se rompería interpolar el nombre desde el contexto del run.
+        assert param.choices == ()
+
+
+def test_una_variable_repetida_se_ofrece_una_vez_con_sus_campos():
+    guardada = {"url": "https://api.test/{caso}", "payload": {"ref": "{caso}"}}
+    extras = _describir_extras({"connection": "Comentario"}, _leer(guardada))
+    assert len(extras) == 1
+    assert "url y payload" in extras[0].doc
