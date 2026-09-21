@@ -78,6 +78,7 @@
 }
 .seccion__suave { font-weight: 400; color: var(--texto-3); }
 
+
 /* ── Campos de formulario ────────────────────────────────────────────── */
 
 .campo { display: flex; gap: 14px; padding: 11px 13px; border-bottom: 1px solid var(--borde-2); }
@@ -107,8 +108,15 @@
 .campo__error { font-size: 11px; color: var(--ambar); margin-top: 5px; }
 .requerido { color: var(--rojo); }
 
+/* `line-height` explícito, no el `normal` del navegador: sin él la caja del
+   input queda justo en la línea de texto de la fuente y el guión bajo —que es
+   una raya de 1px pegada abajo de todo— se recorta. Se veía en los params de
+   una tarjeta: `{id_externo}` se leía `{id externo}`, y un flujo se escribe
+   lleno de nombres con guión bajo. El editor de código nunca lo tuvo porque
+   ya traía `line-height`. El padding baja de 6 a 5 para que el campo mida lo
+   mismo que antes y no se estire toda la app. */
 .entrada {
-  width: 100%; font-size: 12.5px; padding: 6px 8px;
+  width: 100%; font-size: 12.5px; padding: 5px 8px; line-height: 1.45;
   border: 1px solid var(--borde); background: var(--fondo); color: var(--texto);
 }
 .entrada:focus { outline: none; border-color: var(--azul); box-shadow: 0 0 0 1px var(--azul); }
@@ -408,8 +416,11 @@
    que queda debajo de las columnas fijas del bot se recorta limpio, en vez de
    asomar por encima y parecer un error de dibujo. */
 .tabla__fila--filtros .tabla__celda { padding: 4px 5px; }
+/* El filtro de una columna es su propia regla, no una variante de `.entrada`,
+   así que le pasaba lo mismo con el guión bajo. Queda de 24px, igual que el
+   selector chico que tiene al lado. */
 .entrada--filtro {
-  width: 100%; padding: 3px 6px; font-size: 11px;
+  width: 100%; padding: 3px 6px; font-size: 11px; line-height: 1.45;
   border: 1px solid var(--borde); background: var(--fondo);
 }
 .entrada--filtro:focus { outline: none; border-color: var(--azul); }
