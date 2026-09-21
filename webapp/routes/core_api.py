@@ -1475,6 +1475,14 @@ async def migrar_recibir(sobre: dict, request: Request):
 # en la LAN pediría un código y quedaría emparejado, y con eso el sobre cifrado
 # dejaría de autenticar a nadie — protegería el secreto de quien escucha, pero
 # no de quien lo pide. Emparejar se hace sentado en la máquina.
+#
+# **Esto acota, no garantiza, y depende de #4.** El port `http` está en
+# `PLUGIN_PORTS` y no restringe destinos, así que un flujo puede pedirle al
+# propio Bot por `127.0.0.1` y pasar por acá — y un flujo lo escribe y lo corre
+# cualquiera de la red mientras #4 siga abierto. Lo cierto es "emparejar no se
+# puede pedir **directamente** por la red", no "emparejar está protegido". Si
+# alguna vez hay un proxy adelante, además, este guardia ve todo como local y se
+# abre en silencio.
 _LOCALES = frozenset({"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"})
 
 

@@ -141,6 +141,11 @@ Tres cosas que no son adorno:
   así. Es lo que corresponde hasta que #4 traiga autenticación, y es coherente
   con la idea: emparejar es lo que hace alguien que ve las dos máquinas.
   Recibir un sobre sí queda abierto, porque ahí la credencial es la clave.
+  **Acota, no garantiza**: el port `http` no restringe destinos, así que un
+  flujo puede pedirle al propio Bot por `127.0.0.1` y pasar el guardia, y un
+  flujo lo escribe cualquiera mientras #4 siga abierto. Lo cierto es que
+  emparejar no se puede pedir *directamente* por la red. El arreglo de fondo es
+  #4, y esto le suma una razón más.
 
 El emparejamiento se identifica con un id estable que genera el destino, no
 con la URL: son PCs de planta con DHCP, y un mapa por URL apunta en silencio
