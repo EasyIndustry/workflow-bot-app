@@ -65,7 +65,9 @@ def dos_bots(tmp_path, monkeypatch):
     monkeypatch.setattr(migracion, "_pedir", _bot_remoto(otro))
     app = FastAPI()
     app.include_router(core_api.router, prefix="/api/core")
-    yield TestClient(app), otro
+    # `client=`: comparar sólo contesta desde la propia máquina, y sin esto el
+    # TestClient se presenta como "testclient", que queda del lado de la red.
+    yield TestClient(app, client=("127.0.0.1", 50000)), otro
     otro.close()
 
 

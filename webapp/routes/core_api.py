@@ -1332,7 +1332,7 @@ class DiffBody(BaseModel):
 
 
 @router.post("/diff")
-async def diff(body: DiffBody):
+async def diff(body: DiffBody, request: Request):
     """
     Qué difiere entre esta instalación y otro Bot.
 
@@ -1340,10 +1340,14 @@ async def diff(body: DiffBody):
     pide por HTTP. Ver `webapp/migracion.py` para por qué tiene que ser así y
     por qué el diff no toca un secreto.
 
+    Local, como migrar: nada legítimo la llama desde la red. Ver el comentario
+    de `_solo_desde_esta_maquina`.
+
     `run_in_threadpool` porque adentro hay un GET por flujo contra otra máquina
     de la red: bloquear el loop dejaría la pantalla entera sin responder mientras
     el otro Bot tarda o está apagado.
     """
+    _solo_desde_esta_maquina(request)
     try:
         return await run_in_threadpool(
             migracion.comparar,
@@ -1373,7 +1377,7 @@ class MigrarBody(BaseModel):
 
 
 @router.post("/migrar")
-async def migrar(body: MigrarBody):
+async def migrar(body: MigrarBody, request: Request):
     """
     Manda al otro Bot, en un sobre cifrado, lo que se eligió de acá.
 
@@ -1383,15 +1387,29 @@ async def migrar(body: MigrarBody):
 
     **Sin emparejamiento no se migra.** No hay camino en claro ni con aviso: un
     fallback dejaría que sea quien ataca el que elige el camino sin cifrar.
+
+    Local: empujar es una acción de quien opera **este** Bot, y nada legítimo la
+    pide desde la red — la pantalla corre acá, y un plugin que la ofrezca corre
+    adentro del propio Bot. Abierta, dejaba que cualquiera de la LAN disparara
+    una migración ajena y, probando direcciones, averiguara con quién está
+    emparejado este Bot por la diferencia entre "no hay emparejamiento" y que
+    la migración ocurriera.
     """
+    _solo_desde_esta_maquina(request)
     destino = body.destino.strip()
     emparejado = emparejamiento.para_url(_instance.boot.data_dir, destino)
     if emparejado is None:
+        # La dirección sale casi siempre de una colección —"Bots conocidos"—, así
+        # que "no hay emparejamiento" tiene dos causas muy distintas y el mensaje
+        # tiene que nombrar las dos: falta emparejar, o la dirección está mal
+        # escrita allá. Sin eso se busca el problema en el lugar equivocado.
         raise HTTPException(
             400,
-            f"No hay emparejamiento con {destino}. Antes de migrar hay que emparejar los "
-            "dos Bots: el destino genera un código y se pega acá. Sin eso el secreto "
-            "viajaría en claro por la red, y esta app no lo hace.")
+            f"No hay emparejamiento con {destino}. O falta emparejar los dos Bots —el "
+            "destino genera un código y se pega acá, sentado en cada máquina—, o esa "
+            "dirección no es la del Bot con el que se emparejó: si la sacaste de una "
+            "colección, revisala ahí. Sin emparejamiento no se migra: el secreto "
+            "viajaría en claro por la red.")
     try:
         return await run_in_threadpool(
             migracion.migrar,
@@ -1464,8 +1482,9 @@ def _solo_desde_esta_maquina(request: Request) -> None:
     if quien not in _LOCALES:
         raise HTTPException(
             403,
-            "Emparejar se hace desde el propio Bot, no por la red: es lo que ata la clave "
-            "a alguien que puede ver las dos máquinas. Abrí Bot en esa PC y hacelo ahí.")
+            "Esto se hace desde el propio Bot, no por la red. Abrí Bot en esa PC y hacelo "
+            "ahí — o, si lo está pidiendo un flujo, apuntalo a la dirección de su "
+            "propio Bot.")
 
 
 @router.get("/emparejamientos")

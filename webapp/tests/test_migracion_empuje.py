@@ -47,6 +47,12 @@ def _app():
     return app
 
 
+def _cliente(desde="127.0.0.1"):
+    """Comparar y migrar sólo contestan desde la propia máquina: el TestClient
+    se presenta como "testclient" si no se le dice, y quedaría del lado de la red."""
+    return TestClient(_app(), client=(desde, 50000))
+
+
 def _entregador(destino):
     """
     Un `_entregar` que entra al otro Bot por su handler de verdad.
@@ -80,7 +86,7 @@ def dos_bots(tmp_path, monkeypatch):
         core_api._instance.boot.data_dir, generado["codigo"], OTRO, "Impresión 2")
 
     monkeypatch.setattr(migracion, "_entregar", _entregador(otro))
-    yield TestClient(_app()), otro
+    yield _cliente(), otro
     otro.close()
 
 
@@ -112,7 +118,7 @@ def test_sin_emparejamiento_no_se_migra(tmp_path, monkeypatch):
     core_api._instance = Instance(tmp_path / "solo", local_plugins=LOCALES)
     core_api._instance.workflows.save("alta", content=MMD.format("hola"))
 
-    with TestClient(_app()) as client:
+    with _cliente() as client:
         r = client.post("/api/core/migrar",
                         json={"destino": OTRO, "que": "flujos", "claves": ["alta"]})
 
@@ -446,6 +452,58 @@ def test_sin_nada_elegido_no_se_escribe(dos_bots):
 
     assert r.status_code == 400
     assert "No se eligió nada" in r.json()["detail"]
+
+
+def test_comparar_y_migrar_no_contestan_por_la_red(dos_bots):
+    """
+    Empujar es una acción de quien opera **este** Bot. Nada legítimo la pide
+    desde la red: la pantalla corre acá, y un plugin que la ofrezca corre
+    adentro del propio Bot y llega por loopback. Abierta, cualquiera de la LAN
+    disparaba una migración ajena y, probando direcciones, averiguaba con quién
+    está emparejado este Bot.
+    """
+    _, _ = dos_bots
+    de_afuera = _cliente("192.168.1.77")
+
+    assert de_afuera.post("/api/core/diff",
+                          json={"destino": OTRO, "que": "flujos"}).status_code == 403
+    assert de_afuera.post("/api/core/migrar",
+                          json={"destino": OTRO, "que": "flujos",
+                                "claves": ["x"]}).status_code == 403
+
+
+def test_recibir_un_sobre_si_contesta_por_la_red(dos_bots):
+    """El otro lado de la misma moneda: ahí la credencial es la clave."""
+    _, otro = dos_bots
+    fila = emparejamiento._leer(otro.boot.data_dir)[0]
+    sobre = emparejamiento.sellar(fila, {"que": "flujos", "items": []})
+
+    anterior = core_api._instance
+    core_api._instance = otro
+    try:
+        r = _cliente("192.168.1.77").post("/api/core/migrar/recibir", json=sobre)
+    finally:
+        core_api._instance = anterior
+
+    assert r.status_code == 200, r.text
+
+
+def test_sin_emparejamiento_el_error_nombra_las_dos_causas(dos_bots):
+    """
+    La dirección sale casi siempre de una colección, así que "no hay
+    emparejamiento" puede ser que falte emparejar o que esté mal escrita allá.
+    Sin nombrar las dos, se busca el problema en el lugar equivocado.
+    """
+    client, _ = dos_bots
+    core_api._instance.workflows.save("alta", content=MMD.format("hola"))
+
+    r = client.post("/api/core/migrar", json={"destino": "http://192.168.1.99:8000",
+                                              "que": "flujos", "claves": ["alta"]})
+
+    assert r.status_code == 400
+    detalle = r.json()["detail"]
+    assert "falta emparejar" in detalle
+    assert "revisala ahí" in detalle
 
 
 def test_migrar_contra_uno_mismo_no_se_intenta(dos_bots, monkeypatch):

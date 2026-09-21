@@ -58,7 +58,7 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `GET /limites`, `PUT /limites/raices`, `PUT /limites/programas` | hasta dónde llega la instalación: carpetas y programas permitidos |
 | `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…). Los campos `secret` salen en `None`; un PUT que los manda así conserva el guardado, `""` lo vacía |
 | `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar). Su resultado puede traer `outputs.vista` y la pantalla lo dibuja: tabla, casillas y una acción de seguimiento |
-| `POST /diff`, `POST /migrar` | qué difiere contra otro Bot, y empujarle lo elegido |
+| `POST /diff`, `POST /migrar` | qué difiere contra otro Bot, y empujarle lo elegido. **Sólo desde la propia máquina**: la pantalla corre acá y un plugin que lo ofrezca corre adentro del propio Bot. `incluir_secretos` arranca en `false` — el item viaja igual y el destino conserva los suyos |
 | `POST /migrar/recibir` | el otro lado: abre el sobre cifrado y escribe. Que el sobre abra **es** la autenticación de esta ruta — la única autenticada |
 | `GET/POST/DELETE /emparejamientos`, `POST /emparejamientos/importar` | la clave compartida con otro Bot. **Sólo desde la propia máquina** (`127.0.0.1`): con esto abierto a la red, cualquiera pediría un código y el sobre dejaría de autenticar. La clave no sale nunca; el código se ve una vez |
 | `GET /env`, `PUT /env/<N>` | variables y secretos |
