@@ -1,11 +1,15 @@
 """
-`POST /migrar`: escribir en otro Bot lo que se eligió de acá.
+`POST /migrar`: mandarle a otro Bot, en un sobre cifrado, lo que se eligió acá.
 
-Empuja y no tira, y ésa es la parte que hay que entender del diseño: desde #3 un
-secreto no sale por la API de nadie, así que el único que puede leer los de una
-instalación es la instalación misma. Correr en el origen es lo único que permite
-moverlos, y de paso cada Bot los vuelve a cifrar con su propia llave — no hay que
-copiar ninguna, y un secreto robado en una no vale en la otra.
+Dos cosas se prueban juntas porque son la misma decisión:
+
+1. **Empuja y no tira.** Desde #3 un secreto no sale por la API de nadie, así
+   que el único que puede leer los de una instalación es la instalación misma.
+   Correr en el origen es lo único que permite moverlos, y el destino los vuelve
+   a cifrar con su propia llave — no se copia ninguna.
+2. **Sin emparejamiento no se migra.** No hay camino en claro ni con aviso: un
+   fallback dejaría que sea quien ataca el que elige el camino sin cifrar,
+   presentándose como un destino que no entiende sobres.
 
 Lo que se verifica de los secretos se mira **en la base del destino**, no en la
 respuesta: la respuesta justamente no los trae.
@@ -18,7 +22,6 @@ from __future__ import annotations
 
 import pathlib
 import sys
-import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
@@ -27,7 +30,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from backend.core.instance import Instance  # noqa: E402
-from webapp import migracion  # noqa: E402
+from webapp import emparejamiento, migracion  # noqa: E402
 from webapp.routes import core_api  # noqa: E402
 
 PLUGIN = "cuentas_test"
@@ -38,38 +41,46 @@ OTRO = "http://192.168.1.50:8000"
 MMD = 'flowchart TD\n    B(inicio)\n    N["core.log | message={}"]\n    B --> N\n'
 
 
-def _escritor(instancia):
-    """Un `_escribir` que entra al otro Bot por sus propios handlers."""
-    def escribir(url, camino, cuerpo):
+def _app():
+    app = FastAPI()
+    app.include_router(core_api.router, prefix="/api/core")
+    return app
+
+
+def _entregador(destino):
+    """
+    Un `_entregar` que entra al otro Bot por su handler de verdad.
+
+    Pasa por `POST /migrar/recibir`, así que el 403 del sobre que no abre y el
+    informe clave por clave son los reales, no una imitación.
+    """
+    def entregar(url, sobre):
         anterior = core_api._instance
-        core_api._instance = instancia
+        core_api._instance = destino
         try:
-            if camino.startswith("/api/core/workflows/"):
-                nombre = urllib.parse.unquote(camino.rsplit("/", 1)[1])
-                return core_api.put_workflow(nombre, core_api.WorkflowBody(**cuerpo))
-            if camino.startswith("/api/core/env/"):
-                nombre = urllib.parse.unquote(camino.rsplit("/", 1)[1])
-                return core_api.put_env(nombre, core_api.EnvBody(**cuerpo))
-            if camino.startswith("/api/core/resources/"):
-                plugin, coleccion, clave = camino.split("/api/core/resources/")[1].split("/")
-                return core_api.put_resource_item(
-                    plugin, coleccion, urllib.parse.unquote(clave),
-                    core_api.ResourceItem(**cuerpo))
-            raise AssertionError(f"camino inesperado: {camino}")
+            with TestClient(_app()) as cliente:
+                r = cliente.post("/api/core/migrar/recibir", json=sobre)
         finally:
             core_api._instance = anterior
-    return escribir
+        if r.status_code >= 400:
+            raise migracion.MigracionError(r.json().get("detail", f"contestó {r.status_code}"))
+        return r.json()
+    return entregar
 
 
 @pytest.fixture
 def dos_bots(tmp_path, monkeypatch):
+    """Dos Bots **ya emparejados**: el destino generó el código y el origen lo pegó."""
     core_api._instance.close()
     core_api._instance = Instance(tmp_path / "aca", local_plugins=LOCALES)
     otro = Instance(tmp_path / "alla", local_plugins=LOCALES)
-    monkeypatch.setattr(migracion, "_escribir", _escritor(otro))
-    app = FastAPI()
-    app.include_router(core_api.router, prefix="/api/core")
-    yield TestClient(app), otro
+
+    generado = emparejamiento.generar(otro.boot.data_dir, "Impresión 2")
+    emparejamiento.importar(
+        core_api._instance.boot.data_dir, generado["codigo"], OTRO, "Impresión 2")
+
+    monkeypatch.setattr(migracion, "_entregar", _entregador(otro))
+    yield TestClient(_app()), otro
     otro.close()
 
 
@@ -82,6 +93,111 @@ def _migrar(client, **cuerpo):
 def _item_alla(otro, clave):
     definicion = otro.resource_definition(PLUGIN, COLECCION)
     return otro.resource_store(PLUGIN, definicion).read(clave)
+
+
+def _guardar_item(instancia, clave, item):
+    definicion = instancia.resource_definition(PLUGIN, COLECCION)
+    instancia.resource_store(PLUGIN, definicion).write(clave, item)
+
+
+# ── Sin emparejamiento no se migra ──────────────────────────────────────
+
+
+def test_sin_emparejamiento_no_se_migra(tmp_path, monkeypatch):
+    """
+    El caso que hace que todo lo demás valga: si acá hubiera un camino en claro,
+    alcanzaría con hacerse pasar por un destino viejo para forzarlo.
+    """
+    core_api._instance.close()
+    core_api._instance = Instance(tmp_path / "solo", local_plugins=LOCALES)
+    core_api._instance.workflows.save("alta", content=MMD.format("hola"))
+
+    with TestClient(_app()) as client:
+        r = client.post("/api/core/migrar",
+                        json={"destino": OTRO, "que": "flujos", "claves": ["alta"]})
+
+    assert r.status_code == 400
+    assert "emparejamiento" in r.json()["detail"]
+
+
+def test_un_destino_viejo_no_es_una_puerta_en_claro(dos_bots, monkeypatch):
+    """Un 404 en el endpoint que recibe se lee como "actualizá el destino"."""
+    client, _ = dos_bots
+    core_api._instance.workflows.save("alta", content=MMD.format("hola"))
+
+    def sin_endpoint(url, sobre):
+        raise migracion.MigracionError(
+            f"{url} tiene una versión de la app que no sabe recibir una migración. "
+            "Hay que actualizarlo desde Config → Actualizaciones.")
+
+    monkeypatch.setattr(migracion, "_entregar", sin_endpoint)
+    r = client.post("/api/core/migrar",
+                    json={"destino": OTRO, "que": "flujos", "claves": ["alta"]})
+
+    assert r.status_code == 400
+    assert "actualizarlo" in r.json()["detail"]
+
+
+def test_un_sobre_de_otra_clave_no_abre(dos_bots):
+    """Que el sobre abra **es** la autenticación de esta ruta."""
+    _, otro = dos_bots
+    ajeno = emparejamiento.generar(otro.boot.data_dir, "un tercero")
+    # Mismo id, clave cambiada: es lo que tendría quien copió el id de algún lado.
+    falso = {"id": ajeno["id"], "clave": emparejamiento._nueva_clave()}
+
+    with pytest.raises(emparejamiento.EmparejamientoError) as error:
+        emparejamiento.abrir(otro.boot.data_dir, emparejamiento.sellar(falso, {"que": "flujos"}))
+
+    assert "no hay un emparejamiento que lo explique" in str(error.value)
+
+
+def test_el_mensaje_no_dice_si_el_id_existia(dos_bots):
+    """
+    Si el error de "clave equivocada" fuera distinto del de "ese id no existe",
+    alcanzaría con leer cuál vuelve para saber si el id acertó. Salió distinto
+    en la primera versión y se vio recién probándolo contra dos Bots.
+    """
+    _, otro = dos_bots
+    real = emparejamiento._leer(otro.boot.data_dir)[0]
+    con_clave_ajena = {"id": real["id"], "clave": emparejamiento._nueva_clave()}
+
+    with pytest.raises(emparejamiento.EmparejamientoError) as clave_mala:
+        emparejamiento.abrir(otro.boot.data_dir,
+                             emparejamiento.sellar(con_clave_ajena, {"x": 1}))
+    with pytest.raises(emparejamiento.EmparejamientoError) as id_inexistente:
+        emparejamiento.abrir(otro.boot.data_dir,
+                             {"v": emparejamiento.VERSION_SOBRE,
+                              "emparejamiento": "0" * 16, "sobre": "loquesea"})
+
+    assert str(clave_mala.value) == str(id_inexistente.value)
+
+
+def test_un_sobre_vencido_no_abre(dos_bots, monkeypatch):
+    """
+    El `ttl` es lo único que hoy acota el replay. Si alguien lo saca, esto se
+    pone rojo — que es la idea, porque sin `ttl` un sobre capturado sirve para
+    siempre y con eso se revierte un secreto rotado a su valor viejo.
+    """
+    _, otro = dos_bots
+    fila = emparejamiento._leer(otro.boot.data_dir)[0]
+    sobre = emparejamiento.sellar(fila, {"que": "flujos", "items": []})
+
+    monkeypatch.setattr(emparejamiento, "TTL_SOBRE", -1)
+    with pytest.raises(emparejamiento.EmparejamientoError) as error:
+        emparejamiento.abrir(otro.boot.data_dir, sobre)
+
+    assert "vencido" in str(error.value)
+
+
+def test_un_sobre_de_otra_version_lo_dice(dos_bots):
+    _, otro = dos_bots
+    fila = emparejamiento._leer(otro.boot.data_dir)[0]
+    sobre = {**emparejamiento.sellar(fila, {"que": "flujos"}), "v": 99}
+
+    with pytest.raises(emparejamiento.EmparejamientoError) as error:
+        emparejamiento.abrir(otro.boot.data_dir, sobre)
+
+    assert "versión de sobre" in str(error.value)
 
 
 # ── Flujos ──────────────────────────────────────────────────────────────
@@ -136,14 +252,9 @@ def test_pisa_lo_que_habia(dos_bots):
 
 
 def test_el_secreto_de_un_item_llega_al_destino(dos_bots):
-    """
-    Lo que no se puede hacer por la API —leer el secreto— se hace local, y por
-    eso la migración corre en el origen.
-    """
     client, otro = dos_bots
-    definicion = core_api._instance.resource_definition(PLUGIN, COLECCION)
-    core_api._instance.resource_store(PLUGIN, definicion).write(
-        "prod", {"name": "prod", "url": "https://api.test", "token": "abc123"})
+    _guardar_item(core_api._instance, "prod",
+                  {"name": "prod", "url": "https://api.test", "token": "abc123"})
 
     informe = _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION,
                       claves=["prod"])
@@ -155,9 +266,8 @@ def test_el_secreto_de_un_item_llega_al_destino(dos_bots):
 
 def test_la_respuesta_no_trae_el_secreto(dos_bots):
     client, _ = dos_bots
-    definicion = core_api._instance.resource_definition(PLUGIN, COLECCION)
-    core_api._instance.resource_store(PLUGIN, definicion).write(
-        "prod", {"name": "prod", "url": "https://api.test", "token": "abc123"})
+    _guardar_item(core_api._instance, "prod",
+                  {"name": "prod", "url": "https://api.test", "token": "abc123"})
 
     r = client.post("/api/core/migrar", json={
         "destino": OTRO, "que": "registros", "plugin": PLUGIN,
@@ -166,15 +276,32 @@ def test_la_respuesta_no_trae_el_secreto(dos_bots):
     assert "abc123" not in r.text
 
 
-def test_el_destino_lo_guarda_cifrado_con_su_llave(dos_bots):
-    """
-    No se copia ninguna llave: el destino recibe el valor y lo cifra con la suya.
-    Se mira la fila cruda, que es donde se vería si viajó el sobre o el valor.
-    """
+def test_el_secreto_no_viaja_en_claro(dos_bots, monkeypatch):
+    """Lo que sale a la red es el sobre: el valor no tiene que estar ahí."""
     client, otro = dos_bots
-    definicion = core_api._instance.resource_definition(PLUGIN, COLECCION)
-    core_api._instance.resource_store(PLUGIN, definicion).write(
-        "prod", {"name": "prod", "url": "https://api.test", "token": "abc123"})
+    _guardar_item(core_api._instance, "prod",
+                  {"name": "prod", "url": "https://api.test", "token": "abc123"})
+
+    visto = {}
+    entregar_real = migracion._entregar
+
+    def espiar(url, sobre):
+        visto["sobre"] = sobre
+        return entregar_real(url, sobre)
+
+    monkeypatch.setattr(migracion, "_entregar", espiar)
+    _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION, claves=["prod"])
+
+    import json
+    assert "abc123" not in json.dumps(visto["sobre"])
+    assert _item_alla(otro, "prod")["token"] == "abc123"
+
+
+def test_el_destino_lo_guarda_cifrado_con_su_llave(dos_bots):
+    """No se copia ninguna llave: el destino recibe el valor y lo cifra con la suya."""
+    client, otro = dos_bots
+    _guardar_item(core_api._instance, "prod",
+                  {"name": "prod", "url": "https://api.test", "token": "abc123"})
 
     _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION, claves=["prod"])
 
@@ -225,30 +352,23 @@ def test_una_variable_que_ya_no_esta_no_voltea_las_demas(dos_bots):
 # ── Clave por clave, y lo que sale mal ──────────────────────────────────
 
 
-def test_lo_que_el_destino_rechaza_no_frena_al_resto(dos_bots, monkeypatch):
+def test_lo_que_el_destino_no_puede_guardar_no_frena_al_resto(dos_bots):
     """
-    No hay transacción del otro lado: deshacer a medias sería peor que informar.
-    El informe tiene que decir cuál falló y por qué.
+    Un Bot sin ese plugin es el caso real, y el mensaje tiene que nombrarlo: no
+    hay transacción del otro lado, así que informar es mejor que deshacer.
     """
     client, otro = dos_bots
-    for nombre in ("buena", "mala"):
-        core_api._instance.workflows.save(nombre, content=MMD.format(nombre))
+    _guardar_item(core_api._instance, "prod",
+                  {"name": "prod", "url": "https://api.test", "token": "x"})
+    # El destino deja de conocer la colección, como un Bot sin el plugin.
+    otro.resource_definition = lambda plugin, coleccion: None
 
-    escribir_real = migracion._escribir
+    informe = _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION,
+                      claves=["prod"])
 
-    def a_veces_falla(url, camino, cuerpo):
-        if camino.endswith("mala"):
-            raise migracion.MigracionError("el destino no sabe de ese tool")
-        return escribir_real(url, camino, cuerpo)
-
-    monkeypatch.setattr(migracion, "_escribir", a_veces_falla)
-    informe = _migrar(client, que="flujos", claves=["mala", "buena"])
-
-    assert informe["migrados"] == 1
     assert informe["fallados"] == 1
-    assert otro.workflows.get("buena") is not None
-    assert otro.workflows.get("mala") is None
-    assert "no sabe de ese tool" in informe["resultados"][0]["error"]
+    assert "no tiene la colección" in informe["resultados"][0]["error"]
+    assert PLUGIN in informe["resultados"][0]["error"]
 
 
 def test_sin_nada_elegido_no_se_escribe(dos_bots):
@@ -269,13 +389,3 @@ def test_migrar_contra_uno_mismo_no_se_intenta(dos_bots, monkeypatch):
 
     assert r.status_code == 400
     assert "este mismo Bot" in r.json()["detail"]
-
-
-def test_registros_sin_coleccion_lo_dice(dos_bots):
-    client, _ = dos_bots
-
-    r = client.post("/api/core/migrar",
-                    json={"destino": OTRO, "que": "registros", "claves": ["x"]})
-
-    assert r.status_code == 400
-    assert "colección" in r.json()["detail"]

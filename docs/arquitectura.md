@@ -58,6 +58,9 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `GET /limites`, `PUT /limites/raices`, `PUT /limites/programas` | hasta dónde llega la instalación: carpetas y programas permitidos |
 | `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…). Los campos `secret` salen en `None`; un PUT que los manda así conserva el guardado, `""` lo vacía |
 | `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar) |
+| `POST /diff`, `POST /migrar` | qué difiere contra otro Bot, y empujarle lo elegido |
+| `POST /migrar/recibir` | el otro lado: abre el sobre cifrado y escribe. Que el sobre abra **es** la autenticación de esta ruta — la única autenticada |
+| `GET/POST/DELETE /emparejamientos`, `POST /emparejamientos/importar` | la clave compartida con otro Bot. La clave no sale nunca; el código se ve una vez |
 | `GET /env`, `PUT /env/<N>` | variables y secretos |
 | `GET /updates`, `PUT /updates/config`, `GET /updates/releases`, `POST /updates/install/{tag,upload}`, `POST /updates/revert`, `POST /updates/restart` | actualizaciones |
 | `GET /agent`, `GET /agent/providers`, `WS /agent/terminal` | pestaña Agente |

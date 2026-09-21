@@ -6,6 +6,28 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-21
 
+- **Migrar contenido a otro Bot, en un sobre cifrado.** `POST /diff` dice qué
+  difiere contra otro Bot —flujos, items de una colección, o `env`— y
+  `POST /migrar` le empuja lo elegido. Empuja y no tira porque desde #3 un
+  secreto no sale por la API de nadie: el único que puede leer los de una
+  instalación es la instalación misma. Un campo secreto por eso **nunca** puede
+  dar "igual" en el diff: da `indeterminado`, que no es un caso raro sino la
+  respuesta permanente. Lo que viaja va adentro de un sobre cifrado con una
+  clave **por conexión**, distinta de la llave local de cada Bot —que cifra en
+  reposo y no sale de la máquina—; la genera el destino y se copia una vez al
+  origen. **Sin emparejamiento no se migra**, y no hay caída a texto plano: un
+  fallback con aviso dejaría que sea quien ataca el que elige el camino sin
+  cifrar, presentándose como un destino viejo. Que el sobre abra es la
+  autenticación del endpoint que recibe, y es lo único autenticado de esta API
+  (ver #4 para lo que no lo está). El `ttl` de Fernet acota el replay pero **no
+  lo cierra**: está anotado como pendiente en `docs/decisiones.md`, no como
+  resuelto. Si al destino le falta el plugin de una colección, el diff lo dice
+  (`destino_sin_coleccion`) en vez de romperse — es el Bot nuevo de la flota, al
+  que justamente se le va a copiar todo. Verificado entre dos instalaciones
+  levantadas de verdad: migrar sin emparejar se niega, el secreto no aparece en
+  el sobre ni en la respuesta ni en el `GET /env` del destino, y el 403 del
+  sobre que no abre dice **lo mismo** para una clave equivocada que para un id
+  inexistente — salió distinto en la primera versión y se vio recién ahí.
 - **Los campos `secret` de una colección ya no salen por la API** (#3).
   `GET /resources/{plugin}/{resource}` y `.../{key}` los devolvían descifrados:
   eran el único de los cuatro caminos de lectura que no los tapaba, contra lo

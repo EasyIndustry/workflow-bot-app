@@ -47,9 +47,9 @@ class MigracionError(Exception):
 # ── Hablar con el otro Bot ──────────────────────────────────────────────
 
 
-def _pedir(url: str, camino: str) -> dict | list:
+def _pedir(url: str, camino: str, faltante_ok: bool = False) -> dict | list | None:
     """
-    Un GET a la API del otro Bot.
+    Un GET a la API del otro Bot. Con `faltante_ok`, un 404 devuelve `None`.
 
     Los errores se traducen acá y no en el handler porque el que los va a leer
     está mirando una pantalla que dice "comparar con Impresión 2": "no se pudo
@@ -60,6 +60,8 @@ def _pedir(url: str, camino: str) -> dict | list:
         with urllib.request.urlopen(destino, timeout=TIMEOUT) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        if exc.code == 404 and faltante_ok:
+            return None
         if exc.code == 404:
             raise MigracionError(f"{url} contestó 404 en {camino}: ¿es un Bot?") from None
         raise MigracionError(f"{url} contestó {exc.code} en {camino}") from None
@@ -132,11 +134,27 @@ def items_locales(instancia, plugin: str, coleccion: str) -> tuple[dict, list[st
     })
 
 
-def items_remotos(url: str, plugin: str, coleccion: str) -> tuple[dict, list[str], str]:
-    datos = _pedir(url, f"/api/core/resources/{plugin}/{coleccion}")
+def items_remotos(url: str, plugin: str, coleccion: str) -> tuple[dict, list[str], bool]:
+    """
+    Los items del otro Bot, y si **tiene** la colección.
+
+    Que al destino le falte el plugin no es un error: es el caso de un Bot nuevo
+    de la flota, al que justamente se le va a copiar todo. Devuelve el mapa
+    vacío y lo dice, para que quien decide qué copiar distinga "la tiene y está
+    vacía" de "ni siquiera la tiene".
+
+    Del lado del **origen** sí es un error, y la asimetría es a propósito: pedir
+    una colección que este Bot no tiene es casi siempre un nombre mal escrito, y
+    no hay nada que comparar *desde* — un informe vacío ahí parecería una
+    respuesta.
+    """
+    datos = _pedir(url, f"/api/core/resources/{plugin}/{coleccion}", faltante_ok=True)
+    if datos is None:
+        return {}, [], False
     if not isinstance(datos, dict) or "items" not in datos:
-        raise MigracionError(f"{url} no tiene la colección '{plugin}/{coleccion}'")
-    return _mapa_de_items(datos)
+        raise MigracionError(f"{url} contestó algo raro para '{plugin}/{coleccion}'")
+    mapa, secretos, _ = _mapa_de_items(datos)
+    return mapa, secretos, True
 
 
 def _mapa_de_env(variables) -> dict[str, dict]:
@@ -233,6 +251,9 @@ def comparar(instancia, *, destino_url: str, destino_nombre: str = "", que: str 
         raise MigracionError("El destino es este mismo Bot")
 
     secretos: list[str] = []
+    # Siempre presente, como `campos_secretos`: quien dibuja no tiene que
+    # distinguir "no pasa" de "no me lo dijeron".
+    destino_sin_coleccion = False
     if que == "flujos":
         aca = flujos_locales(instancia)
         alla = flujos_remotos(destino_url)
@@ -254,7 +275,8 @@ def comparar(instancia, *, destino_url: str, destino_nombre: str = "", que: str 
         if not plugin or not coleccion:
             raise MigracionError("Con 'registros' hacen falta el plugin y la colección")
         aca, secretos_aca, _ = items_locales(instancia, plugin, coleccion)
-        alla, secretos_alla, _ = items_remotos(destino_url, plugin, coleccion)
+        alla, secretos_alla, tiene = items_remotos(destino_url, plugin, coleccion)
+        destino_sin_coleccion = not tiene
         # La unión: si un lado declara un campo secreto que el otro no, el item
         # tampoco se puede comparar. Pasa con dos versiones del mismo plugin.
         secretos = sorted(set(secretos_aca) | set(secretos_alla))
@@ -271,6 +293,7 @@ def comparar(instancia, *, destino_url: str, destino_nombre: str = "", que: str 
         "coleccion": f"{plugin}/{coleccion}" if que == "registros" else "",
         "campos_comparados": comparados,
         "campos_secretos": secretos,
+        "destino_sin_coleccion": destino_sin_coleccion,
         "items": items,
         "resumen": resumen,
     }
@@ -279,16 +302,28 @@ def comparar(instancia, *, destino_url: str, destino_nombre: str = "", que: str 
 # ── Empujar ─────────────────────────────────────────────────────────────
 
 
-def _escribir(url: str, camino: str, cuerpo: dict) -> None:
-    """Un PUT a la API del otro Bot."""
-    destino = url.rstrip("/") + camino
+def _entregar(url: str, sobre: dict) -> dict:
+    """
+    El sobre sellado al endpoint que lo recibe.
+
+    Un 404 acá significa que el destino tiene una versión de app sin este
+    endpoint, y se dice así: un 404 crudo no le dice nada a quien opera. **No
+    hay caída a texto plano.** Un fallback con aviso dejaría que sea quien
+    ataca el que elige el camino sin cifrar —se presenta como un destino viejo
+    y fuerza el downgrade—, y el aviso lo lee alguien que lo pasa de largo.
+    """
+    destino = url.rstrip("/") + "/api/core/migrar/recibir"
     pedido = urllib.request.Request(
-        destino, data=json.dumps(cuerpo).encode("utf-8"), method="PUT",
+        destino, data=json.dumps(sobre).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(pedido, timeout=TIMEOUT) as r:
-            r.read()
+            return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise MigracionError(
+                f"{url} tiene una versión de la app que no sabe recibir una migración. "
+                "Hay que actualizarlo desde Config → Actualizaciones.") from None
         detalle = ""
         try:
             detalle = json.loads(exc.read().decode("utf-8")).get("detail", "")
@@ -296,34 +331,27 @@ def _escribir(url: str, camino: str, cuerpo: dict) -> None:
             pass
         raise MigracionError(detalle or f"el destino contestó {exc.code}") from None
     except urllib.error.URLError as exc:
-        raise MigracionError(f"no se pudo conectar: {exc.reason}") from None
+        raise MigracionError(f"no se pudo conectar con {url}: {exc.reason}") from None
     except (TimeoutError, OSError) as exc:
-        raise MigracionError(f"no se pudo conectar: {exc}") from None
+        raise MigracionError(f"no se pudo conectar con {url}: {exc}") from None
+    except json.JSONDecodeError:
+        raise MigracionError(f"{url} contestó algo que no es JSON") from None
 
 
-def migrar(instancia, *, destino_url: str, que: str, claves: list[str],
+def migrar(instancia, *, emparejado: dict, destino_url: str, que: str, claves: list[str],
            plugin: str = "", coleccion: str = "", url_propia: str = "") -> dict:
     """
-    Escribe en el otro Bot lo que se eligió de acá. Clave por clave.
+    Manda al otro Bot, en un sobre cifrado, lo que se eligió de acá.
 
     **Es el único lugar donde un secreto se lee en claro**, y sólo el de esta
     instalación: `resource_store.read` descifra los de una colección y
     `env.resolve()` los de `env` —write-only es sobre la API, no sobre el
-    núcleo—. De ahí salen a un PUT del destino, que los vuelve a cifrar con su
-    propia llave. Por eso no hay que copiar ningún archivo de llave, y un
-    secreto robado en una instalación no vale en la otra.
+    núcleo—. Por eso la migración corre en el origen: nadie más los puede leer.
 
-    Lo que hay que saber antes de usarlo: **el secreto viaja en claro por la
-    red.** La API es HTTP sin TLS y sin autenticación —decisión tomada, ver
-    `docs/arquitectura.md`—, así que cualquiera que escuche la LAN mientras esto
-    corre lo ve. No es peor que cualquier otro PUT de la API, pero es la primera
-    vez que un secreto sale de una instalación, y quien lo dispara tiene que
-    saberlo: la pantalla lo dice antes de empujar.
-
-    Clave por clave y no todo o nada: si el destino rechaza uno —un flujo que no
-    parsea contra su versión del núcleo, un plugin que allá no está— los demás
-    tienen que entrar igual, y el informe dice cuál falló y por qué. Deshacer a
-    medias sería peor: no hay transacción del otro lado.
+    De ahí no salen en claro a la red: van adentro de un sobre sellado con la
+    clave de este emparejamiento (`webapp/emparejamiento.py`), que el destino
+    abre y vuelve a cifrar con su propia llave al guardar. Sin emparejamiento no
+    se migra — no hay camino en claro, a propósito.
     """
     if que not in QUE:
         raise MigracionError(f"'{que}' no es algo que se pueda migrar: {', '.join(QUE)}")
@@ -333,21 +361,32 @@ def migrar(instancia, *, destino_url: str, que: str, claves: list[str],
         raise MigracionError("El destino es este mismo Bot")
     if not claves:
         raise MigracionError("No se eligió nada para migrar")
-
     if que == "registros" and (not plugin or not coleccion):
         raise MigracionError("Con 'registros' hacen falta el plugin y la colección")
 
-    resultados = []
+    contenido = {"que": que, "plugin": plugin, "coleccion": coleccion, "items": []}
+    fallados = []
     for clave in claves:
         try:
-            _empujar_uno(instancia, destino_url, que, clave, plugin, coleccion)
+            contenido["items"].append(_reunir_uno(instancia, que, clave, plugin, coleccion))
         except MigracionError as exc:
-            resultados.append({"clave": clave, "ok": False, "error": str(exc)})
-        else:
-            resultados.append({"clave": clave, "ok": True, "error": ""})
+            # Lo que no se pudo leer de este lado ni sale: se informa igual que
+            # lo que el destino rechace, en la misma lista.
+            fallados.append({"clave": clave, "ok": False, "error": str(exc)})
 
+    resultados = []
+    if contenido["items"]:
+        from webapp import emparejamiento as emp
+
+        # El sobre se arma **acá**, en el momento de mandarlo, porque su `ttl`
+        # empieza a correr al sellarlo.
+        respuesta = _entregar(destino_url, emp.sellar(emparejado, contenido))
+        resultados = respuesta.get("resultados") or []
+
+    resultados = resultados + fallados
     return {
         "destino": destino_url,
+        "emparejamiento": emparejado["id"],
         "que": que,
         "coleccion": f"{plugin}/{coleccion}" if que == "registros" else "",
         "resultados": resultados,
@@ -356,17 +395,17 @@ def migrar(instancia, *, destino_url: str, que: str, claves: list[str],
     }
 
 
-def _empujar_uno(instancia, url: str, que: str, clave: str, plugin: str, coleccion: str) -> None:
+def _reunir_uno(instancia, que: str, clave: str, plugin: str, coleccion: str) -> dict:
+    """Lo que hay que mandar de una clave, leído de esta base. Con su secreto."""
     if que == "flujos":
         wf = instancia.workflows.get(clave)
         if wf is None:
             raise MigracionError(f'acá ya no está el flujo "{clave}"')
         datos = wf.to_dict()
-        _escribir(url, f"/api/core/workflows/{urllib.parse.quote(clave)}", {
+        return {"clave": clave, "datos": {
             "content": datos["content"], "folder": datos["folder"],
             "state": datos["state"], "description": datos["description"],
-        })
-        return
+        }}
 
     if que == "env":
         variable = instancia.env.get(clave)
@@ -380,9 +419,7 @@ def _empujar_uno(instancia, url: str, que: str, clave: str, plugin: str, colecci
         valor = instancia.env.resolve().get(clave)
         if valor is None:
             raise MigracionError(f'"{clave}" no tiene valor cargado')
-        _escribir(url, f"/api/core/env/{urllib.parse.quote(clave)}",
-                  {"value": valor, "secret": variable.secret})
-        return
+        return {"clave": clave, "datos": {"value": valor, "secret": variable.secret}}
 
     definicion = instancia.resource_definition(plugin, coleccion)
     if definicion is None:
@@ -394,5 +431,48 @@ def _empujar_uno(instancia, url: str, que: str, clave: str, plugin: str, colecci
         raise MigracionError(f'acá ya no está "{clave}"') from None
     item = {k: v for k, v in item.items() if k not in CAMPOS_DEL_NUCLEO}
     item.setdefault(definicion.key_field, clave)
-    _escribir(url, f"/api/core/resources/{plugin}/{coleccion}/{urllib.parse.quote(clave)}",
-              {"item": item})
+    return {"clave": clave, "datos": {"item": item}}
+
+
+def aplicar(instancia, contenido: dict) -> list[dict]:
+    """
+    El lado que **recibe**: escribe en esta base lo que venía en el sobre.
+
+    Clave por clave y no todo o nada: si uno no entra —un flujo que no parsea
+    contra esta versión del núcleo, una colección de un plugin que acá no está—
+    los demás entran igual y el informe dice cuál falló y por qué. Deshacer a
+    medias sería peor, y no hay transacción que abarque esto.
+    """
+    que = contenido.get("que")
+    plugin = contenido.get("plugin") or ""
+    coleccion = contenido.get("coleccion") or ""
+    resultados = []
+    for entrada in contenido.get("items") or []:
+        clave = entrada.get("clave")
+        try:
+            _aplicar_uno(instancia, que, clave, entrada.get("datos") or {}, plugin, coleccion)
+        except Exception as exc:  # noqa: BLE001 — cualquier error del núcleo es del item
+            resultados.append({"clave": clave, "ok": False, "error": str(exc)})
+        else:
+            resultados.append({"clave": clave, "ok": True, "error": ""})
+    return resultados
+
+
+def _aplicar_uno(instancia, que: str, clave: str, datos: dict, plugin: str, coleccion: str) -> None:
+    if que == "flujos":
+        instancia.workflows.save(
+            clave, content=datos.get("content", ""), folder=datos.get("folder", ""),
+            state=datos.get("state", "enabled"), description=datos.get("description", ""))
+        return
+    if que == "env":
+        instancia.env.save(clave, datos.get("value", ""), secret=bool(datos.get("secret")))
+        return
+
+    definicion = instancia.resource_definition(plugin, coleccion)
+    if definicion is None:
+        # El caso de un Bot que no tiene ese plugin: se dice qué falta, en vez
+        # de un error del almacén que no nombra al plugin.
+        raise MigracionError(
+            f"este Bot no tiene la colección '{coleccion}' del plugin '{plugin}': "
+            "hay que instalarlo antes de migrarle esto")
+    instancia.resource_store(plugin, definicion).write(clave, datos.get("item") or {})

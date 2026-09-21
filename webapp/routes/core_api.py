@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import contexto_agente, db_view, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, emparejamiento, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -1403,19 +1403,29 @@ class MigrarBody(BaseModel):
 @router.post("/migrar")
 async def migrar(body: MigrarBody):
     """
-    Escribe en el otro Bot lo que se eligió de acá.
+    Manda al otro Bot, en un sobre cifrado, lo que se eligió de acá.
 
     Empuja y no tira: es la única forma de mover un secreto, porque desde #3 no
     sale por la API de nadie y el único que puede leer los de una instalación es
-    la instalación misma. Lo que implica —que el secreto viaja en claro por una
-    LAN sin TLS— está en `webapp/migracion.py` y lo dice la pantalla antes de
-    disparar.
+    la instalación misma.
+
+    **Sin emparejamiento no se migra.** No hay camino en claro ni con aviso: un
+    fallback dejaría que sea quien ataca el que elige el camino sin cifrar.
     """
+    destino = body.destino.strip()
+    emparejado = emparejamiento.para_url(_instance.boot.data_dir, destino)
+    if emparejado is None:
+        raise HTTPException(
+            400,
+            f"No hay emparejamiento con {destino}. Antes de migrar hay que emparejar los "
+            "dos Bots: el destino genera un código y se pega acá. Sin eso el secreto "
+            "viajaría en claro por la red, y esta app no lo hace.")
     try:
         return await run_in_threadpool(
             migracion.migrar,
             _instance,
-            destino_url=body.destino.strip(),
+            emparejado=emparejado,
+            destino_url=destino,
             que=body.que,
             claves=body.claves,
             plugin=body.plugin.strip(),
@@ -1424,6 +1434,93 @@ async def migrar(body: MigrarBody):
         )
     except migracion.MigracionError as exc:
         raise HTTPException(400, str(exc)) from None
+
+
+@router.post("/migrar/recibir")
+async def migrar_recibir(sobre: dict, request: Request):
+    """
+    El otro lado: abre el sobre y escribe lo que traía.
+
+    Que el sobre se pueda abrir **es** la autenticación de esta ruta: quien no
+    tiene la clave del emparejamiento no produce uno válido. Es lo único
+    autenticado de esta API por ahora (#4).
+
+    Un sobre que no abre devuelve 403 con un mensaje que no distingue "ese
+    emparejamiento no existe" de "la clave no corresponde": decir cuál de las
+    dos le confirmaría a quien prueba si acertó el id.
+    """
+    data_dir = _instance.boot.data_dir
+    try:
+        fila, contenido = await run_in_threadpool(emparejamiento.abrir, data_dir, sobre)
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(403, str(exc)) from None
+
+    resultados = await run_in_threadpool(migracion.aplicar, _instance, contenido)
+    quien = request.client.host if request.client else ""
+    await run_in_threadpool(
+        emparejamiento.anotar_uso, data_dir, fila["id"],
+        f"http://{quien}:8000" if quien else "")
+    _regenerar_manual()
+    return {
+        "resultados": resultados,
+        "migrados": sum(1 for r in resultados if r["ok"]),
+        "fallados": sum(1 for r in resultados if not r["ok"]),
+    }
+
+
+# ── Emparejar con otro Bot ──────────────────────────────────────────────
+
+
+@router.get("/emparejamientos")
+def list_emparejamientos():
+    """Con quién está emparejado este Bot. La clave no sale nunca."""
+    try:
+        return {"items": emparejamiento.listar(_instance.boot.data_dir)}
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+class EmparejamientoNuevo(BaseModel):
+    nombre: str
+
+
+@router.post("/emparejamientos")
+def generar_emparejamiento(body: EmparejamientoNuevo):
+    """
+    El lado que va a **recibir**: genera el código para copiar al otro Bot.
+
+    El código se ve una sola vez y no se puede volver a pedir: lo forma la
+    clave, y una clave que se relee por la API es una clave que sale por la API.
+    """
+    try:
+        return emparejamiento.generar(_instance.boot.data_dir, body.nombre)
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+class EmparejamientoImportado(BaseModel):
+    codigo: str
+    url: str
+    nombre: str = ""
+
+
+@router.post("/emparejamientos/importar")
+def importar_emparejamiento(body: EmparejamientoImportado):
+    """El lado que va a **empujar**: guarda el código que le pasaron."""
+    try:
+        return emparejamiento.importar(
+            _instance.boot.data_dir, body.codigo, body.url, body.nombre)
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.delete("/emparejamientos/{ident}")
+def olvidar_emparejamiento(ident: str):
+    try:
+        emparejamiento.olvidar(_instance.boot.data_dir, ident)
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return {"deleted": ident}
 
 
 # ── Workflows ───────────────────────────────────────────────────────────

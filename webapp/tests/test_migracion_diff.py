@@ -37,7 +37,7 @@ OTRO = "http://192.168.1.50:8000"
 
 def _bot_remoto(instancia):
     """Un `_pedir` que contesta como el otro Bot, por los handlers de verdad."""
-    def pedir(url, camino):
+    def pedir(url, camino, faltante_ok=False):
         anterior = core_api._instance
         core_api._instance = instancia
         try:
@@ -219,6 +219,57 @@ def test_campos_secretos_viene_siempre_aunque_este_vacio(dos_bots):
     _flujo(core_api._instance, "alta", MMD.format("hola"))
 
     assert _diff(client, que="flujos")["campos_secretos"] == []
+
+
+def test_si_al_destino_le_falta_el_plugin_no_se_rompe(dos_bots, monkeypatch):
+    """
+    Un Bot nuevo de la flota no tiene nada instalado, y es justo al que se le va
+    a copiar todo. Que le falte la colección es un resultado —todo queda como
+    `solo_origen`—, no un error.
+    """
+    client, _ = dos_bots
+    _item(core_api._instance, "prod", {"name": "prod", "url": "https://api.test", "token": "x"})
+
+    pedir_real = migracion._pedir
+
+    def sin_ese_plugin(url, camino, faltante_ok=False):
+        if camino.startswith("/api/core/resources/") and faltante_ok:
+            return None
+        return pedir_real(url, camino, faltante_ok)
+
+    monkeypatch.setattr(migracion, "_pedir", sin_ese_plugin)
+    informe = _diff(client, que="registros", plugin=PLUGIN, coleccion=COLECCION)
+
+    assert informe["destino_sin_coleccion"] is True
+    assert _por_clave(informe)["prod"]["estado"] == "solo_origen"
+
+
+def test_destino_sin_coleccion_distingue_vacia_de_inexistente(dos_bots):
+    """
+    `false` con el destino vacío es "la tiene y está vacía"; `true` es "ni
+    siquiera la tiene". Para quien decide qué copiar significan distinto.
+    """
+    client, _ = dos_bots
+    _item(core_api._instance, "prod", {"name": "prod", "url": "https://api.test", "token": "x"})
+
+    informe = _diff(client, que="registros", plugin=PLUGIN, coleccion=COLECCION)
+
+    assert informe["destino_sin_coleccion"] is False
+    assert _por_clave(informe)["prod"]["estado"] == "solo_origen"
+
+
+def test_si_la_coleccion_falta_de_este_lado_si_es_error(dos_bots):
+    """
+    Asimetría a propósito: pedir una colección que este Bot no tiene es casi
+    siempre un nombre mal escrito, y no hay nada que comparar *desde*.
+    """
+    client, _ = dos_bots
+
+    r = client.post("/api/core/diff", json={
+        "destino": OTRO, "que": "registros", "plugin": "no_existe", "coleccion": "nada"})
+
+    assert r.status_code == 400
+    assert "Acá no hay una colección" in r.json()["detail"]
 
 
 # ── Variables de entorno ────────────────────────────────────────────────

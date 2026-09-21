@@ -78,3 +78,64 @@ llegaba partida. Encontrado en el primer QA.
 El `.exe` trae un CPython relocalizable y instala en el perfil del usuario:
 los plugins se descubren con entry points en un site-packages real, y el
 instalador corre igual con o sin administrador.
+
+## La migración entre Bots empuja, no tira
+Desde #3 un secreto no sale por la API de nadie, así que el único que puede
+leer los de una instalación es la instalación misma. Por eso la migración
+corre en el **origen**: lee lo suyo con `resource_store.read` y
+`env.resolve()` —write-only es sobre la API, no sobre el núcleo— y lo
+escribe en el destino con un PUT. Consecuencias: cada Bot cifra con su
+propia llave al recibir, así que no hay que copiar ningún archivo de llave
+y un secreto robado en una instalación no vale en la otra; y un campo
+secreto **nunca** se puede comparar, porque los dos lados lo tapan — de ahí
+el estado `indeterminado` del diff, que no es un caso raro sino la respuesta
+permanente. Decir "igual" ahí sería afirmar algo que nadie puede ver.
+
+## El diff lo calcula la app, y el plugin lo consume
+`bots.comparar` y la pantalla de migración necesitan la misma respuesta a
+"qué está distinto entre estos dos Bots". La dirección contraria —que la
+pantalla llame al tool— rompe que ninguna pantalla conozca un plugin por
+nombre, y además ataría la app a que el plugin esté instalado. Así que el
+cálculo vive en `webapp/migracion.py` detrás de `POST /diff`, con la misma
+forma de salida que el tool ya fijó con tests, y el tool reemplaza su
+cálculo local por una llamada. Consecuencia: el tool pasa a depender de una
+versión de app que tenga el endpoint, y un 404 ahí tiene que leerse como
+"actualizá este Bot", no como un error crudo.
+
+## Los secretos viajan en un sobre, con una clave por conexión
+Empujar un secreto lo pone en la red, y la API es HTTP sin TLS. TLS acá no
+es práctico: la instalación es local, sin internet y sin autoridad que
+firme. La decisión es cifrar el **sobre** con una clave **por conexión**,
+distinta de la llave local de cada Bot: la local cifra en reposo y no sale
+de la máquina nunca, y comprometer un par de Bots no compromete lo guardado
+en ninguno. La clave la **genera el destino** —aleatoria, de máquina, nadie
+elige una frase— y se copia una vez al origen. Se descartó el modelo de
+claves públicas con huella: comparar una huella en dos pantallas es más
+fácil de aprobar sin mirar que copiar una cadena una vez. Fernet, que es lo
+que el núcleo ya usa; criptografía propia no.
+
+Tres cosas que no son adorno:
+
+- **No se genera sola al conectarse.** Si se intercambiara sola en el primer
+  contacto no habría autenticación ninguna: cualquier máquina de la LAN se
+  emparejaría sola. El copiado a mano **es** la autenticación, y de paso es
+  lo primero autenticado que tiene el sistema.
+- **`Fernet.decrypt` necesita `ttl`.** Sin él no mira el timestamp y un sobre
+  capturado sirve para siempre; el ataque realista no es que lean el secreto
+  sino que reenvíen la migración de ayer y **reviertan** un secreto rotado al
+  valor viejo, que es el que el atacante ya tiene. El `ttl` achica la ventana,
+  **no cierra el replay**: adentro de esos minutos el sobre sigue valiendo.
+  Cerrarlo pide que el receptor recuerde los sobres vistos o dé un nonce de un
+  solo uso. Está pendiente, no resuelto.
+- **Un destino que no entiende sobres no recibe.** Caer a texto plano con un
+  aviso deja que sea el atacante quien elige el camino sin cifrar: se presenta
+  como un destino viejo y fuerza el downgrade, y el aviso lo lee alguien que lo
+  pasa de largo.
+
+El emparejamiento se identifica con un id estable que genera el destino, no
+con la URL: son PCs de planta con DHCP, y un mapa por URL apunta en silencio
+a otra máquina cuando cambia la IP. La versión del sobre va **afuera** del
+texto cifrado, porque si no hay que descifrar para saber cómo parsear.
+
+Lo que esto **no** arregla: la API sigue sin autenticación para escribir y
+ejecutar (#4). El sobre protege una migración, no el Bot.
