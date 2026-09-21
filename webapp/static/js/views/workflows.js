@@ -248,6 +248,10 @@ function dibujar() {
   const a = abierto;
   const errores = a.diagnosticos.filter((d) => d.severity === "error");
   const avisos = a.diagnosticos.filter((d) => d.severity === "warning");
+  // La caja que scrollea la arma `panelTarjetas`, y sólo si la pestaña es
+  // Tarjetas: se limpia antes para no volver a poner el scroll sobre la del
+  // dibujado anterior, que ya no está en el documento.
+  a.cajaTarjetas = null;
 
   poner(shell.vista, h("div", { style: { display: "flex", flexDirection: "column", gap: "0", height: "100%" } }, [
     cabecera(a, errores, avisos),
@@ -261,6 +265,10 @@ function dibujar() {
     filaDeColumnas(a),
     barraDryRun(a),
   ].filter(Boolean)));
+
+  // Acá y no adentro de `panelTarjetas`: `scrollTop` sobre un elemento que
+  // todavía no está en el documento no se guarda.
+  if (a.cajaTarjetas) a.cajaTarjetas.scrollTop = a.scrollTarjetas || 0;
 }
 
 /**
@@ -545,7 +553,11 @@ function panelTarjetas(a) {
   // sobre el diagrama y quedaban dos editores del mismo nodo a la vista.
   const pila = pilaDeTarjetas(a.grafo, catalogo, {
     seleccionado: a.abierta,
-    alSeleccionar: (id) => { a.abierta = id; dibujar(); },
+    // Sin `dibujar()`: abrir y cerrar lo resuelve la propia pila sobre las
+    // tarjetas que ya están (#2). Acá sólo se anota cuál quedó abierta, para
+    // que un redibujo de verdad la vuelva a abrir. `agregar` y `quitar` llaman
+    // a esto y después a `alCambiar({redibujar: true})`, que sí redibuja.
+    alSeleccionar: (id) => { a.abierta = id; },
     alUbicar: (id) => { if (a.diagramaEl && a.diagramaEl.enfocarNodo) a.diagramaEl.enfocarNodo(id); },
     alCambiar: ({ redibujar }) => {
       a.sucio = true;
@@ -556,12 +568,22 @@ function panelTarjetas(a) {
   });
   const contador = h("span", { class: "seccion__suave" });
   aplicarFiltroDeTarjetas(a, pila, contador);
+
+  // El que scrollea. `dibujar()` rehace la vista entera, así que es un elemento
+  // nuevo en cada dibujado y nace en el tope: sin recordar la posición, elegir
+  // un tool o quitar un nodo con la pila scrolleada mandaba la vista arriba
+  // (#2, la otra mitad — abrir una tarjeta ya no pasa por acá).
+  a.cajaTarjetas = h("div", {
+    style: { flex: "1", minHeight: "0", overflow: "auto" },
+    onScroll: (e) => { a.scrollTarjetas = e.target.scrollTop; },
+  }, [pila]);
+
   return h("div", { style: { display: "flex", flexDirection: "column", flex: "1", width: "100%", height: "100%", minHeight: "0", minWidth: "0" } }, [
     h("div", { class: "seccion", style: { flexShrink: "0", margin: "0 0 8px" } }, [
       h("span", { style: { whiteSpace: "nowrap" } }, ["Nodos", contador]),
       filtroDeTarjetas(a, pila, contador),
     ]),
-    h("div", { style: { flex: "1", minHeight: "0", overflow: "auto" } }, [pila]),
+    a.cajaTarjetas,
   ]);
 }
 

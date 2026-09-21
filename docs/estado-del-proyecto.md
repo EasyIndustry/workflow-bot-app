@@ -31,6 +31,20 @@ desarrollo o la PC de un cliente), no sólo con tests.
 - **Config → General**: se fue. Estaba dibujada sin backend desde el traspaso.
 - **"Volver a chequear" de Diagnóstico redibujaba Alcance**: buscaba la sección
   por índice (`SECCIONES[2]`) y el botón parecía no hacer nada. Ahora por id.
+- **Abrir una tarjeta ya no mueve la pila** (#2). El click en la cabecera
+  terminaba en `dibujar()`, que rehace la vista entera — y con ella el div que
+  scrollea, que nace en el tope. Con la pila scrolleada, abrir una tarjeta de
+  abajo la mandaba fuera de la vista: medido en una instalación con un flujo de
+  21 nodos, la tarjeta pasaba de estar a 526px a estar a 1158px, 429px por
+  debajo del borde del panel. Ahora abrir y cerrar cuelga o saca el cuerpo
+  sobre la tarjeta que ya está en pantalla, sin redibujar nada —el mismo camino
+  que ya se había elegido para el filtro de la pila—, y `a.abierta` se sigue
+  anotando para que un redibujo de verdad la vuelva a abrir. Aparte, el panel
+  de tarjetas recuerda su `scrollTop` y lo vuelve a poner después de dibujar,
+  que es lo que hacía falta para lo que sí redibuja: elegir un tool, agregar un
+  nodo, quitar uno. Verificado en el navegador por CDP: abrir, cerrar, abrir
+  otra, cambiar de tool con la pila en el fondo, el filtro, y el panel flotante
+  del diagrama con su "Abrir en Tarjetas".
 - **Núcleo v0.3.1-beta.8** (core#27): un `Param` puede declarar de qué
   colección salen sus valores (`options_from`) y un tool puede describir sus
   params extra según lo que el nodo ya eligió (`Tool.describe_extra_params`,

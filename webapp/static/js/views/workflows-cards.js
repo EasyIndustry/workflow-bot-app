@@ -25,10 +25,28 @@ export function pilaDeTarjetas(grafo, catalogo, { alCambiar, seleccionado, alSel
   const orden = ordenTopologico(grafo);
   const porId = new Map((catalogo.tools || []).map((t) => [t.id, t]));
 
+  // Abrir una tarjeta cuelga el cuerpo sobre la caja que ya está en pantalla,
+  // sin redibujar. Cuando el click terminaba en `dibujar()`, la vista se rehacía
+  // entera y con ella el div que scrollea, que nace en el tope: abrir una
+  // tarjeta de abajo de una pila scrolleada la mandaba fuera de la vista (#2).
+  // Es el mismo camino que ya se había elegido para el filtro — tocar las
+  // tarjetas que están, no reconstruirlas.
+  const cajas = orden.map((id, i) => tarjeta(id, grafo, porId, catalogo, {
+    alCambiar, abierta: seleccionado === id, alSeleccionar, alUbicar, indice: i + 1,
+    alAlternar: (quien) => {
+      const caja = cajas.find((c) => c.dataset.nodo === quien);
+      const abriendo = !caja.estaAbierta();
+      // Una sola abierta a la vez, como antes: la pila con todo desplegado no
+      // se puede recorrer.
+      for (const c of cajas) c.abrir(abriendo && c === caja);
+      // El estado sigue viviendo en la vista, para que sobreviva a un redibujo
+      // de verdad — cambiar de tool, agregar o quitar un nodo.
+      if (alSeleccionar) alSeleccionar(abriendo ? quien : null);
+    },
+  }));
+
   return h("div", {}, [
-    ...orden.map((id, i) => tarjeta(id, grafo, porId, catalogo, {
-      alCambiar, abierta: seleccionado === id, alSeleccionar, alUbicar, indice: i + 1,
-    })),
+    ...cajas,
     h("div", { style: { marginTop: "12px", display: "flex", gap: "7px" } }, [
       h("button", { class: "btn", text: "+ Acción",
                     onClick: () => agregar(grafo, "action", alCambiar, alSeleccionar) }),
@@ -83,7 +101,7 @@ export function contenidoDeNodo(id, grafo, catalogo, alCambiar) {
   return contenido(id, grafo, manifest, catalogo, alCambiar);
 }
 
-function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar, alUbicar, indice }) {
+function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar, alAlternar, alUbicar, indice }) {
   const nodo = grafo.nodes[id];
   const manifest = nodo.type === "action" ? porId.get(nodo.fn) : null;
   const desconocido = nodo.type === "action" && !manifest;
@@ -93,7 +111,7 @@ function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar
       display: "flex", alignItems: "center", gap: "9px", padding: "9px 12px",
       cursor: "pointer", background: abierta ? "var(--fondo-cabecera)" : "var(--fondo)",
     },
-    onClick: () => alSeleccionar(abierta ? null : id),
+    onClick: () => alAlternar(id),
   }, [
     h("span", {
       style: {
@@ -130,12 +148,25 @@ function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar
       : null,
   ]);
 
-  const cuerpo = abierta ? contenido(id, grafo, manifest, catalogo, alCambiar) : null;
-
   // `data-nodo`: el filtro de la pila (workflows.js) esconde tarjetas por id
   // sin reconstruirlas — reconstruir haría perder el foco del campo de filtro.
-  return h("div", { class: "tarjeta", style: { marginBottom: "7px" }, dataset: { nodo: id } },
-    [cabecera, cuerpo].filter(Boolean));
+  const caja = h("div", { class: "tarjeta", style: { marginBottom: "7px" }, dataset: { nodo: id } },
+    [cabecera]);
+
+  // `abrir`/`estaAbierta` colgados del elemento, como `dibujarGrafo` con
+  // `actualizarSeleccion`: la pila tiene que poder cerrar la otra tarjeta sin
+  // pasar por la vista, que es lo que hacía perder el scroll.
+  caja.estaAbierta = () => caja.children.length > 1;
+  caja.abrir = (si) => {
+    if (si === caja.estaAbierta()) return;
+    // El cuerpo se arma recién al abrir, como antes: son cuarenta tarjetas y
+    // cada cuerpo pregunta sus params al catálogo.
+    if (si) caja.appendChild(contenido(id, grafo, manifest, catalogo, alCambiar));
+    else caja.removeChild(caja.lastChild);
+    cabecera.style.background = si ? "var(--fondo-cabecera)" : "var(--fondo)";
+  };
+  if (abierta) caja.abrir(true);
+  return caja;
 }
 
 /**
