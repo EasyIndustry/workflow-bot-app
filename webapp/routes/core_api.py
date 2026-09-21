@@ -1392,6 +1392,40 @@ async def diff(body: DiffBody):
         raise HTTPException(400, str(exc)) from None
 
 
+class MigrarBody(BaseModel):
+    destino: str
+    que: str = "flujos"
+    plugin: str = ""
+    coleccion: str = ""
+    claves: list[str] = []
+
+
+@router.post("/migrar")
+async def migrar(body: MigrarBody):
+    """
+    Escribe en el otro Bot lo que se eligió de acá.
+
+    Empuja y no tira: es la única forma de mover un secreto, porque desde #3 no
+    sale por la API de nadie y el único que puede leer los de una instalación es
+    la instalación misma. Lo que implica —que el secreto viaja en claro por una
+    LAN sin TLS— está en `webapp/migracion.py` y lo dice la pantalla antes de
+    disparar.
+    """
+    try:
+        return await run_in_threadpool(
+            migracion.migrar,
+            _instance,
+            destino_url=body.destino.strip(),
+            que=body.que,
+            claves=body.claves,
+            plugin=body.plugin.strip(),
+            coleccion=body.coleccion.strip(),
+            url_propia=_url_app() or "",
+        )
+    except migracion.MigracionError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
 # ── Workflows ───────────────────────────────────────────────────────────
 
 

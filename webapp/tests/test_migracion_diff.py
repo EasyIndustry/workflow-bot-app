@@ -48,6 +48,8 @@ def _bot_remoto(instancia):
             if camino.startswith("/api/core/resources/"):
                 plugin, coleccion = camino.split("/api/core/resources/")[1].split("/")
                 return core_api.list_resource(plugin, coleccion)
+            if camino == "/api/core/env":
+                return core_api.get_env()
             raise AssertionError(f"camino inesperado: {camino}")
         finally:
             core_api._instance = anterior
@@ -217,6 +219,60 @@ def test_campos_secretos_viene_siempre_aunque_este_vacio(dos_bots):
     _flujo(core_api._instance, "alta", MMD.format("hola"))
 
     assert _diff(client, que="flujos")["campos_secretos"] == []
+
+
+# ── Variables de entorno ────────────────────────────────────────────────
+
+
+def test_una_variable_comun_se_compara_entera(dos_bots):
+    client, otro = dos_bots
+    core_api._instance.env.save("TIMEOUT", "30", secret=False)
+    otro.env.save("TIMEOUT", "60", secret=False)
+
+    entrada = _por_clave(_diff(client, que="env"))["TIMEOUT"]
+
+    assert entrada["estado"] == "distinto"
+    assert entrada["campos"] == ["value"]
+
+
+def test_una_variable_secreta_nunca_dice_igual(dos_bots):
+    """
+    En `env` la secrecía es de cada variable: acá conviven una que se compara
+    entera y una de la que no se sabe nada.
+    """
+    client, otro = dos_bots
+    core_api._instance.env.save("TIMEOUT", "30", secret=False)
+    otro.env.save("TIMEOUT", "30", secret=False)
+    core_api._instance.env.save("API_KEY", "aca", secret=True)
+    otro.env.save("API_KEY", "alla", secret=True)
+
+    items = _por_clave(_diff(client, que="env"))
+
+    assert items["TIMEOUT"]["estado"] == "igual"
+    assert items["API_KEY"]["estado"] == "indeterminado"
+
+
+def test_el_valor_de_una_variable_secreta_no_viaja(dos_bots):
+    client, otro = dos_bots
+    core_api._instance.env.save("API_KEY", "abc123", secret=True)
+    otro.env.save("API_KEY", "xyz789", secret=True)
+
+    r = client.post("/api/core/diff", json={"destino": OTRO, "que": "env", "detalle": True})
+
+    assert "abc123" not in r.text
+    assert "xyz789" not in r.text
+
+
+def test_una_variable_que_nadie_cargo_no_es_una_variable(dos_bots):
+    """
+    Las `undeclared` —referenciadas por un flujo y nunca cargadas— aparecen en
+    el listado porque son las que rompen una ejecución, pero no hay nada que
+    comparar ni que migrar.
+    """
+    client, _ = dos_bots
+    _flujo(core_api._instance, "usa", MMD.format("{env.NUNCA_CARGADA}"))
+
+    assert "NUNCA_CARGADA" not in _por_clave(_diff(client, que="env"))
 
 
 # ── Lo que sale mal ─────────────────────────────────────────────────────
