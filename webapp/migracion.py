@@ -28,6 +28,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from webapp import items_secretos
+
 # De un flujo, lo que significa algo al compararlo. `updated_at` queda afuera:
 # difiere siempre —son dos bases distintas— y no dice nada del contenido.
 CAMPOS_FLUJO = ("content", "folder", "state", "description")
@@ -339,7 +341,8 @@ def _entregar(url: str, sobre: dict) -> dict:
 
 
 def migrar(instancia, *, emparejado: dict, destino_url: str, que: str, claves: list[str],
-           plugin: str = "", coleccion: str = "", url_propia: str = "") -> dict:
+           plugin: str = "", coleccion: str = "", url_propia: str = "",
+           incluir_secretos: bool = False) -> dict:
     """
     Manda al otro Bot, en un sobre cifrado, lo que se eligió de acá.
 
@@ -352,6 +355,19 @@ def migrar(instancia, *, emparejado: dict, destino_url: str, que: str, claves: l
     clave de este emparejamiento (`webapp/emparejamiento.py`), que el destino
     abre y vuelve a cifrar con su propia llave al guardar. Sin emparejamiento no
     se migra — no hay camino en claro, a propósito.
+
+    `incluir_secretos` arranca en **false**, y el motivo no es el pudor: un
+    flujo desatendido corre cada vez, así que si alguien rotó un secreto en el
+    destino, incluirlos lo revierte al valor viejo en la corrida siguiente, y de
+    nuevo en la otra. Es el mismo revert contra el que existe el `ttl` del
+    sobre, pero causado por nosotros y en horario.
+
+    En false **el item viaja igual**, con sus campos secretos en `None`: el
+    destino conserva los suyos (`items_secretos.con_los_secretos_guardados`), y
+    así se puede corregir la URL de una conexión sin tocarle el token. Para
+    `env` no hay equivalente —una variable es su valor— así que ahí se omite
+    entera y se dice cuál, con nombre. Un salteo silencioso es peor que el
+    pisón: nadie se enteraría de que esa parte nunca viajó.
     """
     if que not in QUE:
         raise MigracionError(f"'{que}' no es algo que se pueda migrar: {', '.join(QUE)}")
@@ -368,7 +384,8 @@ def migrar(instancia, *, emparejado: dict, destino_url: str, que: str, claves: l
     fallados = []
     for clave in claves:
         try:
-            contenido["items"].append(_reunir_uno(instancia, que, clave, plugin, coleccion))
+            contenido["items"].append(
+                _reunir_uno(instancia, que, clave, plugin, coleccion, incluir_secretos))
         except MigracionError as exc:
             # Lo que no se pudo leer de este lado ni sale: se informa igual que
             # lo que el destino rechace, en la misma lista.
@@ -395,8 +412,9 @@ def migrar(instancia, *, emparejado: dict, destino_url: str, que: str, claves: l
     }
 
 
-def _reunir_uno(instancia, que: str, clave: str, plugin: str, coleccion: str) -> dict:
-    """Lo que hay que mandar de una clave, leído de esta base. Con su secreto."""
+def _reunir_uno(instancia, que: str, clave: str, plugin: str, coleccion: str,
+                incluir_secretos: bool = False) -> dict:
+    """Lo que hay que mandar de una clave, leído de esta base."""
     if que == "flujos":
         wf = instancia.workflows.get(clave)
         if wf is None:
@@ -411,6 +429,11 @@ def _reunir_uno(instancia, que: str, clave: str, plugin: str, coleccion: str) ->
         variable = instancia.env.get(clave)
         if variable is None:
             raise MigracionError(f'acá ya no está la variable "{clave}"')
+        if variable.secret and not incluir_secretos:
+            # Una variable **es** su valor: no hay forma de mandarla sin él, como
+            # sí la hay con un campo de un item. Se omite y se dice.
+            raise MigracionError(
+                f'"{clave}" es secreta y no se pidió incluir secretos: no se migró')
         if variable.unreadable:
             raise MigracionError(
                 f'"{clave}" está cifrada con otra llave y acá tampoco se puede leer')
@@ -431,6 +454,11 @@ def _reunir_uno(instancia, que: str, clave: str, plugin: str, coleccion: str) ->
         raise MigracionError(f'acá ya no está "{clave}"') from None
     item = {k: v for k, v in item.items() if k not in CAMPOS_DEL_NUCLEO}
     item.setdefault(definicion.key_field, clave)
+    if not incluir_secretos:
+        # En `None`, no ausentes: el destino lee `None` como "no me lo diste" y
+        # conserva el suyo. Ausente sería lo mismo hoy, pero decirlo explícito
+        # es lo que hace que se lea como una decisión y no como un olvido.
+        item = items_secretos.sin_secretos(definicion, item)
     return {"clave": clave, "datos": {"item": item}}
 
 
@@ -475,4 +503,11 @@ def _aplicar_uno(instancia, que: str, clave: str, datos: dict, plugin: str, cole
         raise MigracionError(
             f"este Bot no tiene la colección '{coleccion}' del plugin '{plugin}': "
             "hay que instalarlo antes de migrarle esto")
-    instancia.resource_store(plugin, definicion).write(clave, datos.get("item") or {})
+    store = instancia.resource_store(plugin, definicion)
+    # Un campo secreto en `None` deja el que ya estaba acá. Es la misma regla
+    # que el PUT de la colección, y por eso sale del mismo módulo: un item
+    # escrito por una migración no puede perder lo que uno escrito por la API
+    # conserva.
+    item = items_secretos.con_los_secretos_guardados(
+        definicion, store, clave, datos.get("item") or {})
+    store.write(clave, item)

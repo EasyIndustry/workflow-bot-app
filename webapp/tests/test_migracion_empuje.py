@@ -257,7 +257,7 @@ def test_el_secreto_de_un_item_llega_al_destino(dos_bots):
                   {"name": "prod", "url": "https://api.test", "token": "abc123"})
 
     informe = _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION,
-                      claves=["prod"])
+                      claves=["prod"], incluir_secretos=True)
 
     assert informe["migrados"] == 1
     assert _item_alla(otro, "prod")["token"] == "abc123"
@@ -271,7 +271,7 @@ def test_la_respuesta_no_trae_el_secreto(dos_bots):
 
     r = client.post("/api/core/migrar", json={
         "destino": OTRO, "que": "registros", "plugin": PLUGIN,
-        "coleccion": COLECCION, "claves": ["prod"]})
+        "coleccion": COLECCION, "claves": ["prod"], "incluir_secretos": True})
 
     assert "abc123" not in r.text
 
@@ -290,11 +290,78 @@ def test_el_secreto_no_viaja_en_claro(dos_bots, monkeypatch):
         return entregar_real(url, sobre)
 
     monkeypatch.setattr(migracion, "_entregar", espiar)
-    _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION, claves=["prod"])
+    _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION,
+            claves=["prod"], incluir_secretos=True)
 
     import json
     assert "abc123" not in json.dumps(visto["sobre"])
     assert _item_alla(otro, "prod")["token"] == "abc123"
+
+
+def test_por_default_el_secreto_no_viaja_y_el_destino_conserva_el_suyo(dos_bots):
+    """
+    El caso que hace útil el default: corregir la URL de una conexión sin
+    tocarle el token al otro lado. El item viaja con el secreto en `None` y el
+    destino conserva el que ya tenía — la misma regla que el PUT de la
+    colección, y por eso sale del mismo módulo.
+    """
+    client, otro = dos_bots
+    _guardar_item(core_api._instance, "prod",
+                  {"name": "prod", "url": "https://nueva.test", "token": "el de aca"})
+    _guardar_item(otro, "prod",
+                  {"name": "prod", "url": "https://vieja.test", "token": "el de alla"})
+
+    informe = _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION,
+                      claves=["prod"])
+
+    assert informe["migrados"] == 1
+    assert _item_alla(otro, "prod")["url"] == "https://nueva.test"
+    assert _item_alla(otro, "prod")["token"] == "el de alla"
+
+
+def test_con_incluir_secretos_si_lo_pisa(dos_bots):
+    client, otro = dos_bots
+    _guardar_item(core_api._instance, "prod",
+                  {"name": "prod", "url": "https://api.test", "token": "el de aca"})
+    _guardar_item(otro, "prod",
+                  {"name": "prod", "url": "https://api.test", "token": "el de alla"})
+
+    _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION,
+            claves=["prod"], incluir_secretos=True)
+
+    assert _item_alla(otro, "prod")["token"] == "el de aca"
+
+
+def test_un_item_nuevo_sin_secretos_llega_sin_el(dos_bots):
+    """No hay nada que conservar del otro lado: queda vacío, y eso es correcto."""
+    client, otro = dos_bots
+    _guardar_item(core_api._instance, "nueva",
+                  {"name": "nueva", "url": "https://api.test", "token": "abc123"})
+
+    _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION, claves=["nueva"])
+
+    assert _item_alla(otro, "nueva")["url"] == "https://api.test"
+    assert _item_alla(otro, "nueva").get("token") in (None, "")
+
+
+def test_una_variable_secreta_se_omite_y_se_dice_cual(dos_bots):
+    """
+    Una variable **es** su valor: no se puede mandar sin él, como sí se puede
+    con un campo de un item. Se omite entera, y con nombre — un salteo
+    silencioso es peor que el pisón.
+    """
+    client, otro = dos_bots
+    core_api._instance.env.save("API_KEY", "abc123", secret=True)
+    core_api._instance.env.save("TIMEOUT", "30", secret=False)
+
+    informe = _migrar(client, que="env", claves=["API_KEY", "TIMEOUT"])
+
+    assert informe["migrados"] == 1
+    assert informe["fallados"] == 1
+    omitida = [r for r in informe["resultados"] if r["clave"] == "API_KEY"][0]
+    assert "no se pidió incluir secretos" in omitida["error"]
+    assert otro.env.get("API_KEY") is None
+    assert otro.env.resolve()["TIMEOUT"] == "30"
 
 
 def test_el_destino_lo_guarda_cifrado_con_su_llave(dos_bots):
@@ -303,7 +370,8 @@ def test_el_destino_lo_guarda_cifrado_con_su_llave(dos_bots):
     _guardar_item(core_api._instance, "prod",
                   {"name": "prod", "url": "https://api.test", "token": "abc123"})
 
-    _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION, claves=["prod"])
+    _migrar(client, que="registros", plugin=PLUGIN, coleccion=COLECCION,
+            claves=["prod"], incluir_secretos=True)
 
     fila = otro.db.one(
         "SELECT data FROM plugin_items WHERE plugin = ? AND resource = ? AND key = ?",
@@ -319,7 +387,7 @@ def test_una_variable_secreta_llega_y_sigue_secreta(dos_bots):
     client, otro = dos_bots
     core_api._instance.env.save("API_KEY", "abc123", secret=True)
 
-    informe = _migrar(client, que="env", claves=["API_KEY"])
+    informe = _migrar(client, que="env", claves=["API_KEY"], incluir_secretos=True)
 
     assert informe["migrados"] == 1
     assert otro.env.resolve()["API_KEY"] == "abc123"

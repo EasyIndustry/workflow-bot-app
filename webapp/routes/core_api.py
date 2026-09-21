@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import contexto_agente, db_view, emparejamiento, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, emparejamiento, items_secretos, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -1261,44 +1261,12 @@ def _store(plugin_name: str, resource_name: str):
     return _instance.resource_store(plugin_name, _resource(plugin_name, resource_name))
 
 
-def _sin_secretos(definicion, item: dict) -> dict:
-    """
-    El item con cada campo `secret` en `None`.
-
-    Mismo criterio que `Instance.resource_items_masked`, que es lo que el núcleo
-    deja salir por MCP —su docstring dice "o cualquier otra API"—. Se repite acá
-    porque el núcleo no tiene el equivalente para **un** item, y leer uno tiene
-    que tapar igual que listar: si no, la regla se cumple a medias y alcanza con
-    saberse la clave (#3). Cuando el núcleo lo tenga, esto se va.
-    """
-    secretos = {c.name for c in definicion.fields if c.secret}
-    if not secretos:
-        return item
-    return {clave: (None if clave in secretos else valor) for clave, valor in item.items()}
-
-
-def _con_los_secretos_guardados(definicion, store, key: str, item: dict) -> dict:
-    """
-    Un campo `secret` que llega en `None` conserva el valor que ya estaba.
-
-    Es la contracara de tapar al leer: la pantalla lee un item con el secreto en
-    `None` y lo vuelve a mandar así al guardar, así que sin esto cambiarle el
-    nombre a una conexión le borraría el token — el arreglo de #3 hecho a medias
-    es pérdida de datos.
-
-    `None` es "no me lo diste"; para vaciarlo de verdad hay que mandar `""`, que
-    es lo que manda un campo de texto borrado a mano. Distinguir los dos es lo
-    que deja seguir borrando un secreto a propósito.
-    """
-    secretos = {c.name for c in definicion.fields if c.secret}
-    faltantes = [c for c in secretos if item.get(c) is None]
-    if not faltantes:
-        return item
-    try:
-        anterior = store.read(key)
-    except ResourceError:
-        return item  # Es nuevo: no hay nada que conservar.
-    return {**item, **{c: anterior[c] for c in faltantes if anterior.get(c) is not None}}
+# La regla de los campos `secret` de un item vive en `webapp/items_secretos.py`,
+# no acá: la comparten esta API y el lado que recibe una migración, y que un
+# item conserve o pierda su secreto según por dónde entró sería la peor clase
+# de diferencia — invisible hasta que alguien pierde un token.
+_sin_secretos = items_secretos.sin_secretos
+_con_los_secretos_guardados = items_secretos.con_los_secretos_guardados
 
 
 @router.get("/resources/{plugin}/{resource}")
@@ -1398,6 +1366,10 @@ class MigrarBody(BaseModel):
     plugin: str = ""
     coleccion: str = ""
     claves: list[str] = []
+    # En false por default y no por pudor: un flujo desatendido corre cada vez,
+    # así que incluirlos revierte en cada corrida un secreto que hayan rotado
+    # del otro lado. Lo pide quien está decidiendo, no la automatización.
+    incluir_secretos: bool = False
 
 
 @router.post("/migrar")
@@ -1431,6 +1403,7 @@ async def migrar(body: MigrarBody):
             plugin=body.plugin.strip(),
             coleccion=body.coleccion.strip(),
             url_propia=_url_app() or "",
+            incluir_secretos=body.incluir_secretos,
         )
     except migracion.MigracionError as exc:
         raise HTTPException(400, str(exc)) from None
