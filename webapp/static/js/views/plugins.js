@@ -620,6 +620,7 @@ async function dibujarPlugin(plugin) {
 
   partes.push(...seccionSettings(plugin, faltan));
   for (const recurso of plugin.resources || []) partes.push(await seccionResource(plugin, recurso));
+  partes.push(...seccionAcciones(plugin));
   partes.push(...seccionTools(plugin));
   partes.push(notaDelEsquema());
 
@@ -821,6 +822,227 @@ function paramsParaAccion(form, accion, extrasForm) {
     if (valores[p.name] !== undefined) params[p.name] = valores[p.name];
   }
   return params;
+}
+
+// ── Acciones sueltas, y la vista que declaran ───────────────────────────
+
+/**
+ * Las Actions que no son el botón "Probar" de ninguna colección.
+ *
+ * Hasta acá una Action sólo tenía lugar adentro del formulario de un item
+ * (`accionDePrueba`), así que una que no es "probar esto antes de guardar" —
+ * comparar contra otro Bot, migrar, listar lo que hay del otro lado— no se
+ * podía disparar desde ningún lado: existía en el manifest y no en la pantalla.
+ *
+ * Cuáles quedan acá se decide por descarte y no por una marca nueva en el
+ * esquema: las que `accionDePrueba` ya eligió para alguna colección se dibujan
+ * allá, y el resto acá. Así no hay que tocar el núcleo para que una Action
+ * tenga dónde vivir, y ninguna aparece dos veces.
+ */
+function seccionAcciones(plugin) {
+  const comoPrueba = new Set(
+    (plugin.resources || [])
+      .map((r) => accionDePrueba(plugin, r))
+      .filter(Boolean)
+      .map((a) => a.name));
+  const sueltas = (plugin.actions || []).filter((a) => !a.resource && !comoPrueba.has(a.name));
+  if (!sueltas.length) return [];
+
+  return [
+    h("div", { class: "seccion" }, [h("span", { text: "Acciones" })]),
+    ...sueltas.map((accion) => tarjetaDeAccion(plugin, accion)),
+  ];
+}
+
+function tarjetaDeAccion(plugin, accion) {
+  const form = (accion.params || []).length ? crearFormulario(accion.params) : null;
+  const resultado = h("div", { style: { marginTop: "10px" } });
+
+  // `cual` deja que la vista de un resultado dispare **otra** Action del mismo
+  // plugin —comparar y después migrar lo tildado— sin que esta pantalla sepa
+  // cómo se llama ninguna: el nombre lo pone el resultado.
+  const correr = async (params, cual = accion.name) => {
+    poner(resultado, h("div", { class: "cargando", text: "Ejecutando…" }));
+    try {
+      const resp = await api.ejecutarAccion(plugin.name, cual, params);
+      poner(resultado, dibujarResultadoDeAccion(resp.result, plugin, correr));
+    } catch (e) {
+      poner(resultado, aviso("error", "No se pudo ejecutar", e.message));
+    }
+  };
+
+  const boton = h("button", {
+    class: accion.dangerous ? "btn" : "btn btn--primario",
+    text: accion.label || accion.name,
+    style: accion.dangerous ? { color: "var(--rojo)" } : null,
+    onClick: () => {
+      let params = {};
+      try {
+        if (form) params = form.leer();
+      } catch (e) {
+        return poner(resultado, aviso("error", "Falta completar algo", e.message));
+      }
+      // Igual que cuando la dispara una selección: una Action `dangerous`
+      // pregunta antes. Sin esto, la misma Action confirmaba si se llegaba
+      // desde una tabla y no confirmaba si se apretaba su propio botón — que
+      // es el camino más fácil de apretar sin querer.
+      if (!accion.dangerous) return correr(params);
+      confirmar({
+        titulo: accion.label || accion.name,
+        texto: accion.doc || "Esta acción escribe. No se puede deshacer desde acá.",
+        botonTexto: "Sí, hacerlo",
+        alConfirmar: () => correr(params),
+      });
+    },
+  });
+
+  return h("div", { class: "tarjeta", style: { padding: "13px 16px", marginBottom: "8px" } }, [
+    accion.doc ? h("div", { class: "campo__ayuda", style: { marginBottom: "9px" }, text: accion.doc }) : null,
+    form ? form.elemento : null,
+    h("div", { style: { marginTop: "9px" } }, [boton]),
+    resultado,
+  ].filter(Boolean));
+}
+
+/**
+ * El resultado de una Action, dibujado como la propia Action lo declara.
+ *
+ * `outputs.vista` es lo que deja que un plugin arme una pantalla útil sin que
+ * esta vista lo conozca por nombre y sin escribirle una pantalla a medida a
+ * cada uno. Va en el **resultado** y no en el manifest a propósito: las
+ * columnas de una comparación dependen de lo que se comparó, así que no se
+ * pueden declarar antes de correrla.
+ *
+ * Todo lo que el plugin manda se dibuja como texto: `h()` nunca usa
+ * `innerHTML`, así que un valor con `<` no ejecuta nada.
+ *
+ * `_nota` y `_elegible` son las dos claves reservadas de una fila. Van con `_`
+ * porque el núcleo ya marca así lo suyo en los items de una colección
+ * (`_updated_at`, `_error`), y una fila puede ser justamente uno de esos items
+ * pasado tal cual. Si alguna vez se filtra `_*` en bloque en algún lado, esto
+ * se apaga sin avisar.
+ */
+function dibujarVista(vista, plugin, correr) {
+  const filas = Array.isArray(vista.filas) ? vista.filas : [];
+  const claveDe = vista.clave || "clave";
+  const seleccion = vista.seleccion || null;
+  const elegidas = new Set();
+
+  const columnas = (vista.columnas || []).map((c) => ({
+    clave: c.campo, label: c.label || c.campo, ancho: c.ancho || null,
+    render: (fila) => {
+      const v = fila[c.campo];
+      if (v === undefined || v === null || v === "") return "—";
+      const texto = typeof v === "object" ? JSON.stringify(v) : String(v);
+      // La nota del plugin va pegada a su fila, en la primera columna: es
+      // donde explica por qué una fila no se puede elegir — el caso de un
+      // item con campos secretos, que no se puede comparar con nada.
+      if (c === (vista.columnas || [])[0] && fila._nota) {
+        return h("div", {}, [
+          h("div", { text: texto }),
+          h("div", { class: "campo__ayuda", style: { marginTop: "2px" }, text: fila._nota }),
+        ]);
+      }
+      return texto;
+    },
+  }));
+
+  // La Action de seguimiento, para saber si pide confirmación. `dangerous` ya
+  // existía en el esquema; acá se usa para lo que es —"esto escribe en otra
+  // máquina"— y el `aviso` queda para lo propio de esta selección. Son dos
+  // cosas distintas a propósito: el aviso se lee **mientras** se tilda, la
+  // confirmación es el último paso. Dos diálogos seguidos no harían esto más
+  // seguro; entrenarían a pasar de largo los dos.
+  const destinoDeLaSeleccion = seleccion
+    ? (plugin.actions || []).find((a) => a.name === seleccion.accion)
+    : null;
+
+  const disparar = () => {
+    if (!elegidas.size) return;
+    correr({ ...(seleccion.params || {}), [seleccion.param]: [...elegidas] }, seleccion.accion);
+  };
+
+  const boton = seleccion
+    ? h("button", {
+        class: "btn btn--primario", text: seleccion.etiqueta || "Aplicar", disabled: true,
+        onClick: () => {
+          if (!destinoDeLaSeleccion || !destinoDeLaSeleccion.dangerous) return disparar();
+          confirmar({
+            titulo: seleccion.etiqueta || destinoDeLaSeleccion.label,
+            texto: `Se van a escribir ${elegidas.size} en la otra punta, pisando lo que haya.`,
+            botonTexto: "Sí, hacerlo",
+            alConfirmar: disparar,
+          });
+        },
+      })
+    : null;
+
+  const refrescarBoton = () => {
+    if (!boton) return;
+    boton.disabled = elegidas.size === 0;
+    boton.textContent = elegidas.size
+      ? `${seleccion.etiqueta || "Aplicar"} (${elegidas.size})`
+      : (seleccion.etiqueta || "Aplicar");
+  };
+
+  if (seleccion) {
+    columnas.unshift({
+      clave: "_elegir", label: "", ancho: "34px",
+      render: (fila) => {
+        if (fila._elegible === false) return "";
+        const caja = h("input", {
+          type: "checkbox",
+          onChange: (e) => {
+            if (e.target.checked) elegidas.add(fila[claveDe]);
+            else elegidas.delete(fila[claveDe]);
+            refrescarBoton();
+          },
+        });
+        return caja;
+      },
+    });
+  }
+
+  const partes = [
+    vista.titulo ? h("div", { class: "campo__ayuda", style: { marginBottom: "7px" }, text: vista.titulo }) : null,
+    h("div", { style: { overflow: "auto" } }, [
+      tabla(columnas, filas, { vacio: vista.vacio || "No hay nada que mostrar." }),
+    ]),
+  ];
+
+  if (seleccion) {
+    // El aviso va **arriba** del botón y siempre visible, no en un modal de
+    // confirmación: lo que hay que entender acá —que se pisa lo del otro lado,
+    // que un secreto no se pudo comparar— tiene que estar a la vista mientras
+    // alguien tilda, no aparecer cuando ya decidió.
+    partes.push(h("div", { style: { marginTop: "10px" } }, [
+      seleccion.aviso ? aviso("falta", seleccion.aviso, null) : null,
+      h("div", { style: { marginTop: "8px" } }, [boton]),
+    ].filter(Boolean)));
+  }
+
+  return h("div", {}, partes.filter(Boolean));
+}
+
+/** El resultado de una Action: su vista declarada, o el aviso de siempre. */
+function dibujarResultadoDeAccion(resultado, plugin, correr) {
+  if (resultado.status !== "ok") {
+    return aviso("error", "No salió bien", resultado.message || "Sin detalle.");
+  }
+  const vista = resultado.outputs && resultado.outputs.vista;
+  if (vista && vista.tipo === "tabla") {
+    const correrOtra = async (params, nombre) => {
+      const otra = (plugin.actions || []).find((a) => a.name === nombre);
+      if (!otra) return;
+      await correr(params, nombre);
+    };
+    return h("div", {}, [
+      resultado.message ? aviso("ok", resultado.message, null) : null,
+      h("div", { style: { marginTop: resultado.message ? "10px" : "0" } },
+        [dibujarVista(vista, plugin, correrOtra)]),
+    ].filter(Boolean));
+  }
+  return dibujarResultadoDePrueba(resultado);
 }
 
 /** El resultado de una Action, mostrado como filas si las trae, o como aviso. */

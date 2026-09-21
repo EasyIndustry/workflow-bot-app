@@ -6,6 +6,25 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-21
 
+- **Una Action de plugin puede traer su propia pantalla de resultado**
+  (`outputs.vista`). Hasta acá un plugin podía declarar settings y colecciones y
+  la pantalla se dibujaba sola, pero cuando hacía falta algo más —comparar
+  contra otro Bot y elegir qué mandar— sólo quedaba escribirle una pantalla a
+  medida en la app. Ahora el resultado de una Action puede declarar una tabla
+  con columnas, filas, casillas de selección y una acción de seguimiento que
+  recibe lo tildado más el contexto que haga falta fijar (`seleccion.params`).
+  Va en el **resultado** y no en el manifest porque las columnas de una
+  comparación dependen de lo que se comparó: no se pueden declarar antes de
+  correrla. No hizo falta tocar el núcleo — `ToolResult.outputs` ya es libre—,
+  así que cualquier plugin lo usa sin esperar un release del núcleo. Ninguna
+  pantalla conoce un plugin por nombre: el plugin declara y la app dibuja, y
+  todo sale como texto porque `h()` no usa `innerHTML`.
+  De paso, **una Action suelta ahora tiene dónde vivir**: hasta ahora sólo
+  aparecía como el botón "Probar" adentro del formulario de una colección, así
+  que una que no fuera "probar esto antes de guardar" existía en el manifest y
+  en ninguna pantalla. Y `dangerous`, que estaba declarado y no hacía nada,
+  ahora pide confirmación — por los dos caminos, el botón propio y el de una
+  selección.
 - **Emparejar sólo se puede desde la propia máquina.** Los endpoints de
   emparejamiento salieron abiertos como el resto de la API, y devolvían el
   código en la respuesta: cualquiera en la red pedía uno y quedaba emparejado.
