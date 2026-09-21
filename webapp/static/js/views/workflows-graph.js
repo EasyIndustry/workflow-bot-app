@@ -806,6 +806,12 @@ function nodo(id, datos, pos, { alClic, estado, seleccionado }) {
     // Marca para que el paneo (`hacerPaneable`) sepa que un gesto que arranca
     // acá es un clic sobre el nodo, no el fondo del canvas, y lo deje pasar
     // sin capturar el puntero.
+    //
+    // Es una marca, **no** el id: acá vale siempre "1". El mismo atributo en la
+    // pila de tarjetas sí lleva el id (`workflows-cards.js`, para que el filtro
+    // esconda sin reconstruir), así que un `[data-nodo="N2"]` encuentra la
+    // tarjeta y nunca el nodo del diagrama. Para llegar a un nodo puntual desde
+    // afuera, su `<title>` empieza con el id.
     "data-nodo": alClic ? "1" : null,
   }, [
     rect,
