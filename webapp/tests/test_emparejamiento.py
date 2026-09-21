@@ -31,14 +31,19 @@ from webapp.routes import core_api  # noqa: E402
 OTRO = "http://192.168.1.50:8000"
 
 
+def _cliente(desde: str):
+    """Un cliente que se presenta desde esa IP: es lo que mira el guardia local."""
+    app = FastAPI()
+    app.include_router(core_api.router, prefix="/api/core")
+    return TestClient(app, client=(desde, 50000))
+
+
 @pytest.fixture
 def client(tmp_path):
     core_api._instance.close()
     # Sin plugins locales: el emparejamiento no puede depender de ninguno.
     core_api._instance = Instance(tmp_path, local_plugins={})
-    app = FastAPI()
-    app.include_router(core_api.router, prefix="/api/core")
-    yield TestClient(app)
+    yield _cliente("127.0.0.1")
 
 
 @pytest.fixture
@@ -173,3 +178,66 @@ def test_lo_que_se_sella_se_abre(client, data_dir):
     _, contenido = emparejamiento.abrir(data_dir, emparejamiento.sellar(fila, {"hola": "mundo"}))
 
     assert contenido == {"hola": "mundo"}
+
+
+# ── Emparejar se hace sentado en la máquina ─────────────────────────────
+
+
+@pytest.fixture
+def desde_la_red(client):
+    """Otra PC de la LAN, contra el mismo Bot."""
+    return _cliente("192.168.1.77")
+
+
+def test_no_se_puede_pedir_un_codigo_por_la_red(desde_la_red):
+    """
+    El agujero que hacía falso todo lo demás: si esto contesta por la red,
+    cualquiera pide un código y queda emparejado, y el sobre deja de autenticar
+    a nadie — protege el secreto de quien escucha, no de quien lo pide.
+    """
+    r = desde_la_red.post("/api/core/emparejamientos", json={"nombre": "x"})
+
+    assert r.status_code == 403
+    assert "desde el propio Bot" in r.json()["detail"]
+
+
+def test_tampoco_listar_por_la_red(desde_la_red):
+    """La lista es la topología de la flota, y publica los ids."""
+    assert desde_la_red.get("/api/core/emparejamientos").status_code == 403
+
+
+def test_tampoco_importar_ni_olvidar_por_la_red(desde_la_red):
+    """Si `olvidar` contesta por la red, cualquiera desemparejea a cualquiera."""
+    assert desde_la_red.post("/api/core/emparejamientos/importar",
+                             json={"codigo": "a.b", "url": "http://x"}).status_code == 403
+    assert desde_la_red.delete("/api/core/emparejamientos/loquesea").status_code == 403
+
+
+def test_recibir_un_sobre_si_contesta_por_la_red(desde_la_red, data_dir):
+    """Ahí la credencial es la clave, así que tiene que seguir abierto."""
+    emparejamiento.generar(data_dir, "x")
+    fila = emparejamiento._leer(data_dir)[0]
+    sobre = emparejamiento.sellar(fila, {"que": "flujos", "items": []})
+
+    r = desde_la_red.post("/api/core/migrar/recibir", json=sobre)
+
+    assert r.status_code == 200, r.text
+
+
+def test_importar_avisa_si_pisa_uno_que_ya_estaba(client, data_dir, tmp_path):
+    """
+    Pisar es legítimo —así se cambia la IP del otro Bot— pero en silencio no: el
+    que se pierde hay que rehacerlo a mano en las dos máquinas.
+    """
+    otro = Instance(tmp_path / "alla", local_plugins={})
+    generado = emparejamiento.generar(otro.boot.data_dir, "Impresión 2")
+    primera = client.post("/api/core/emparejamientos/importar",
+                          json={"codigo": generado["codigo"], "url": "http://uno",
+                                "nombre": "uno"}).json()
+    segunda = client.post("/api/core/emparejamientos/importar",
+                          json={"codigo": generado["codigo"], "url": "http://dos",
+                                "nombre": "dos"}).json()
+
+    assert primera["reemplazo"] is None
+    assert segunda["reemplazo"]["nombre"] == "uno"
+    otro.close()

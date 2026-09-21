@@ -132,6 +132,16 @@ Tres cosas que no son adorno:
   como un destino viejo y fuerza el downgrade, y el aviso lo lee alguien que lo
   pasa de largo.
 
+- **Emparejar se hace sentado en la máquina.** Generar, importar, listar y
+  olvidar sólo responden desde `127.0.0.1`. En la primera versión estaban
+  abiertos como el resto de la API, y con eso cualquiera en la red pedía un
+  código y quedaba emparejado: el sobre seguía protegiendo el secreto de quien
+  escucha, pero no autenticaba a nadie — que es lo que se suponía que aportaba.
+  La contra es real: no se puede emparejar desde otra PC aunque el Bot se opere
+  así. Es lo que corresponde hasta que #4 traiga autenticación, y es coherente
+  con la idea: emparejar es lo que hace alguien que ve las dos máquinas.
+  Recibir un sobre sí queda abierto, porque ahí la credencial es la clave.
+
 El emparejamiento se identifica con un id estable que genera el destino, no
 con la URL: son PCs de planta con DHCP, y un mapa por URL apunta en silencio
 a otra máquina cuando cambia la IP. La versión del sobre va **afuera** del

@@ -18,6 +18,17 @@ de la red se emparejaría sola, y un intermediario también. El copiado a mano e
 lo que ata la clave a una persona que puede ver las dos máquinas, y es la
 primera cosa autenticada que tiene esta API.
 
+**Para que eso sea cierto, emparejar se hace sentado en la máquina.** Generar,
+importar, listar y olvidar sólo responden a un pedido que sale del propio Bot
+(`127.0.0.1`); el resto de la API escucha en toda la red (`--red`) y no tiene
+autenticación (#4), así que si estos endpoints estuvieran abiertos cualquiera
+pediría un código y se emparejaría solo — y ahí el "copiado a mano" no ataría
+nada. Recibir un sobre sí queda abierto, porque ahí la credencial es la clave.
+La contra es real: no se puede emparejar desde otra PC aunque el Bot se opere
+así. Es lo que corresponde hasta que #4 traiga una autenticación de verdad, y
+además es coherente con el diseño — emparejar es justamente lo que hace alguien
+que puede ver las dos máquinas.
+
 Fernet, que es lo que el núcleo ya usa para `env`. Criptografía propia no: es la
 peor clase de código propio, y lo dice el adapter del núcleo mejor que esto.
 
@@ -50,8 +61,17 @@ from __future__ import annotations
 
 import json
 import secrets
+import threading
 import time
 from pathlib import Path
+
+# Leer-modificar-escribir el archivo entero, sin candado, pierde una fila cuando
+# se cruzan dos escrituras — y `anotar_uso` corre en **cada** sobre recibido, así
+# que dos migraciones a la vez alcanzan. El `replace` protege de un archivo a
+# medias, no de una actualización perdida, y lo que se pierde es un
+# emparejamiento que hay que rehacer a mano en dos máquinas. Todo el acceso pasa
+# por este proceso: cada instalación tiene su `data/`.
+_CANDADO = threading.Lock()
 
 ARCHIVO = "emparejamientos.json"
 VERSION_ARCHIVO = 1
@@ -144,9 +164,8 @@ def generar(data_dir: Path, nombre: str) -> dict:
         "creado_en": time.time(),
         "ultimo_uso": 0.0,
     }
-    filas = _leer(data_dir)
-    filas.append(fila)
-    _escribir(data_dir, filas)
+    with _CANDADO:
+        _escribir(data_dir, _leer(data_dir) + [fila])
     return {**_sin_clave(fila), "codigo": f"{fila['id']}.{clave}"}
 
 
@@ -171,26 +190,36 @@ def importar(data_dir: Path, codigo: str, url: str, nombre: str) -> dict:
             "Ese código no es válido. Suele ser que se copió cortado: "
             "va entero, incluido lo que viene después del punto.") from None
 
-    filas = [f for f in _leer(data_dir) if f["id"] != ident]
-    fila = {
-        "id": ident,
-        "nombre": (nombre or "").strip() or url,
-        "clave": clave,
-        "url": url,
-        "creado_en": time.time(),
-        "ultimo_uso": 0.0,
+    with _CANDADO:
+        previas = _leer(data_dir)
+        # Pisar uno que ya estaba es legítimo —es cómo se cambia la IP del otro
+        # Bot— pero no puede pasar en silencio: un código preparado con el id de
+        # un emparejamiento que ya tenés lo reemplazaría sin que nadie se entere,
+        # y el que se pierde hay que rehacerlo a mano en las dos máquinas.
+        anterior = next((f for f in previas if f["id"] == ident), None)
+        fila = {
+            "id": ident,
+            "nombre": (nombre or "").strip() or url,
+            "clave": clave,
+            "url": url,
+            "creado_en": time.time(),
+            "ultimo_uso": 0.0,
+        }
+        _escribir(data_dir, [f for f in previas if f["id"] != ident] + [fila])
+
+    return {
+        **_sin_clave(fila),
+        "reemplazo": _sin_clave(anterior) if anterior else None,
     }
-    filas.append(fila)
-    _escribir(data_dir, filas)
-    return _sin_clave(fila)
 
 
 def olvidar(data_dir: Path, ident: str) -> None:
-    filas = _leer(data_dir)
-    quedan = [f for f in filas if f["id"] != ident]
-    if len(quedan) == len(filas):
-        raise EmparejamientoError("Ese emparejamiento ya no está")
-    _escribir(data_dir, quedan)
+    with _CANDADO:
+        filas = _leer(data_dir)
+        quedan = [f for f in filas if f["id"] != ident]
+        if len(quedan) == len(filas):
+            raise EmparejamientoError("Ese emparejamiento ya no está")
+        _escribir(data_dir, quedan)
 
 
 def para_url(data_dir: Path, url: str) -> dict | None:
@@ -225,35 +254,41 @@ def abrir(data_dir: Path, sobre: dict) -> tuple[dict, dict]:
             "Las dos instalaciones tienen que estar en la misma versión de la app.")
 
     # **Un solo mensaje para los tres casos**: id que no existe, clave que no
-    # corresponde y sobre vencido. Si el de "vencido" fuera distinto —y lo fue
-    # en la primera versión, hasta que se probó contra dos Bots— alcanzaría con
-    # leer cuál de los dos vuelve para saber si el id acertó. El dato del
-    # vencimiento se dice igual porque un reloj corrido entre las dos máquinas
-    # se ve exactamente así, y manda a mirar la hora en vez de a rehacer el
-    # emparejamiento.
+    # corresponde y sobre vencido. Lo que protege no es el id —los ids se
+    # listan, aunque sólo desde la propia máquina— sino la **clave**: que no se
+    # pueda distinguir "esa clave no es" de "ese sobre venció" es lo que impide
+    # ir probando claves y saber cuándo se acertó. El dato del vencimiento se
+    # dice igual porque un reloj corrido entre las dos máquinas se ve así, y
+    # manda a mirar la hora en vez de a rehacer el emparejamiento.
     generico = (
         "No se pudo abrir el sobre: no hay un emparejamiento que lo explique, o llegó "
         f"vencido (vale {TTL_SOBRE}s). Si las dos máquinas tienen la hora distinta, es eso.")
 
     fila = next((f for f in _leer(data_dir) if f["id"] == sobre.get("emparejamiento")), None)
+    # Sin fila igual se descifra, contra una clave descartable. Volver antes
+    # haría que el camino "ese id no existe" fuera medible por lo que tarda:
+    # unificar el mensaje y después contestar más rápido es dejar el mismo
+    # oráculo por otra puerta.
+    clave = fila["clave"] if fila is not None else _nueva_clave()
+    try:
+        crudo = Fernet(clave.encode("ascii")).decrypt(
+            str(sobre.get("sobre", "")).encode("ascii"), ttl=TTL_SOBRE)
+    except Exception:  # noqa: BLE001 — token inválido, vencido o mal formado
+        raise EmparejamientoError(generico) from None
     if fila is None:
         raise EmparejamientoError(generico)
-    try:
-        crudo = Fernet(fila["clave"].encode("ascii")).decrypt(
-            str(sobre.get("sobre", "")).encode("ascii"), ttl=TTL_SOBRE)
-    except (InvalidToken, BaseException):  # noqa: BLE001
-        raise EmparejamientoError(generico) from None
 
     return fila, json.loads(crudo.decode("utf-8"))
 
 
 def anotar_uso(data_dir: Path, ident: str, url: str = "") -> None:
     """Deja constancia de cuándo se usó, y de quién resultó ser del otro lado."""
-    filas = _leer(data_dir)
-    for fila in filas:
-        if fila["id"] == ident:
-            fila["ultimo_uso"] = time.time()
-            if url and not fila.get("url"):
-                fila["url"] = url.rstrip("/")
-            break
-    _escribir(data_dir, filas)
+    with _CANDADO:
+        filas = _leer(data_dir)
+        for fila in filas:
+            if fila["id"] == ident:
+                fila["ultimo_uso"] = time.time()
+                if url and not fila.get("url"):
+                    fila["url"] = url.rstrip("/")
+                break
+        _escribir(data_dir, filas)

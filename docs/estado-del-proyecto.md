@@ -6,6 +6,19 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-21
 
+- **Emparejar sólo se puede desde la propia máquina.** Los endpoints de
+  emparejamiento salieron abiertos como el resto de la API, y devolvían el
+  código en la respuesta: cualquiera en la red pedía uno y quedaba emparejado.
+  El sobre seguía cifrando, pero no autenticaba a nadie — que era justamente lo
+  que aportaba, y lo que su propio docstring afirmaba. Ahora generar, importar,
+  listar y olvidar sólo contestan a `127.0.0.1`; recibir un sobre queda abierto,
+  porque ahí la credencial es la clave. Listar también es local: publicaba los
+  ids y la topología de la flota. Encontrado en revisión, verificado contra un
+  Bot con `--red` pidiéndole por su IP de LAN. De paso: `importar` avisa cuando
+  pisa un emparejamiento que ya estaba, las escrituras del archivo van bajo
+  candado —`anotar_uso` corre en cada sobre y dos migraciones a la vez perdían
+  una fila— y abrir un sobre hace el mismo trabajo exista o no el id, para no
+  dejar por tiempo el oráculo que se había cerrado por mensaje.
 - **Migrar contenido a otro Bot, en un sobre cifrado.** `POST /diff` dice qué
   difiere contra otro Bot —flujos, items de una colección, o `env`— y
   `POST /migrar` le empuja lo elegido. Empuja y no tira porque desde #3 un

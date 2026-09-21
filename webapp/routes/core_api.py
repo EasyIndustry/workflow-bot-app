@@ -1470,10 +1470,33 @@ async def migrar_recibir(sobre: dict, request: Request):
 
 # ── Emparejar con otro Bot ──────────────────────────────────────────────
 
+# Desde dónde se acepta emparejar. La app escucha en toda la red (`--red`) y no
+# tiene autenticación (#4): si estos endpoints estuvieran abiertos, cualquiera
+# en la LAN pediría un código y quedaría emparejado, y con eso el sobre cifrado
+# dejaría de autenticar a nadie — protegería el secreto de quien escucha, pero
+# no de quien lo pide. Emparejar se hace sentado en la máquina.
+_LOCALES = frozenset({"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"})
+
+
+def _solo_desde_esta_maquina(request: Request) -> None:
+    quien = request.client.host if request.client else ""
+    if quien not in _LOCALES:
+        raise HTTPException(
+            403,
+            "Emparejar se hace desde el propio Bot, no por la red: es lo que ata la clave "
+            "a alguien que puede ver las dos máquinas. Abrí Bot en esa PC y hacelo ahí.")
+
 
 @router.get("/emparejamientos")
-def list_emparejamientos():
-    """Con quién está emparejado este Bot. La clave no sale nunca."""
+def list_emparejamientos(request: Request):
+    """
+    Con quién está emparejado este Bot. La clave no sale nunca.
+
+    Local también: la lista es la topología de la flota —quién habla con quién,
+    con qué nombres y cuándo fue la última vez—, y los ids que publicaría son
+    justo lo que el sobre no quiere confirmar.
+    """
+    _solo_desde_esta_maquina(request)
     try:
         return {"items": emparejamiento.listar(_instance.boot.data_dir)}
     except emparejamiento.EmparejamientoError as exc:
@@ -1485,13 +1508,14 @@ class EmparejamientoNuevo(BaseModel):
 
 
 @router.post("/emparejamientos")
-def generar_emparejamiento(body: EmparejamientoNuevo):
+def generar_emparejamiento(body: EmparejamientoNuevo, request: Request):
     """
     El lado que va a **recibir**: genera el código para copiar al otro Bot.
 
     El código se ve una sola vez y no se puede volver a pedir: lo forma la
     clave, y una clave que se relee por la API es una clave que sale por la API.
     """
+    _solo_desde_esta_maquina(request)
     try:
         return emparejamiento.generar(_instance.boot.data_dir, body.nombre)
     except emparejamiento.EmparejamientoError as exc:
@@ -1505,8 +1529,9 @@ class EmparejamientoImportado(BaseModel):
 
 
 @router.post("/emparejamientos/importar")
-def importar_emparejamiento(body: EmparejamientoImportado):
+def importar_emparejamiento(body: EmparejamientoImportado, request: Request):
     """El lado que va a **empujar**: guarda el código que le pasaron."""
+    _solo_desde_esta_maquina(request)
     try:
         return emparejamiento.importar(
             _instance.boot.data_dir, body.codigo, body.url, body.nombre)
@@ -1515,7 +1540,10 @@ def importar_emparejamiento(body: EmparejamientoImportado):
 
 
 @router.delete("/emparejamientos/{ident}")
-def olvidar_emparejamiento(ident: str):
+def olvidar_emparejamiento(ident: str, request: Request):
+    """Local también: si no, cualquiera desemparejea a cualquiera, y recuperarse
+    de eso es que dos personas rehagan el emparejamiento en dos máquinas."""
+    _solo_desde_esta_maquina(request)
     try:
         emparejamiento.olvidar(_instance.boot.data_dir, ident)
     except emparejamiento.EmparejamientoError as exc:

@@ -60,7 +60,7 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar) |
 | `POST /diff`, `POST /migrar` | qué difiere contra otro Bot, y empujarle lo elegido |
 | `POST /migrar/recibir` | el otro lado: abre el sobre cifrado y escribe. Que el sobre abra **es** la autenticación de esta ruta — la única autenticada |
-| `GET/POST/DELETE /emparejamientos`, `POST /emparejamientos/importar` | la clave compartida con otro Bot. La clave no sale nunca; el código se ve una vez |
+| `GET/POST/DELETE /emparejamientos`, `POST /emparejamientos/importar` | la clave compartida con otro Bot. **Sólo desde la propia máquina** (`127.0.0.1`): con esto abierto a la red, cualquiera pediría un código y el sobre dejaría de autenticar. La clave no sale nunca; el código se ve una vez |
 | `GET /env`, `PUT /env/<N>` | variables y secretos |
 | `GET /updates`, `PUT /updates/config`, `GET /updates/releases`, `POST /updates/install/{tag,upload}`, `POST /updates/revert`, `POST /updates/restart` | actualizaciones |
 | `GET /agent`, `GET /agent/providers`, `WS /agent/terminal` | pestaña Agente |
