@@ -13,10 +13,27 @@ capaz de dejar la instalación sin levantar, con el error en una consola que
 nadie mira. Por eso la validación de acá corre **antes** de escribir y no
 después: si el conjunto nuevo no arranca, no se guarda.
 
+Programas, además de archivos
+-----------------------------
+
+`process_allowlist` es el otro límite de la misma familia: no qué carpetas
+alcanza un flujo, sino qué ejecutables puede correr por el port `process`.
+Vive en el mismo archivo y lo hace cumplir el mismo núcleo, pero no estaba en
+ninguna pantalla, así que autorizar `tasklist` en una máquina nueva era volver
+al bloc de notas — y el error que ve quien opera es un `PortError` adentro de
+un run, que parece un problema del flujo.
+
+Tiene **tres** estados y el del medio es el que confunde: la clave ausente es
+"cualquier ejecutable", la clave presente y vacía es "ninguno", y con nombres
+es "sólo ésos". Una instalación nace en "ninguno" (el wizard lo escribe así a
+propósito), así que la pantalla tiene que decir en cuál está y no dejar que
+"vacío" signifique dos cosas.
+
 Qué se puede tocar y qué no
 ---------------------------
 
-Sólo las raíces de archivos. `storage`, `plugins_dir` y `default_actor`
+Las raíces de archivos y los ejecutables permitidos. `storage`, `plugins_dir`
+y `default_actor`
 deciden dónde vive la base, de dónde se carga código y quién ejecuta: son de
 la máquina, cambiarlos desde el navegador es otra conversación y ninguna de
 las tres la pide esta pantalla. Se devuelven para mostrar, no para escribir.
@@ -104,7 +121,114 @@ def leer(instance, root: Path) -> dict:
         # `fs_roots` es de v0.3.1-beta.3 en adelante; contra un núcleo viejo
         # la pantalla ofrece una sola raíz y lo dice.
         "varias_raices": hasattr(cfg, "fs_roots_efectivos"),
+        "programas": programas(instance, root),
     }
+
+
+# Los tres estados de `process_allowlist`, nombrados. La pantalla elige uno:
+# un campo de texto vacío no alcanza, porque vacío y ausente son lo contrario
+# entre sí.
+CUALQUIERA = "cualquiera"
+NINGUNO = "ninguno"
+LISTA = "lista"
+MODOS = (CUALQUIERA, NINGUNO, LISTA)
+
+
+def _estado_de(allowlist) -> dict:
+    """Uno de los tres estados, con los nombres tal como se escribieron.
+
+    El núcleo compara por `Path(x).stem.lower()` en las dos puntas, así que
+    `Toothform.exe`, `toothform` y `TOOTHFORM` son el mismo programa; se
+    devuelve lo escrito tal cual, que es lo que alguien reconoce al leerlo.
+    """
+    if allowlist is None:
+        modo = CUALQUIERA
+    elif not allowlist:
+        modo = NINGUNO
+    else:
+        modo = LISTA
+    return {
+        "modo": modo,
+        "ejecutables": [
+            {"nombre": n, "existe": shutil.which(n) is not None} for n in (allowlist or ())
+        ],
+    }
+
+
+def programas(instance, root: Path) -> dict:
+    """
+    Qué ejecutables puede correr un flujo: lo que rige y lo que va a regir.
+
+    Son dos cosas distintas y confundirlas hace que guardar parezca no haber
+    hecho nada. `instance.boot` es la configuración con la que **arrancó** este
+    proceso; `boot.env` es lo que va a leer el próximo. Entre guardar y
+    reiniciar difieren, y la pantalla tiene que poder decirlo en vez de
+    redibujarse con el valor viejo como si el guardado se hubiera perdido.
+    """
+    vigente = _estado_de(instance.boot.process_allowlist)
+    escrito = _estado_de(boot.load(root, {}).process_allowlist)
+    return {
+        **vigente,
+        "escrito": escrito,
+        # Hay algo guardado que todavía no rige: falta reiniciar.
+        "pendiente": escrito != vigente,
+    }
+
+
+def guardar_programas(instance, root: Path, modo: str, ejecutables: list[str]) -> dict:
+    """
+    Escribe `process_allowlist`. El modo es explícito, no se deduce de la lista.
+
+    Deducirlo sería repetir la trampa del archivo: alguien borra el último
+    nombre esperando "ya no hace falta la lista" y lo que queda escrito es
+    "ningún programa", que es lo más restrictivo. Acá el modo se elige y la
+    lista sólo importa cuando es `lista`.
+
+    Que un ejecutable no esté en esta máquina **no** impide guardar: se avisa.
+    Una instalación se puede configurar antes de instalar el programa que va a
+    correr, y el núcleo lo trata igual (`boot.validar` lo reporta sin ser
+    fatal).
+    """
+    if modo not in MODOS:
+        raise LimitesError("No se pudo guardar.", [f"'{modo}' no es un modo conocido."])
+
+    nombres: tuple[str, ...] = ()
+    if modo == LISTA:
+        problemas = []
+        vistos: dict[str, str] = {}
+        limpios = []
+        for crudo in ejecutables or []:
+            nombre = (crudo or "").strip()
+            if not nombre:
+                continue
+            # La coma separa los nombres en el archivo; uno con coma adentro
+            # se releería como dos, y ninguno de los dos existiría.
+            if "," in nombre:
+                problemas.append(f'"{nombre}": un nombre de programa no puede llevar una coma.')
+                continue
+            clave = Path(nombre).stem.lower()
+            if clave in vistos:
+                problemas.append(f'"{nombre}" y "{vistos[clave]}" son el mismo programa para el núcleo.')
+                continue
+            vistos[clave] = nombre
+            limpios.append(nombre)
+        if problemas:
+            raise LimitesError("Los programas no se pueden guardar así.", problemas)
+        if not limpios:
+            raise LimitesError("Los programas no se pueden guardar así.", [
+                'Con "sólo estos programas" hace falta al menos uno. '
+                'Para no permitir ninguno, elegí esa opción.'
+            ])
+        nombres = tuple(limpios)
+
+    nuevo = dataclasses.replace(
+        instance.boot, process_allowlist=None if modo == CUALQUIERA else nombres
+    )
+    if impiden := boot.fatal(nuevo):
+        raise LimitesError("Con esos programas la instalación no arrancaría.", impiden)
+
+    escrito = _escribir(root, nuevo)
+    return {"programas": programas(instance, root), **escrito}
 
 
 def normalizar(raices: list[dict]) -> list[tuple[str, str]]:
@@ -268,6 +392,17 @@ def guardar(instance, root: Path, raices: list[dict]) -> dict:
     if impiden := boot.fatal(nuevo):
         raise LimitesError("Con esas raíces la instalación no arrancaría.", impiden)
 
+    return {"raices": [{"alias": a, "ruta": r} for a, r in pares], **_escribir(root, nuevo)}
+
+
+def _escribir(root: Path, nuevo) -> dict:
+    """
+    Deja el `boot.env` nuevo y la copia de lo anterior al lado.
+
+    Lo comparten las dos mitades de la pantalla: el archivo se regenera entero
+    con `boot.render` —lo mismo que hace `python -m backend.core config`—, así
+    que guardar los programas no puede perder las raíces ni al revés.
+    """
     archivo = root / boot.ARCHIVO
     if archivo.is_file():
         shutil.copy2(archivo, root / RESPALDO)
@@ -276,11 +411,10 @@ def guardar(instance, root: Path, raices: list[dict]) -> dict:
     archivo.write_text(boot.render(nuevo), encoding="utf-8-sig")
 
     return {
-        "raices": [{"alias": a, "ruta": r} for a, r in pares],
         "archivo": str(archivo),
         "respaldo": str(root / RESPALDO),
         # Se lee al construir la instancia: hasta que no reinicie, el Bot sigue
-        # con las raíces viejas, y decirlo es la mitad de la pantalla.
+        # con lo de antes, y decirlo es la mitad de la pantalla.
         "restart_required": True,
         "avisos": boot.validar(nuevo),
     }

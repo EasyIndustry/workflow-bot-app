@@ -177,6 +177,15 @@ def get_overview():
         # permite que una raíz contenga la instalación sin entregarla, y hasta
         # que no se muestre nadie sabe que esa red existe.
         "fs_negadas": [str(x) for x in _negadas()],
+        # El otro límite de la misma familia: qué ejecutables puede correr un
+        # flujo. Estaba sólo en `boot.env` y se descubría como
+        # "PortError: 'tasklist' no está en la lista de comandos permitidos"
+        # adentro de un run, igual que pasaba con las rutas. `None` = cualquier
+        # programa; la lista vacía = ninguno, que es como nace una instalación.
+        "process_allowlist": (
+            list(_instance.boot.process_allowlist)
+            if _instance.boot.process_allowlist is not None else None
+        ),
         "plugins_dir": str(carpeta) if carpeta else None,
         "plugins": len(plugins),
         "plugins_installed": len(instalados),
@@ -315,7 +324,7 @@ def _negadas() -> list:
 
 @router.get("/limites")
 def get_limites():
-    """Hasta dónde llega el port `fs` de esta instalación, y con qué alias."""
+    """Hasta dónde llega esta instalación: las raíces del port `fs` y los programas permitidos."""
     return limites.leer(_instance, ROOT)
 
 
@@ -328,6 +337,29 @@ def put_limites_raices(body: RaicesBody):
     """
     try:
         return limites.guardar(_instance, ROOT, body.raices)
+    except limites.LimitesError as exc:
+        raise HTTPException(400, {"message": str(exc), "errors": exc.detalle}) from None
+    except OSError as exc:
+        raise HTTPException(500, {"message": f"No se pudo escribir boot.env: {exc}", "errors": []}) from None
+
+
+class ProgramasBody(BaseModel):
+    modo: str
+    ejecutables: list[str] = []
+
+
+@router.put("/limites/programas")
+def put_limites_programas(body: ProgramasBody):
+    """
+    Cambia `process_allowlist` en `boot.env`.
+
+    El modo viaja aparte de la lista a propósito: "ningún programa" y
+    "cualquiera" son dos estados distintos y los dos se escriben con la lista
+    vacía —la clave presente o ausente—, así que deducirlo del contenido haría
+    que borrar el último nombre bloqueara todo sin decirlo.
+    """
+    try:
+        return limites.guardar_programas(_instance, ROOT, body.modo, body.ejecutables)
     except limites.LimitesError as exc:
         raise HTTPException(400, {"message": str(exc), "errors": exc.detalle}) from None
     except OSError as exc:
@@ -732,13 +764,29 @@ def put_updates_config(body: UpdatesConfigBody):
 
 
 @router.get("/updates/releases")
-def get_releases(prerelease: bool = Query(True), component: str = Query("core")):
+def get_releases(
+    prerelease: bool = Query(True),
+    component: str = Query("core"),
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(5, ge=1, le=30),
+):
+    """
+    Una página de releases del repo del componente.
+
+    De a pocos y no los treinta de antes: cada entrada trae sus notas, y la
+    pantalla casi siempre instala el primero. Lo que decide si hay más lo dice
+    `hay_mas`; ver `updates.pagina_de_releases` para por qué no es un total.
+    """
     comp = _componente(component)
     repo = updates.configuracion(_instance)[comp.id]
     try:
-        return {"releases": updates.disponibles(incluir_prueba=prerelease, repo=repo, token=updates.token_de(_instance)), "repo": repo}
+        pagina_de = updates.pagina_de_releases(
+            incluir_prueba=prerelease, repo=repo, token=updates.token_de(_instance),
+            pagina=pagina, por_pagina=por_pagina,
+        )
     except updates.UpdateError as exc:
         raise HTTPException(502, {"message": str(exc), "errors": exc.detalle}) from None
+    return {**pagina_de, "repo": repo}
 
 
 class UpdateTagBody(BaseModel):

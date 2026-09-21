@@ -140,8 +140,11 @@ export const api = {
   // webapp/updates.py. `componente` es "core" o "webapp".
   actualizaciones: () => pedir("/updates"),
   configurarActualizaciones: (repos) => pedir("/updates/config", { metodo: "PUT", cuerpo: repos }),
-  releases: (componente, conPrueba = true) =>
-    pedir(`/updates/releases?component=${componente}&prerelease=${conPrueba ? "true" : "false"}`),
+  // De a pocos: cada release trae sus notas, y la pantalla casi siempre
+  // instala el primero. `hay_mas` dice si ofrecer "siguiente".
+  releases: (componente, conPrueba = true, pagina = 1, porPagina = 5) =>
+    pedir(`/updates/releases?component=${componente}&prerelease=${conPrueba ? "true" : "false"}`
+          + `&pagina=${pagina}&por_pagina=${porPagina}`),
   instalarRelease: (componente, tag) =>
     pedir("/updates/install/tag", { metodo: "POST", cuerpo: { tag, component: componente } }),
   instalarReleaseArchivo: (componente, archivo, tag = "") => {
@@ -157,6 +160,11 @@ export const api = {
 
   limites: () => pedir("/limites"),
   guardarRaices: (raices) => pedir("/limites/raices", { metodo: "PUT", cuerpo: { raices } }),
+  // El modo viaja aparte de la lista: "ningún programa" y "cualquiera" se
+  // escriben los dos con la lista vacía, así que deducirlo del contenido haría
+  // que borrar el último nombre bloqueara todo sin decirlo.
+  guardarProgramas: (modo, ejecutables) =>
+    pedir("/limites/programas", { metodo: "PUT", cuerpo: { modo, ejecutables } }),
 
   // Actores: quién ejecuta y qué puede. Identidad y política, no autenticación.
   // Sin `borrar`: la baja es lógica (enabled=false), porque los runs apuntan al

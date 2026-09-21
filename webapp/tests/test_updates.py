@@ -336,3 +336,77 @@ def test_el_token_sale_de_cualquiera_de_las_dos_variables():
     assert updates.token_de(_InstanciaFalsa()) is None
     assert updates.token_de(_InstanciaFalsa({"PLUGINS_GITHUB_TOKEN": "p"})) == "p"
     assert updates.token_de(_InstanciaFalsa({"GITHUB_TOKEN": "g", "PLUGINS_GITHUB_TOKEN": "p"})) == "g"
+
+
+# ── Paginado de releases ────────────────────────────────────────────────
+#
+# Se piden de a pocos y no los treinta de antes: cada entrada trae sus notas y
+# la pantalla casi siempre instala la primera.
+
+
+def _abrir_paginado(total: int):
+    """Un GitHub de mentira que respeta per_page y page, y anota qué le pidieron."""
+    todos = [
+        {"tag_name": f"v0.1.{i}", "prerelease": False, "draft": False,
+         "published_at": "2026-09-01T00:00:00Z", "body": "", "html_url": "u",
+         "tarball_url": "t", "assets": []}
+        for i in range(total)
+    ]
+    pedidos = []
+
+    def abrir(url, destino=None, token=None):
+        query = dict(p.split("=") for p in url.split("?", 1)[1].split("&"))
+        por = int(query["per_page"])
+        pagina = int(query["page"])
+        pedidos.append((pagina, por))
+        desde = (pagina - 1) * por
+        return json.dumps(todos[desde:desde + por]).encode()
+
+    return abrir, pedidos
+
+
+def test_una_pagina_pide_solo_lo_que_muestra():
+    abrir, pedidos = _abrir_paginado(12)
+
+    r = updates.pagina_de_releases(abrir=abrir, pagina=1, por_pagina=5)
+
+    assert [x["tag"] for x in r["releases"]] == ["v0.1.0", "v0.1.1", "v0.1.2", "v0.1.3", "v0.1.4"]
+    assert r["hay_mas"] is True
+    assert pedidos == [(1, 5)], "una sola llamada, de a cinco"
+
+
+def test_la_pagina_siguiente_sigue_donde_quedo():
+    abrir, _ = _abrir_paginado(12)
+
+    r = updates.pagina_de_releases(abrir=abrir, pagina=2, por_pagina=5)
+
+    assert [x["tag"] for x in r["releases"]] == ["v0.1.5", "v0.1.6", "v0.1.7", "v0.1.8", "v0.1.9"]
+    assert r["hay_mas"] is True
+
+
+def test_la_ultima_pagina_no_ofrece_siguiente():
+    abrir, _ = _abrir_paginado(12)
+
+    r = updates.pagina_de_releases(abrir=abrir, pagina=3, por_pagina=5)
+
+    assert [x["tag"] for x in r["releases"]] == ["v0.1.10", "v0.1.11"]
+    assert r["hay_mas"] is False
+
+
+def test_el_paginado_sigue_filtrando_borradores_y_pruebas():
+    abrir = lambda url, destino=None, token=None: json.dumps(RELEASES).encode()  # noqa: E731
+
+    r = updates.pagina_de_releases(incluir_prueba=False, abrir=abrir, por_pagina=5)
+
+    assert [x["tag"] for x in r["releases"]] == ["v0.3.0"]
+    # GitHub devolvió 3 de los 5 pedidos, así que no hay más atrás aunque el
+    # filtro haya dejado uno solo a la vista.
+    assert r["hay_mas"] is False
+
+
+def test_una_pagina_absurda_no_llega_a_la_red_con_basura():
+    abrir, pedidos = _abrir_paginado(3)
+
+    updates.pagina_de_releases(abrir=abrir, pagina=0, por_pagina=999)
+
+    assert pedidos == [(1, 30)], "la página mínima es 1 y el tope es el de la API"

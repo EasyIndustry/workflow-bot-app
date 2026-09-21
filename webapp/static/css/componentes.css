@@ -78,6 +78,23 @@
 }
 .seccion__suave { font-weight: 400; color: var(--texto-3); }
 
+/* Las vistas de un mismo panel (components/subvistas.js). Una línea inferior
+   continua con la pestaña activa recortada: se lee como "esto es una parte de
+   lo mismo", que es lo que son, y no como la navegación de al lado. */
+.subvistas {
+  display: flex; gap: 2px; margin: 0 0 16px;
+  border-bottom: 1px solid var(--borde);
+}
+.subvistas__tab {
+  padding: 7px 14px; border: 1px solid transparent; border-bottom: none;
+  margin-bottom: -1px; background: none; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; color: var(--texto-3);
+}
+.subvistas__tab:hover { color: var(--texto); background: var(--fondo-panel); }
+.subvistas__tab--activa {
+  color: var(--texto); font-weight: 600; background: var(--fondo);
+  border-color: var(--borde); border-bottom: 1px solid var(--fondo);
+}
 
 /* ── Campos de formulario ────────────────────────────────────────────── */
 

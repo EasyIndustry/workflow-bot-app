@@ -17,19 +17,19 @@ import { crearCampo } from "../components/campo.js";
 import { tabla } from "../components/tabla.js";
 import { abrirModal, confirmar } from "../components/modal.js";
 import { aviso } from "../components/aviso.js";
+import { subVistas, vistaElegida } from "../components/subvistas.js";
 
 let shell = null;
 let confirmacion = null;
 
 const SECCIONES = [
-  { id: "secretos", label: "Secretos y variables", dibujar: dibujarSecretos },
+  { id: "secretos", label: "Configurar entorno", dibujar: dibujarSecretos },
   { id: "almacenamiento", label: "Almacenamiento", dibujar: dibujarAlmacenamiento },
-  { id: "limites", label: "Alcance de archivos", dibujar: dibujarLimites },
+  { id: "limites", label: "Alcance", dibujar: dibujarLimites },
   { id: "diagnostico", label: "Diagnóstico", dibujar: dibujarDiagnostico },
   { id: "base", label: "Base de datos", dibujar: dibujarBase },
   { id: "seguridad", label: "Seguridad", dibujar: dibujarSeguridad },
   { id: "actualizaciones", label: "Actualizaciones", dibujar: dibujarActualizaciones },
-  { id: "general", label: "General", falta: "el puerto, la retención de runs y el arranque con Windows. La retención del registro de eventos ya existe y, como el núcleo la declara igual que cualquier plugin, se edita en Plug ins → Núcleo" },
 ];
 
 export async function montar(elShell, partes) {
@@ -91,19 +91,47 @@ function consumirConfirmacion() {
 
 // ── Secretos y variables ────────────────────────────────────────────────
 
-async function dibujarSecretos() {
-  const datos = await api.env();
-  const items = datos.items || [];
-  const secretos = items.filter((i) => i.secret);
-  const variables = items.filter((i) => !i.secret);
+const VISTAS_ENTORNO = [
+  { id: "secretos", label: "Secretos", dibujar: dibujarEntornoSecretos },
+  { id: "variables", label: "Variables de entorno", dibujar: dibujarEntornoVariables },
+];
 
+async function dibujarSecretos(partes = []) {
+  const datos = await api.env();
+  const vista = vistaElegida(VISTAS_ENTORNO, partes[0]);
   return [
-    encabezado("Secretos y variables", [
+    encabezado("Configurar entorno", [
       "Lo que los flujos interpolan como ",
       h("span", { class: "mono", text: "{env.CLAVE}" }),
       ". Las variables se ven y se editan; los secretos se cargan y no se vuelven a mostrar, ni siquiera a quien los cargó.",
     ]),
+    subVistas(VISTAS_ENTORNO, vista.id, (id) => irA("config", "secretos", id)),
     consumirConfirmacion(),
+    ...vista.dibujar(datos),
+    pieDeEntorno(datos),
+  ];
+}
+
+/** El mismo pie en las dos: la columna de usos se calcula igual para los dos tipos. */
+function pieDeEntorno(datos) {
+  return h("div", { class: "tabla__pie", style: { lineHeight: "1.55" } }, [
+    "La columna de usos sale de cruzar los flujos, las conexiones y las " +
+    "fuentes guardadas contra estos nombres. Un nombre en 0 usos sobra; uno " +
+    "referenciado y sin valor va a fallar en medio de una ejecución.",
+    datos.key_exists
+      ? null
+      : h("div", { style: { marginTop: "6px" } }, [
+          "Todavía no hay llave de cifrado: se genera sola cuando se cargue el primer secreto.",
+        ]),
+  ]);
+}
+
+function dibujarEntornoSecretos(datos) {
+  const secretos = (datos.items || []).filter((i) => i.secret);
+  return [
+    // El aviso vive acá y no en las variables: es lo que explica por qué la
+    // tabla de al lado no muestra ningún valor, y leerlo entre las variables
+    // —que sí se ven— confundiría en vez de aclarar.
     aviso("info", "Los secretos se referencian, nunca se embeben", h("div", {}, [
       "Una conexión guarda ",
       h("span", { class: "mono", text: "Authorization: Bearer {env.API_TOKEN}" }),
@@ -112,31 +140,24 @@ async function dibujarSecretos() {
       "problema. El valor se resuelve en el servidor al ejecutar: nunca llega " +
       "al navegador.",
     ])),
-
     h("div", { class: "seccion" }, [
       h("span", {}, ["SECRETOS", h("span", { class: "seccion__suave", text: " · se escriben, no se leen" })]),
       h("button", { class: "btn btn--primario", text: "+ Nuevo secreto",
                     onClick: () => abrirEnv({ secret: true }) }),
     ]),
     tablaEnv(secretos, true),
+  ];
+}
 
+function dibujarEntornoVariables(datos) {
+  const variables = (datos.items || []).filter((i) => !i.secret);
+  return [
     h("div", { class: "seccion" }, [
       h("span", {}, ["VARIABLES", h("span", { class: "seccion__suave", text: " · visibles" })]),
       h("button", { class: "btn btn--primario", text: "+ Nueva variable",
                     onClick: () => abrirEnv({ secret: false }) }),
     ]),
     tablaEnv(variables, false),
-
-    h("div", { class: "tabla__pie", style: { lineHeight: "1.55" } }, [
-      "La columna de usos sale de cruzar los flujos, las conexiones y las " +
-      "fuentes guardadas contra estos nombres. Un nombre en 0 usos sobra; uno " +
-      "referenciado y sin valor va a fallar en medio de una ejecución.",
-      datos.key_exists
-        ? null
-        : h("div", { style: { marginTop: "6px" } }, [
-            "Todavía no hay llave de cifrado: se genera sola cuando se cargue el primer secreto.",
-          ]),
-    ]),
   ];
 }
 
@@ -259,7 +280,9 @@ function abrirEnv(item) {
           confirmacion = esNuevo
             ? `Se cargó {env.${nombre}}.`
             : `Se reemplazó el valor de {env.${nombre}}.`;
-          await dibujarSeccion(SECCIONES[0]);
+          // A la sub-vista de donde salió: volver siempre a Secretos después de
+          // cargar una variable haría perder de vista lo que se acaba de hacer.
+          await dibujarSeccion(seccionPorId("secretos"), [esSecreto ? "secretos" : "variables"]);
         } catch (e) {
           error.style.display = "";
           poner(error, h("div", { class: "aviso__cuerpo", text: e.message }));
@@ -282,7 +305,7 @@ function borrarEnv(item) {
     alConfirmar: async () => {
       await api.borrarEnv(item.name);
       confirmacion = `Se eliminó {env.${item.name}}.`;
-      await dibujarSeccion(SECCIONES[0]);
+      await dibujarSeccion(seccionPorId("secretos"), [item.secret ? "secretos" : "variables"]);
     },
   });
 }
@@ -826,6 +849,7 @@ function controlesDePolitica(datos, actual) {
   };
 }
 
+/** Una sección por su id. Por índice se rompe en silencio al reordenar la lista. */
 function seccionPorId(id) {
   return SECCIONES.find((s) => s.id === id);
 }
@@ -841,13 +865,25 @@ function seccionPorId(id) {
 
 let incluirPrueba = true;
 
+// `titulo` va en mayúscula porque encabeza una sección; `label` es el mismo
+// nombre para la pestaña, donde gritar al lado de "Repos" se lee mal.
 const COMPONENTES_UPDATE = [
-  { id: "core", titulo: "NÚCLEO", carpeta: "backend/", que: "el núcleo", de: "del núcleo" },
-  { id: "webapp", titulo: "WEB APP", carpeta: "webapp/", que: "la web app", de: "de la web app" },
+  { id: "core", titulo: "NÚCLEO", label: "Núcleo", carpeta: "backend/", que: "el núcleo", de: "del núcleo" },
+  { id: "webapp", titulo: "WEB APP", label: "Web app", carpeta: "webapp/", que: "la web app", de: "de la web app" },
 ];
 
-async function dibujarActualizaciones() {
+// Repos y un componente por vista. Antes era todo una pantalla: los dos
+// bloques traían treinta releases cada uno al abrirla —sesenta pedidos de
+// notas para instalar uno— y había que barrer con el scroll para llegar al
+// segundo.
+const VISTAS_UPDATE = [
+  { id: "repos", label: "Repos" },
+  ...COMPONENTES_UPDATE.map((c) => ({ id: c.id, label: c.label, componente: c })),
+];
+
+async function dibujarActualizaciones(partes = []) {
   const estado = await api.actualizaciones();
+  const vista = vistaElegida(VISTAS_UPDATE, partes[0]);
   return [
     encabezado("Actualizaciones", [
       "El núcleo (", h("span", { class: "mono", text: "backend/" }), ") y la web app (",
@@ -855,16 +891,16 @@ async function dibujarActualizaciones() {
       ") se traen cada uno de los releases de su repo de GitHub y se reemplazan enteros. " +
       "No se editan acá: lo que haya que cambiar se cambia en el repo y se publica un release.",
     ]),
+    subVistas(VISTAS_UPDATE, vista.id, (id) => irA("config", "actualizaciones", id)),
     consumirConfirmacion(),
     estado.can_restart
       ? null
       : aviso("info", "Este servidor no se reinicia desde acá",
         "Lo arrancó uvicorn o un supervisor ajeno, no python -m webapp. Después de actualizar hay que reiniciar el proceso a mano."),
 
-    h("div", { class: "seccion" }, [h("span", { text: "REPOSITORIOS" })]),
-    tarjetaRepos(estado),
-
-    ...COMPONENTES_UPDATE.flatMap((c) => bloqueComponente(c, estado)),
+    ...(vista.componente
+      ? bloqueComponente(vista.componente, estado)
+      : [h("div", { class: "seccion" }, [h("span", { text: "REPOSITORIOS" })]), tarjetaRepos(estado)]),
 
     h("div", { class: "tabla__pie", text:
       "Antes de aplicar, el núcleo nuevo se arranca en otro proceso contra una base vacía, y la web app nueva se compila entera: si algo falla, no se toca nada. " +
@@ -971,17 +1007,28 @@ function bloqueComponente(c, estado) {
   ];
 }
 
-async function cargarReleases(c, contenedor, comp) {
+// Cuántos se piden por vez. El repo del núcleo va por la prerelease treinta y
+// pico y cada entrada trae sus notas: traerlas todas para instalar la primera
+// es un payload grande y una lista que nadie lee.
+const RELEASES_POR_PAGINA = 5;
+
+async function cargarReleases(c, contenedor, comp, pagina = 1) {
   poner(contenedor, h("div", { class: "tabla__vacia", text: "Buscando releases en GitHub…" }));
-  let releases;
+  let datos;
   try {
-    releases = (await api.releases(c.id, incluirPrueba)).releases || [];
+    datos = await api.releases(c.id, incluirPrueba, pagina, RELEASES_POR_PAGINA);
   } catch (e) {
     poner(contenedor, aviso("falta", e.message, (e.errores || []).join(" · ") || null));
     return;
   }
+  const releases = datos.releases || [];
   if (!releases.length) {
-    poner(contenedor, h("div", { class: "tabla__vacia", text: incluirPrueba ? `No hay ningún release publicado en ${comp.repo}.` : "No hay releases finales; sólo de prueba." }));
+    poner(contenedor, h("div", {}, [
+      h("div", { class: "tabla__vacia", text: pagina > 1
+        ? "No hay más releases para mostrar."
+        : (incluirPrueba ? `No hay ningún release publicado en ${comp.repo}.` : "No hay releases finales; sólo de prueba.") }),
+      paginador(c, contenedor, comp, pagina, datos.hay_mas),
+    ]));
     return;
   }
   const columnas = [
@@ -1008,7 +1055,29 @@ async function cargarReleases(c, contenedor, comp) {
       }),
     },
   ];
-  poner(contenedor, tabla(columnas, releases, {}));
+  poner(contenedor, h("div", {}, [
+    tabla(columnas, releases, {}),
+    paginador(c, contenedor, comp, pagina, datos.hay_mas),
+  ]));
+}
+
+/**
+ * Anterior/siguiente, sin número total de páginas.
+ *
+ * GitHub pagina por cantidad de releases y acá se filtran los borradores y,
+ * si no se piden, las de prueba: no hay un total honesto que mostrar. Decir
+ * "página 2 de 7" sería inventarlo, así que se dice en cuál se está y si hay
+ * algo más atrás.
+ */
+function paginador(c, contenedor, comp, pagina, hayMas) {
+  if (pagina === 1 && !hayMas) return null;
+  return h("div", { style: { display: "flex", gap: "7px", alignItems: "center", padding: "9px 0" } }, [
+    h("button", { class: "btn btn--chico", text: "← Más nuevos", disabled: pagina <= 1,
+                  onClick: () => cargarReleases(c, contenedor, comp, pagina - 1) }),
+    h("span", { style: { fontSize: "11.5px", color: "var(--texto-3)" }, text: `Página ${pagina}` }),
+    h("button", { class: "btn btn--chico", text: "Más viejos →", disabled: !hayMas,
+                  onClick: () => cargarReleases(c, contenedor, comp, pagina + 1) }),
+  ]);
 }
 
 async function instalarRelease(c, { tag, archivo }, boton) {
@@ -1120,8 +1189,28 @@ function cuandoTexto(epoch) {
  * arrancaría, así que esta pantalla puede ser un formulario común y no un
  * campo de minas: lo peor que pasa es que no guarde y diga por qué.
  */
-async function dibujarLimites() {
+const VISTAS_ALCANCE = [
+  { id: "archivos", label: "Archivos", dibujar: dibujarAlcanceArchivos },
+  { id: "programas", label: "Programas", dibujar: dibujarAlcanceProgramas },
+];
+
+async function dibujarLimites(partes = []) {
   const datos = await api.limites();
+  const vista = vistaElegida(VISTAS_ALCANCE, partes[0]);
+  return [
+    encabezado("Alcance", [
+      "Hasta dónde llega un flujo en esta máquina: qué carpetas alcanza y qué programas puede correr. " +
+      "Las dos cosas viven en ",
+      h("span", { class: "mono", text: "boot.env" }),
+      ", no en la base —se leen antes de abrirla—, y las hace cumplir el núcleo en el port, " +
+      "antes de que el flujo toque nada.",
+    ]),
+    subVistas(VISTAS_ALCANCE, vista.id, (id) => irA("config", "limites", id)),
+    ...vista.dibujar(datos),
+  ];
+}
+
+function dibujarAlcanceArchivos(datos) {
   // Se edita una copia: cancelar es volver a dibujar, sin deshacer nada. La
   // primera fila es siempre la caja de la instalación y no se edita: es la
   // que resuelve toda ruta relativa, y poder pisarla es cómo una instalación
@@ -1207,11 +1296,10 @@ async function dibujarLimites() {
   redibujar();
 
   return [
-    encabezado("Alcance de archivos", [
+    h("div", { class: "subtitulo", style: { marginBottom: "14px" } }, [
       "Las carpetas que un flujo puede leer y escribir con el port ",
       h("span", { class: "mono", text: "fs" }),
-      ". Fuera de éstas devuelve “ruta fuera del árbol permitido”. Vive en ",
-      h("span", { class: "mono", text: "boot.env" }), ", no en la base: se lee antes de abrirla.",
+      ". Fuera de éstas devuelve “ruta fuera del árbol permitido”.",
     ]),
     consumirConfirmacion(),
     mensajes,
@@ -1219,7 +1307,8 @@ async function dibujarLimites() {
     h("div", { style: { marginTop: "12px", display: "flex", gap: "7px" } }, [
       h("button", { class: "btn btn--primario", text: "Guardar",
                     onClick: (e) => guardar(e.currentTarget) }),
-      h("button", { class: "btn", text: "Descartar", onClick: () => dibujarSeccion(SECCIONES.find((s) => s.id === "limites")) }),
+      h("button", { class: "btn", text: "Descartar",
+                    onClick: () => dibujarSeccion(seccionPorId("limites"), ["archivos"]) }),
     ]),
     h("div", { class: "tabla__pie" }, [
       "La base y la llave (", h("span", { class: "mono", text: datos.data_dir }),
@@ -1228,6 +1317,129 @@ async function dibujarLimites() {
     ]),
   ];
 }
+
+/**
+ * Los programas que un flujo puede correr con el port `process`.
+ *
+ * El modo se elige, no se deduce de la lista. En el archivo los tres estados
+ * se escriben parecido —la clave ausente, presente y vacía, o con nombres— y
+ * los dos primeros son opuestos: "cualquiera" y "ninguno". Una instalación
+ * nace en "ninguno", así que quien opera ve `PortError: 'tasklist' no está en
+ * la lista` adentro de un run y parece un problema del flujo. Un campo de
+ * texto que al vaciarse cambia de significado repetiría esa trampa en la
+ * pantalla.
+ */
+function dibujarAlcanceProgramas(datos) {
+  const p = datos.programas || { modo: "ninguno", ejecutables: [] };
+  let modo = p.modo;
+  let nombres = (p.ejecutables || []).map((e) => e.nombre);
+  const hueco = h("div");
+  const mensajes = h("div");
+
+  const OPCIONES = [
+    { id: "ninguno", titulo: "Ningún programa",
+      ayuda: "Lo más acotado. Es como nace una instalación: cualquier nodo que corra algo falla." },
+    { id: "lista", titulo: "Sólo estos programas",
+      ayuda: "Lo habitual. Se compara por el nombre del ejecutable, sin ruta ni extensión: " +
+             "Toothform.exe, toothform y TOOTHFORM son el mismo." },
+    { id: "cualquiera", titulo: "Cualquier programa",
+      ayuda: "Sin límite: un flujo puede correr lo que quiera en esta máquina. Para una instalación de desarrollo." },
+  ];
+
+  const redibujar = () => poner(hueco, cuerpo());
+
+  const cuerpo = () => h("div", {}, [
+    h("div", { class: "tarjeta", style: { padding: "6px 16px 14px" } }, OPCIONES.map((o) => {
+      const radio = h("input", { type: "radio", name: "modo-programas", checked: modo === o.id,
+                                 onChange: () => { modo = o.id; redibujar(); } });
+      return h("div", { class: "campo", style: { alignItems: "flex-start" } }, [
+        h("div", { class: "campo__etiqueta" }, [
+          h("label", { class: "fila-control", style: { cursor: "pointer" } },
+            [radio, h("span", { class: "campo__nombre", text: o.titulo })]),
+        ]),
+        h("div", { class: "campo__control" }, [
+          h("div", { class: "campo__ayuda", style: { marginTop: "3px" }, text: o.ayuda }),
+          o.id === "lista" && modo === "lista" ? listaDeProgramas() : null,
+        ]),
+      ]);
+    })),
+  ]);
+
+  const listaDeProgramas = () => h("div", { style: { marginTop: "9px" } }, [
+    ...nombres.map((nombre, i) => {
+      const entrada = h("input", { class: "entrada entrada--mono", type: "text", value: nombre,
+                                   placeholder: "tasklist",
+                                   onInput: (e) => { nombres[i] = e.target.value; } });
+      const estado = (p.ejecutables || []).find((e) => e.nombre === nombre);
+      return h("div", { style: { display: "flex", gap: "6px", alignItems: "center", marginBottom: "5px" } }, [
+        h("div", { style: { flex: "1", minWidth: "0" } }, [entrada]),
+        // Que no esté en la máquina no impide guardar: se puede configurar
+        // antes de instalar el programa. Sólo se dice.
+        estado && !estado.existe
+          ? h("span", { class: "badge badge--falta", title: "No se encontró en el PATH de esta máquina", text: "no está" })
+          : h("span", { style: { flex: "0 0 52px" } }),
+        h("button", { class: "btn btn--chico", title: "Quitar este programa",
+                      onClick: () => { nombres.splice(i, 1); redibujar(); } },
+          [icono(ICONOS.basura, 11, 2)]),
+      ]);
+    }),
+    nombres.length ? null : h("div", { class: "campo__ayuda", text: "Todavía no hay ninguno." }),
+    h("button", { class: "btn btn--chico", style: { marginTop: "4px" }, text: "+ Programa",
+                  onClick: () => { nombres.push(""); redibujar(); } }),
+  ]);
+
+  const guardar = async (boton) => {
+    boton.disabled = true;
+    poner(mensajes);
+    try {
+      const r = await api.guardarProgramas(modo, nombres);
+      poner(mensajes, aviso("ok", "Guardado en boot.env", h("div", {}, [
+        h("div", { text: "Se lee al arrancar: hasta que el Bot no reinicie, sigue con lo de antes." }),
+        ...(r.avisos || []).map((a) => h("div", { class: "campo__ayuda", style: { margin: "4px 0 0" }, text: a })),
+        h("div", { style: { marginTop: "7px", display: "flex", gap: "7px", alignItems: "center" } }, [
+          h("button", { class: "btn btn--primario btn--chico", text: "Reiniciar ahora",
+                        onClick: () => reiniciarApp() }),
+          h("span", { class: "campo__ayuda", style: { margin: "0" }, text: `Copia de lo anterior en ${r.respaldo}` }),
+        ]),
+      ])));
+    } catch (e) {
+      poner(mensajes, aviso("error", e.message || "No se pudo guardar",
+        h("div", {}, (e.errores || []).map((d) => h("div", { text: `· ${d}` })))));
+    }
+    boton.disabled = false;
+  };
+
+  redibujar();
+
+  return [
+    h("div", { class: "subtitulo", style: { marginBottom: "14px" } }, [
+      "Los ejecutables que un flujo puede correr con el port ",
+      h("span", { class: "mono", text: "process" }),
+      ". Fuera de éstos devuelve “no está en la lista de comandos permitidos”.",
+    ]),
+    consumirConfirmacion(),
+    // Lo guardado todavía no rige: el proceso arrancó con lo otro. Decirlo
+    // acá evita que alguien lo guarde dos veces creyendo que no tomó.
+    p.pendiente
+      ? aviso("falta", "Hay un cambio guardado que todavía no rige",
+              `Ahora mismo vale “${rotuloModo(p.modo)}”; al reiniciar pasa a “${rotuloModo((p.escrito || {}).modo)}”.`)
+      : null,
+    mensajes,
+    hueco,
+    h("div", { style: { marginTop: "12px", display: "flex", gap: "7px" } }, [
+      h("button", { class: "btn btn--primario", text: "Guardar",
+                    onClick: (e) => guardar(e.currentTarget) }),
+      h("button", { class: "btn", text: "Descartar",
+                    onClick: () => dibujarSeccion(seccionPorId("limites"), ["programas"]) }),
+    ]),
+    h("div", { class: "tabla__pie", text:
+      "El instalador deja una instalación nueva sin ningún programa permitido, a propósito: " +
+      "es lo más acotado que el núcleo permite expresar." }),
+  ];
+}
+
+const ROTULOS_MODO = { cualquiera: "cualquier programa", ninguno: "ningún programa", lista: "sólo algunos" };
+const rotuloModo = (m) => ROTULOS_MODO[m] || m || "—";
 
 // ── Diagnóstico ─────────────────────────────────────────────────────────
 
@@ -1277,8 +1489,10 @@ async function dibujarDiagnostico() {
       : aviso("ok", "Todo en orden", null),
     h("div", { class: "seccion" }, [
       h("span", { text: "CHEQUEOS" }),
+      // Por id y no por índice: con el índice esto redibujaba Alcance, que es
+      // la sección que quedó en esa posición, y el botón parecía no hacer nada.
       h("button", { class: "btn", text: "Volver a chequear",
-                    onClick: () => dibujarSeccion(SECCIONES[2]) }),
+                    onClick: () => dibujarSeccion(seccionPorId("diagnostico")) }),
     ]),
     tabla(columnas, checks, { vacio: "El diagnóstico no devolvió ningún chequeo." }),
   ];

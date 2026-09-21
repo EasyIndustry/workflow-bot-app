@@ -6,6 +6,31 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-20
 
+- **Config: dos o tres vistas adentro de cada panel** (`components/subvistas.js`).
+  Varias secciones eran dos pantallas apiladas y había que barrer con el scroll
+  para llegar a la mitad de abajo. La vista elegida va en la URL
+  (`#/config/limites/programas`), así un enlace lleva a donde uno quiere y
+  recargar no devuelve a la primera. Quedaron: **Alcance** (Archivos |
+  Programas), **Configurar entorno** (Secretos | Variables de entorno) y
+  **Actualizaciones** (Repos | Núcleo | Web app).
+- **Los programas que un flujo puede correr se configuran desde la pantalla.**
+  `process_allowlist` sólo se podía tocar editando `boot.env` en cada máquina,
+  y el error que ve quien opera es un `PortError` adentro de un run, que parece
+  del flujo. Va con los tres estados explícitos —ningún programa / sólo éstos /
+  cualquiera— porque en el archivo los dos primeros se escriben casi igual (la
+  clave presente y vacía, o ausente) y significan lo contrario; una instalación
+  nace en "ninguno". Inicio → "Hasta dónde llega" suma la fila. Se agregó
+  `PUT /limites/programas` y `GET /limites` ahora distingue lo vigente de lo
+  escrito: entre guardar y reiniciar son distintos, y sin decirlo la pantalla se
+  redibujaba con el valor viejo y guardar parecía no haber hecho nada.
+- **Los releases se piden de a cinco, con paginador**, en vez de treinta por
+  componente al abrir la pantalla: cada entrada trae sus notas y casi siempre se
+  instala la primera (`GET /updates/releases?pagina=&por_pagina=`). Sin total de
+  páginas a propósito: GitHub pagina por cantidad de releases y acá se filtran
+  borradores y prereleases, así que un total sería inventado.
+- **Config → General**: se fue. Estaba dibujada sin backend desde el traspaso.
+- **"Volver a chequear" de Diagnóstico redibujaba Alcance**: buscaba la sección
+  por índice (`SECCIONES[2]`) y el botón parecía no hacer nada. Ahora por id.
 - **Núcleo v0.3.1-beta.8** (core#27): un `Param` puede declarar de qué
   colección salen sus valores (`options_from`) y un tool puede describir sus
   params extra según lo que el nodo ya eligió (`Tool.describe_extra_params`,

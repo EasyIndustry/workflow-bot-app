@@ -128,6 +128,25 @@ function fila(que, valor, detalle) {
   ]);
 }
 
+/**
+ * Los programas permitidos. Los tres estados se dicen con palabras: en el
+ * archivo se escriben parecido —la clave ausente, o presente y vacía— y
+ * significan lo contrario entre sí.
+ */
+function programas(r) {
+  const lista = r.process_allowlist;
+  if (lista === null || lista === undefined) {
+    return fila("Programas", "cualquiera",
+      "Sin límite: un flujo puede correr cualquier ejecutable de esta máquina.");
+  }
+  if (!lista.length) {
+    return fila("Programas", "ninguno",
+      "Es como nace una instalación. Un nodo que corra algo falla con “no está en la lista de comandos permitidos”.");
+  }
+  return fila("Programas", lista.join(", "),
+    "Los únicos que un flujo puede correr con el port process. Se comparan sin ruta ni extensión.");
+}
+
 function limites(r) {
   return h("div", { class: "tarjeta", style: { padding: "12px 16px 4px" } }, [
     h("div", { style: { fontWeight: "600", fontSize: "13px", marginBottom: "4px" }, text: "Hasta dónde llega" }),
@@ -142,6 +161,10 @@ function limites(r) {
       ? [fila("Nunca", (r.fs_negadas || []).join("\n"),
           "Un flujo no las alcanza aunque caigan adentro de una raíz: la base y la llave, los plugins, y el archivo que declara estos límites.")]
       : [],
+    // El otro límite del mismo archivo, y el que más cuesta descubrir: su
+    // estado por defecto es "ninguno", así que un flujo que corre algo falla
+    // con un PortError que parece del flujo. Si no se lee acá, no se lee.
+    programas(r),
   ]);
 }
 

@@ -55,6 +55,7 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `GET /runs`, `GET /runs/<id>`, `GET /runs/en-vuelo`, `GET /logs/<case>` | historial, traza, en vuelo, registro |
 | `GET /tools`, `GET /plugins`, `POST /plugins/install`, `GET /plugins/catalog`, `POST /plugins/catalog/install` | plugins |
 | `GET /tools/<tool>/params-extra?<params>` | los params extra que ese tool acepta según lo que el nodo ya tiene elegido |
+| `GET /limites`, `PUT /limites/raices`, `PUT /limites/programas` | hasta dónde llega la instalación: carpetas y programas permitidos |
 | `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…) |
 | `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar) |
 | `GET /env`, `PUT /env/<N>` | variables y secretos |
@@ -67,7 +68,9 @@ pide un proxy que la ponga.
 ## Front
 
 Sin build: `index.html` carga `main.js`, que enruta por hash
-(`#sources/...`, `#workflows/<nombre>`, `#/config/<seccion>`, `#agente`,
-`#plugins`). Ninguna vista conoce un plugin por nombre: settings,
-colecciones y acciones se dibujan desde `GET /tools`. Sondeos: Sources
+(`#sources/...`, `#workflows/<nombre>`, `#/config/<seccion>[/<subvista>]`,
+`#agente`, `#plugins`). Ninguna vista conoce un plugin por nombre: settings,
+colecciones y acciones se dibujan desde `GET /tools`. Una sección que son dos
+pantallas se parte con `components/subvistas.js`, y la vista elegida va en la
+URL para que un enlace lleve a donde uno quiere. Sondeos: Sources
 (`runs/en-vuelo`, 1.5/5 s) y Workflows (lista, 5 s).
