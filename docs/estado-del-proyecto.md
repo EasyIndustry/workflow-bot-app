@@ -6,6 +6,16 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-21
 
+- **Núcleo v0.3.1-beta.9** (core#28): el catálogo declara `flow.ejecutar` y
+  `flow.retry_gate`. Los resuelve el executor y no son tools invocables —eso no
+  cambió—, pero ahora tienen manifest y salen por `registry.catalog()` marcados
+  `native`. La app no cambió una línea: el selector del editor nunca filtró,
+  armaba la lista con lo que viniera en `GET /tools`, así que aparecen solos con
+  su categoría y sus params. Lo que además arregla, y no estaba en el pedido: un
+  flujo que ya usaba `flow.retry_gate` se dibujaba con el cartel rojo de "no
+  instalado" —la tarjeta marca así a un nodo cuyo `fn` no está en el catálogo—,
+  y era falso. Verificado contra una instalación: los dos en el picker, la
+  tarjeta limpia y el flujo "sin problemas".
 - **Una Action declarada sobre una colección ahora tiene su botón en la fila.**
   El contrato del núcleo dice desde siempre que el botón de una `Action` con
   `resource` va en la fila del ABM, y la fila sólo tenía Editar y Eliminar: una
