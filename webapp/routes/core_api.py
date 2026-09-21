@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import contexto_agente, db_view, librerias, limites, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -1349,6 +1349,47 @@ def delete_resource_item(plugin: str, resource: str, key: str):
         raise HTTPException(404, str(exc)) from None
     _regenerar_manual()
     return {"ok": True}
+
+
+# ── Comparar contra otro Bot ────────────────────────────────────────────
+
+
+class DiffBody(BaseModel):
+    destino: str
+    destino_nombre: str = ""
+    que: str = "flujos"
+    plugin: str = ""
+    coleccion: str = ""
+    detalle: bool = False
+
+
+@router.post("/diff")
+async def diff(body: DiffBody):
+    """
+    Qué difiere entre esta instalación y otro Bot.
+
+    El origen es siempre este Bot y se lee de su propia base; del otro lado se
+    pide por HTTP. Ver `webapp/migracion.py` para por qué tiene que ser así y
+    por qué el diff no toca un secreto.
+
+    `run_in_threadpool` porque adentro hay un GET por flujo contra otra máquina
+    de la red: bloquear el loop dejaría la pantalla entera sin responder mientras
+    el otro Bot tarda o está apagado.
+    """
+    try:
+        return await run_in_threadpool(
+            migracion.comparar,
+            _instance,
+            destino_url=body.destino.strip(),
+            destino_nombre=body.destino_nombre.strip(),
+            que=body.que,
+            plugin=body.plugin.strip(),
+            coleccion=body.coleccion.strip(),
+            detalle=body.detalle,
+            url_propia=_url_app() or "",
+        )
+    except migracion.MigracionError as exc:
+        raise HTTPException(400, str(exc)) from None
 
 
 # ── Workflows ───────────────────────────────────────────────────────────
