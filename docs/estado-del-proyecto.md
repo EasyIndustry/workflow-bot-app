@@ -6,6 +6,16 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-21
 
+- **Una Action declarada sobre una colección ahora tiene su botón en la fila.**
+  El contrato del núcleo dice desde siempre que el botón de una `Action` con
+  `resource` va en la fila del ABM, y la fila sólo tenía Editar y Eliminar: una
+  Action así existía en el manifest y no se podía disparar desde ningún lado.
+  Corre sobre el item **guardado** —el núcleo lo recibe por su clave—, que es
+  lo que la distingue del "Probar" del formulario, y su resultado abre un modal
+  que dibuja la vista declarada. Si esa vista ofrece una acción de seguimiento,
+  reemplaza el contenido del mismo modal en vez de abrir otro encima.
+  Encontrado probando el conjunto contra el plugin `bots` real en dos Bots: su
+  `comparar` cuelga de la colección y no tenía botón en ninguna parte.
 - **Una Action de plugin puede traer su propia pantalla de resultado**
   (`outputs.vista`). Hasta acá un plugin podía declarar settings y colecciones y
   la pantalla se dibujaba sola, pero cuando hacía falta algo más —comparar

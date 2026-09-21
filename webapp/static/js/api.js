@@ -193,10 +193,16 @@ export const api = {
     pedir(`/resources/${codificar(plugin)}/${codificar(resource)}/${codificar(clave)}`,
           { metodo: "DELETE" }),
 
-  // Acciones sueltas de un plugin ("probar", "previsualizar"): no son parte de
-  // ningún run, las dispara una persona desde la pantalla del plugin.
-  ejecutarAccion: (plugin, action, params = {}) =>
-    pedir(`/actions/${codificar(plugin)}/${codificar(action)}`, { metodo: "POST", cuerpo: { params } }),
+  // Acciones de un plugin ("probar", "previsualizar", "comparar"): no son parte
+  // de ningún run, las dispara una persona desde la pantalla del plugin.
+  //
+  // `item` es la clave de un item ya guardado, para una Action declarada sobre
+  // una colección: el núcleo arma los params desde ese item y lo que venga en
+  // `params` pisa campo a campo. Corre sobre lo guardado, que es lo que la
+  // distingue del "Probar" del formulario, que corre sobre lo que hay escrito.
+  ejecutarAccion: (plugin, action, params = {}, item = null) =>
+    pedir(`/actions/${codificar(plugin)}/${codificar(action)}`,
+          { metodo: "POST", cuerpo: { params, item } }),
 
   // Fuentes de datos: viven en el resource `sources` del plugin `connections`
   // (webapp/connections/plugin.py) — no hay un endpoint propio de "fuentes".

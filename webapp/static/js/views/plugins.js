@@ -722,8 +722,14 @@ async function seccionResource(plugin, recurso) {
       },
     })),
     {
-      clave: "_acciones", label: "", ancho: "122px",
+      clave: "_acciones", label: "", ancho: accionesDeFila(plugin, recurso).length ? "210px" : "122px",
       render: (fila) => h("div", { style: { display: "flex", gap: "6px" } }, [
+        // Las Actions que el plugin declaró **sobre esta colección**. El
+        // contrato del núcleo dice que su botón va en la fila y no suelto, y
+        // hasta acá no se dibujaba en ningún lado: una Action con `resource`
+        // existía en el manifest y no tenía forma de dispararse.
+        ...accionesDeFila(plugin, recurso).map((accion) =>
+          botonDeFila(plugin, recurso, accion, fila, claveDe)),
         h("button", { class: "btn btn--chico", text: "Editar",
                       onClick: () => irA("plugins", plugin.name, recurso.name, String(fila[claveDe])) }),
         h("button", { class: "btn btn--chico", title: "Eliminar", style: { color: "var(--rojo)" },
@@ -823,6 +829,76 @@ function paramsParaAccion(form, accion, extrasForm) {
   }
   return params;
 }
+
+// ── Acciones sobre una fila ─────────────────────────────────────────────
+
+
+/** Las Actions que el plugin declaró sobre esta colección (`Action.resource`). */
+function accionesDeFila(plugin, recurso) {
+  return (plugin.actions || []).filter((a) => a.resource === recurso.name);
+}
+
+/**
+ * El botón de una Action sobre un item, con su resultado en un modal.
+ *
+ * El resultado va a un modal y no debajo de la tabla porque lo que devuelve
+ * puede ser una vista entera —una comparación con sus casillas— y meterla entre
+ * las filas dejaría dos tablas encimadas sin decir cuál es cuál.
+ *
+ * El núcleo recibe el item por su clave (`item`), no por sus campos: la Action
+ * corre sobre lo **guardado**, que es lo que la distingue del botón "Probar"
+ * del formulario. Así no hay forma de que corra contra algo que no está.
+ */
+function botonDeFila(plugin, recurso, accion, fila, claveDe) {
+  const clave = String(fila[claveDe]);
+
+  const abrir = () => {
+    const cuerpo = h("div", { class: "cargando", text: "Ejecutando…" });
+    let modal;
+    // Un solo modal para toda la secuencia: la acción de seguimiento de una
+    // vista —migrar lo tildado— reemplaza el contenido de éste en vez de abrir
+    // otro encima, que dejaría la comparación tapada detrás del resultado.
+    const correr = async (params = {}, cual = accion.name) => {
+      poner(cuerpo, h("div", { class: "cargando", text: "Ejecutando…" }));
+      // `item` sólo para la Action que está declarada **sobre** la colección.
+      // La de seguimiento que dispara una vista suele ser suelta —comparar
+      // cuelga de la fila, migrar no— y el núcleo rechaza un `item` en una
+      // Action que no está atada a ninguna: "no acepta `item`". Con el item
+      // pegado al botón y no a la Action, migrar fallaba justo al confirmar.
+      const declarada = (plugin.actions || []).find((a) => a.name === cual);
+      const item = declarada && declarada.resource ? clave : null;
+      try {
+        const resp = await api.ejecutarAccion(plugin.name, cual, params, item);
+        poner(cuerpo, dibujarResultadoDeAccion(resp.result, plugin, correr));
+      } catch (e) {
+        poner(cuerpo, aviso("error", "No se pudo ejecutar", e.message));
+      }
+    };
+    modal = abrirModal({
+      titulo: accion.label || accion.name,
+      sub: `${recurso.item_label || "Item"}: ${clave}`,
+      cuerpo,
+      acciones: [h("button", { class: "btn", text: "Cerrar", onClick: () => modal.cerrar() })],
+    });
+    correr();
+  };
+
+  return h("button", {
+    class: "btn btn--chico", text: accion.label || accion.name,
+    title: accion.doc || "",
+    style: accion.dangerous ? { color: "var(--rojo)" } : null,
+    onClick: () => {
+      if (!accion.dangerous) return abrir();
+      confirmar({
+        titulo: accion.label || accion.name,
+        texto: accion.doc || `Se ejecuta sobre "${clave}". No se puede deshacer desde acá.`,
+        botonTexto: "Sí, hacerlo",
+        alConfirmar: abrir,
+      });
+    },
+  });
+}
+
 
 // ── Acciones sueltas, y la vista que declaran ───────────────────────────
 
