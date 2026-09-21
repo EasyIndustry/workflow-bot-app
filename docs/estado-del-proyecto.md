@@ -4,6 +4,27 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-09-21
+
+- **Los campos `secret` de una colección ya no salen por la API** (#3).
+  `GET /resources/{plugin}/{resource}` y `.../{key}` los devolvían descifrados:
+  eran el único de los cuatro caminos de lectura que no los tapaba, contra lo
+  que dicen el docstring de `resource_items_masked` ("lo que puede salir por el
+  servidor MCP o cualquier otra API") y la regla del repo. La asimetría más
+  fuerte era contra `db_view.py`, que tapa las filas de `plugin_items` — la
+  misma tabla que esta ruta servía en claro. Sin autenticación y con el acceso
+  directo arrancando en `--red`, era legible desde cualquier máquina de la LAN.
+  Estaba **latente**: ningún plugin declara un campo `secret` todavía, ni los
+  del catálogo ni el `connections` de la app, así que no se filtró nada; lo
+  abría el primero que guardara un token en una colección en vez de en `env`.
+  Listar usa ahora `resource_items_masked` del núcleo y leer uno tapa con el
+  mismo criterio. El PUT conserva un secreto que llega en `None` —si no, la
+  pantalla, que ahora lee `None`, lo borraría al guardar— y `""` sigue
+  vaciándolo a propósito; su respuesta también va tapada, porque puede traer
+  uno que quien llamó no mandó. Los tests fallan contra el código anterior, que
+  es lo que los hace valer. Encontrado desde el repo de plugins evaluando una
+  migración entre Bots.
+
 ## 2026-09-20
 
 - **Config: dos o tres vistas adentro de cada panel** (`components/subvistas.js`).

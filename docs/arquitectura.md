@@ -56,7 +56,7 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `GET /tools`, `GET /plugins`, `POST /plugins/install`, `GET /plugins/catalog`, `POST /plugins/catalog/install` | plugins |
 | `GET /tools/<tool>/params-extra?<params>` | los params extra que ese tool acepta según lo que el nodo ya tiene elegido |
 | `GET /limites`, `PUT /limites/raices`, `PUT /limites/programas` | hasta dónde llega la instalación: carpetas y programas permitidos |
-| `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…) |
+| `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…). Los campos `secret` salen en `None`; un PUT que los manda así conserva el guardado, `""` lo vacía |
 | `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar) |
 | `GET /env`, `PUT /env/<N>` | variables y secretos |
 | `GET /updates`, `PUT /updates/config`, `GET /updates/releases`, `POST /updates/install/{tag,upload}`, `POST /updates/revert`, `POST /updates/restart` | actualizaciones |

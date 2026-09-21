@@ -1261,17 +1261,61 @@ def _store(plugin_name: str, resource_name: str):
     return _instance.resource_store(plugin_name, _resource(plugin_name, resource_name))
 
 
+def _sin_secretos(definicion, item: dict) -> dict:
+    """
+    El item con cada campo `secret` en `None`.
+
+    Mismo criterio que `Instance.resource_items_masked`, que es lo que el núcleo
+    deja salir por MCP —su docstring dice "o cualquier otra API"—. Se repite acá
+    porque el núcleo no tiene el equivalente para **un** item, y leer uno tiene
+    que tapar igual que listar: si no, la regla se cumple a medias y alcanza con
+    saberse la clave (#3). Cuando el núcleo lo tenga, esto se va.
+    """
+    secretos = {c.name for c in definicion.fields if c.secret}
+    if not secretos:
+        return item
+    return {clave: (None if clave in secretos else valor) for clave, valor in item.items()}
+
+
+def _con_los_secretos_guardados(definicion, store, key: str, item: dict) -> dict:
+    """
+    Un campo `secret` que llega en `None` conserva el valor que ya estaba.
+
+    Es la contracara de tapar al leer: la pantalla lee un item con el secreto en
+    `None` y lo vuelve a mandar así al guardar, así que sin esto cambiarle el
+    nombre a una conexión le borraría el token — el arreglo de #3 hecho a medias
+    es pérdida de datos.
+
+    `None` es "no me lo diste"; para vaciarlo de verdad hay que mandar `""`, que
+    es lo que manda un campo de texto borrado a mano. Distinguir los dos es lo
+    que deja seguir borrando un secreto a propósito.
+    """
+    secretos = {c.name for c in definicion.fields if c.secret}
+    faltantes = [c for c in secretos if item.get(c) is None]
+    if not faltantes:
+        return item
+    try:
+        anterior = store.read(key)
+    except ResourceError:
+        return item  # Es nuevo: no hay nada que conservar.
+    return {**item, **{c: anterior[c] for c in faltantes if anterior.get(c) is not None}}
+
+
 @router.get("/resources/{plugin}/{resource}")
 def list_resource(plugin: str, resource: str):
     """Items de una colección que administra un plugin (conexiones, comandos…)."""
     definicion = _resource(plugin, resource)
-    return {"resource": definicion.to_dict(), "items": _store(plugin, resource).list_items()}
+    return {
+        "resource": definicion.to_dict(),
+        "items": _instance.resource_items_masked(plugin, resource),
+    }
 
 
 @router.get("/resources/{plugin}/{resource}/{key}")
 def get_resource_item(plugin: str, resource: str, key: str):
+    definicion = _resource(plugin, resource)
     try:
-        return _store(plugin, resource).read(key)
+        return _sin_secretos(definicion, _store(plugin, resource).read(key))
     except ResourceError as exc:
         raise HTTPException(404, str(exc)) from None
 
@@ -1283,12 +1327,18 @@ class ResourceItem(BaseModel):
 @router.put("/resources/{plugin}/{resource}/{key}")
 def put_resource_item(plugin: str, resource: str, key: str, body: ResourceItem):
     """Crea o actualiza un item, validado contra el esquema del resource."""
+    definicion = _resource(plugin, resource)
+    store = _store(plugin, resource)
     try:
-        escrito = _store(plugin, resource).write(key, body.item)
+        escrito = store.write(key, _con_los_secretos_guardados(definicion, store, key, body.item))
     except ResourceError as exc:
         raise HTTPException(400, str(exc)) from None
     _regenerar_manual()
-    return escrito
+    # El núcleo devuelve lo escrito en claro a propósito —quien acaba de mandar
+    # un secreto tiene derecho a ver lo que puso—, pero acá puede venir uno que
+    # el que llamó no mandó: el que se conservó. Devolverlo sería la misma fuga
+    # por otra puerta, así que la respuesta se tapa igual que un GET.
+    return _sin_secretos(definicion, escrito)
 
 
 @router.delete("/resources/{plugin}/{resource}/{key}")
