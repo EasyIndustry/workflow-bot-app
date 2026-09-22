@@ -16,7 +16,11 @@ let _seqOpciones = 0;
 
 /** Los siete tipos de `ParamType`. Cualquier otro cae en texto. */
 function control(esq, valor, alCambiar) {
-  const comun = { class: "entrada", onInput: alCambiar };
+  // `placeholder` es el ejemplo del valor que el manifest declara para mostrar
+  // adentro del campo vacío (core#29): explica cómo se escribe, no qué es —eso
+  // es `doc`, que va abajo—. Hasta que el núcleo lo publique llega vacío y no
+  // se dibuja nada, que es lo mismo que hoy.
+  const comun = { class: "entrada", onInput: alCambiar, placeholder: esq.placeholder || "" };
 
   // Un param que declara de qué colección salen sus valores (`options_from`,
   // core#27): texto con buscador, **no** un `<select>`. La lista es una ayuda
@@ -78,7 +82,8 @@ function control(esq, valor, alCambiar) {
   }
 
   if (esq.multiline) {
-    return h("textarea", { class: "entrada entrada--area", onInput: alCambiar, value: valor ?? esq.default ?? "" });
+    return h("textarea", { class: "entrada entrada--area", onInput: alCambiar, value: valor ?? esq.default ?? "",
+                           placeholder: esq.placeholder || "" });
   }
 
   const claseExtra = esq.type === "path" ? " entrada--mono" : "";

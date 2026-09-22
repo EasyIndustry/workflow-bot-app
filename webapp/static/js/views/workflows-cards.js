@@ -339,6 +339,7 @@ function paramDelCatalogo(nodo, p, alCambiar, plugin, variables) {
     // input numérico no lo dejaría escribir.
     type: p.type === "json" || p.type === "bool" || p.type === "enum" ? p.type : "str",
     label: p.name, required: p.required, choices: p.choices, default: p.default,
+    placeholder: p.placeholder,
     // El param dice de qué colección salen sus valores y el campo la ofrece
     // como buscador: la tarjeta no sabe cuál es, la trae del manifest.
     options_from: plugin ? p.options_from : "",

@@ -6,6 +6,12 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **Un param con `placeholder` en el manifest se dibuja con su ejemplo adentro
+  del campo** (core#29, todavía sin implementar en el núcleo: el vendorizado
+  v0.3.1-beta.9 no lo tiene). La app lo lee de la entrada del catálogo en
+  `components/campo.js` y en la tarjeta del nodo; si no viene, el campo queda
+  como hoy. Los dos placeholders fijos que ya existían —el buscador de una
+  colección y el secreto configurado— siguen mandando sobre él.
 - **Las variables de una tarjeta se eligen de una lista al tipear `{`.** Había
   que acordarse de memoria el nombre exacto de cada salida: el helper las
   listaba, pero abajo de todo y sin decir cuál vale cuando dos nodos anteriores
