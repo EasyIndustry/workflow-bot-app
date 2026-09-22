@@ -11,20 +11,19 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
   app la rechaza y usar una unidad entera obliga a enumerar carpeta por
   carpeta. Cuando exista: sacar ese rechazo de `webapp/limites.py` y mostrar
   en Inicio qué queda negado.
-- **core#29**: `placeholder` en `Param`, el ejemplo del valor adentro del
-  campo vacío. La app ya lo dibuja si viene en el manifest (`components/campo.js`
-  y la tarjeta del nodo); mientras el núcleo no lo publique, no se ve nada.
-- **core#30**: elegir de qué nodo viene una salida (`{NODO.ruta}`) cuando dos
-  nodos anteriores dejan la misma. Hoy gana la del último que corrió y el
-  autocompletado de la tarjeta lo avisa. Cuando llegue: `opcionesDeVariables`
-  en `views/workflows-cards.js` ofrece también `{NODO.salida}` y el helper
-  deja de decir que no se puede.
 - Nada abierto que frene a la webapp: core#15 (`on_step`), #16 (root y
   plugins por defecto en el MCP) y #17 (tools de orientación) llegaron en
   v0.3.1-beta.1. Los issues quedan abiertos hasta verificarlos en la QA y
   cerrarlos desde allá.
 
 ## Webapp
+- **Resaltado de `{variables}` en el JSON de un payload**: hoy sólo en los
+  campos de una línea; el textarea envuelve líneas y el espejo tendría que
+  copiar ese envolvimiento (`components/resaltar-variables.js`).
+- **numpy en el runtime del `.exe`**: el núcleo v0.3.1-beta.10 lo declara como
+  dependencia (core#19) pero carga con un adapter nulo si falta; el runtime no
+  lo trae. Cuando un plugin lo necesite de verdad, sumarlo al build
+  (`installer/packaging/build_win.sh`) y publicar `runtime-release.json`.
 - **Librerías de plugins, lo que falta**: la pantalla Librerías no muestra
   las huérfanas (instaladas por un plugin ya desinstalado); un botón para
   subir wheels desde el navegador en vez de copiarlas a `wheels/`. El

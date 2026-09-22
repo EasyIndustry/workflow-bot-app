@@ -495,9 +495,10 @@ function paramLibre(nodo, clave, alCambiar, aceptado, variables) {
   return elemento;
 }
 
-// El núcleo todavía no resuelve `{NODO.salida}`: es core#30. Cuando llegue
-// vendorizado, esto pasa a true y la marca deja de ser ámbar.
-const NODO_CALIFICADO_SOPORTADO = false;
+// El núcleo resuelve `{NODO.salida}` desde v0.3.1-beta.10 (core#30). Si una
+// instalación corre un núcleo anterior con esta web app, la referencia queda
+// sin valor al correr; el dry run lo señala.
+const NODO_CALIFICADO_SOPORTADO = true;
 
 function opcionesDeResaltado(variables) {
   return { esNodo: (variables && variables.esNodo) || (() => false), nodoSoportado: NODO_CALIFICADO_SOPORTADO };
@@ -512,7 +513,8 @@ function opcionesDeResaltado(variables) {
  * escribe la tarjeta tiene que saberlo. Elegir el nodo (`{NODO.ruta}`) es
  * core#30; hasta que llegue, lo único honesto es mostrar quiénes la dejan.
  *
- * @returns {Array<{nombre: string, de: string[]}>}  `de` son los nombres visibles (o ids) de los nodos
+ * @returns {Array<{nombre: string, de: string[], nodos: string[]}>}  `de` son los nombres
+ *   visibles (o ids) de los nodos y `nodos` sus ids, en el mismo orden
  */
 function salidasAguasArriba(id, grafo, catalogo) {
   const porId = new Map((catalogo.tools || []).map((t) => [t.id, t]));
@@ -537,18 +539,36 @@ function salidasAguasArriba(id, grafo, catalogo) {
     if (!nodo || nodo.type !== "action") continue;
     const manifest = porId.get(nodo.fn);
     for (const o of (manifest && manifest.outputs) || []) {
-      if (!porNombre.has(o.name)) porNombre.set(o.name, { nombre: o.name, de: [] });
+      if (!porNombre.has(o.name)) porNombre.set(o.name, { nombre: o.name, de: [], nodos: [] });
       porNombre.get(o.name).de.push(nodo.display || nid);
+      porNombre.get(o.name).nodos.push(nid);
     }
   }
   return [...porNombre.values()];
 }
 
-/** "la deja Mover PDF", o "la dejan Mover PDF y Mover DXF · vale la del último que corra". */
+/** "la deja Mover PDF", o "la dejan Mover PDF y Mover DXF · así, la del último que corra". */
 function quienLaDeja(salida) {
   if (salida.de.length === 1) return `la deja ${salida.de[0]}`;
   const lista = salida.de.slice(0, -1).join(", ") + " y " + salida.de[salida.de.length - 1];
-  return `la dejan ${lista} · vale la del último que corra`;
+  return `la dejan ${lista} · así, la del último que corra`;
+}
+
+/**
+ * Las opciones de una salida: la plana, y una por nodo cuando la dejan varios
+ * (`{MOVER_PDF.ruta}` — "la ruta de Mover PDF"), que es la forma de elegir cuál
+ * (núcleo v0.3.1-beta.10, core#30). Con un solo nodo, la plana alcanza y la
+ * calificada sólo agregaría ruido a la lista.
+ */
+function opcionesDeSalida(salida) {
+  const opciones = [{ nombre: salida.nombre, detalle: quienLaDeja(salida) }];
+  if (salida.nodos.length > 1) {
+    salida.nodos.forEach((nid, i) => opciones.push({
+      nombre: `${nid}.${salida.nombre}`,
+      detalle: `la ${salida.nombre} de ${salida.de[i]}`,
+    }));
+  }
+  return opciones;
 }
 
 // Los nombres de Config cambian poco y la lista se abre con cada tecla: se
@@ -574,7 +594,7 @@ function nombresDeEnv() {
  * no están: un flujo corre contra cualquier fuente y no las conoce.
  */
 async function opcionesDeVariables(id, grafo, catalogo) {
-  const salidas = salidasAguasArriba(id, grafo, catalogo).map((s) => ({ nombre: s.nombre, detalle: quienLaDeja(s) }));
+  const salidas = salidasAguasArriba(id, grafo, catalogo).flatMap(opcionesDeSalida);
   return [...salidas, ...(await nombresDeEnv())];
 }
 
@@ -599,7 +619,7 @@ function variablesDisponibles(id, grafo, catalogo) {
       ? "Tipeá { en cualquier parámetro para elegirlas de una lista, con quién deja cada una."
       : "Ningún nodo anterior deja salidas. Las que aparecen son las que siempre están." }),
     ...repetidas.map((s) => h("div", { class: "campo__ayuda", style: { color: "var(--ambar)" }, text:
-      `{${s.nombre}} la dejan ${s.de.join(" y ")}: vale la del último que corra. Elegir de cuál todavía no se puede (núcleo, core#30).` })),
+      `{${s.nombre}} la dejan ${s.de.join(" y ")}: así, vale la del último que corra. Para elegir, ${s.nodos.map((n) => `{${n}.${s.nombre}}`).join(" o ")}.` })),
   ]);
 }
 

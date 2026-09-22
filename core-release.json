@@ -1,6 +1,6 @@
 {
-  "tag": "v0.3.1-beta.9",
-  "applied_at": 1790010966.2002892,
-  "source": "github:v0.3.1-beta.9",
-  "previous_tag": "v0.3.1-beta.8"
+  "tag": "v0.3.1-beta.10",
+  "applied_at": 1790112931.132346,
+  "source": "github:EasyIndustry/workflow-bot-core@v0.3.1-beta.10",
+  "previous_tag": "v0.3.1-beta.9"
 }

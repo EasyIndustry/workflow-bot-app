@@ -6,6 +6,21 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **Núcleo v0.3.1-beta.10 vendorizado: core#30, #29 y #19.** `{NODO.salida}`
+  elige entre dos nodos que dejan la misma salida (`merge_outputs` agrupa
+  además bajo el id del nodo; la plana sigue igual y gana si colisiona con un
+  id), `check_flow` valida que el nodo exista y corra antes, `Param.placeholder`
+  llega en el catálogo, y un port `geometry` con adapter nulo cuando no hay
+  numpy. La app hace lo que había quedado esperando: el autocompletado ofrece
+  `{LLAMAR_A.response}` y `{LLAMAR_B.response}` además de `{response}` cuando
+  la salida la dejan dos nodos ("la response de Llamar A"), el helper dice cómo
+  elegir en vez de que no se puede, y la marca en dos tonos pasa de ámbar a
+  azul (`NODO_CALIFICADO_SOPORTADO`). Verificado contra el repo: `check_flow`
+  acepta `{LLAMAR_A.response}` y rechaza `{AVISAR.response}` con "referencia a
+  AVISAR, que no corre antes en el flujo"; la lista muestra las diez opciones.
+  Los tests del núcleo que fallan en Windows (`test_boot`, uno de `doctor`,
+  uno de `instance`) ya fallaban con beta.9 en `backend.anterior/`.
+  Producción (192.168.3.26) ya corre beta.10 actualizado desde la pantalla.
 - **Las `{variables}` se ven marcadas dentro del campo mientras se escribe.**
   Un espejo detrás del input (`components/resaltar-variables.js`): el input
   queda arriba con el texto transparente y el cursor visible, y debajo una caja

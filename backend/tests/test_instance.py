@@ -286,7 +286,7 @@ def test_la_instancia_arma_registro_ports_y_stores(instance):
     """
     assert instance.registry.errors == []
     assert set(instance.registry.tool_ids) == {"core.log", "core.set_status", "core.wait"}
-    assert set(instance.registry.adapters) == {"http", "fs", "process", "clock", "browser", "window"}
+    assert set(instance.registry.adapters) == {"http", "fs", "process", "clock", "browser", "window", "geometry"}
 
 
 def test_los_adapters_inyectados_son_los_que_llegan_al_tool(demo_instance, adapters):
@@ -340,6 +340,58 @@ def test_diagnose_cruza_el_flujo_con_lo_instalado(instance):
     assert any("core.lgo" in d.message for d in diagnosticos)
     # Y sugiere el nombre bueno, que es lo que convierte el error en un arreglo.
     assert any("core.log" in d.message for d in diagnosticos)
+
+
+def test_check_graph_acepta_nodo_qualificado_a_un_nodo_anterior(demo_instance):
+    """
+    Issue #30: `{PRIMERO.destino}` referencia el id de un nodo anterior que
+    declara ese output -- no tiene que disparar ningún diagnóstico.
+    """
+    demo_instance.workflows.save_mmd(
+        "calificado",
+        'flowchart TD\n'
+        '    B(inicio)\n'
+        '    PRIMERO["demo.mover | origen=/a, destino=/b"]\n'
+        '    L["core.log | message={PRIMERO.destino}"]\n'
+        '    B --> PRIMERO\n'
+        '    PRIMERO --> L\n',
+    )
+    _, diagnosticos = demo_instance.diagnose("calificado")
+    assert diagnosticos == []
+
+
+def test_check_graph_marca_un_nodo_qualificado_que_no_corre_antes(demo_instance):
+    """Issue #30: `{TERCERO.x}` desde un nodo que corre antes que TERCERO."""
+    demo_instance.workflows.save_mmd(
+        "fuera_de_orden",
+        'flowchart TD\n'
+        '    B(inicio)\n'
+        '    SEGUNDO["core.log | message={TERCERO.destino}"]\n'
+        '    TERCERO["demo.mover | origen=/a, destino=/b"]\n'
+        '    B --> SEGUNDO\n'
+        '    SEGUNDO --> TERCERO\n',
+    )
+    _, diagnosticos = demo_instance.diagnose("fuera_de_orden")
+    assert any(
+        "TERCERO" in d.message and "no corre antes" in d.message for d in diagnosticos
+    )
+
+
+def test_check_graph_avisa_de_una_salida_que_el_nodo_no_declara(demo_instance):
+    """Issue #30: `{PRIMERO.algo_que_no_existe}` -- warning, no error."""
+    demo_instance.workflows.save_mmd(
+        "salida_mala",
+        'flowchart TD\n'
+        '    B(inicio)\n'
+        '    PRIMERO["demo.mover | origen=/a, destino=/b"]\n'
+        '    L["core.log | message={PRIMERO.algo_que_no_existe}"]\n'
+        '    B --> PRIMERO\n'
+        '    PRIMERO --> L\n',
+    )
+    _, diagnosticos = demo_instance.diagnose("salida_mala")
+    (d,) = diagnosticos
+    assert d.severity.value == "warning"
+    assert "algo_que_no_existe" in d.message
 
 
 def test_missing_config_solo_de_los_plugins_del_flujo(demo_instance):

@@ -50,6 +50,7 @@ Los ports con adapter incluido:
 | `window` | según el sistema operativo | `pywinauto` (Windows) / AT-SPI (Linux) |
 | `storage` | `SqliteStorageAdapter` | `sqlite3` |
 | `crypto` | `FernetCryptoAdapter` | `cryptography` |
+| `geometry` | `NullGeometryAdapter` (`available=False`) | — |
 
 `browser` maneja un navegador real (navegar, clickear, leer lo que la pantalla
 ya muestra) pero **no** sabe de sesiones: perfil persistente y login son
@@ -79,6 +80,16 @@ porque en UI Automation son cosas distintas: el estado de un checkbox vive en
 acceso al almacenamiento elegiría dónde persisten sus datos —exactamente lo que
 `Resource` existe para impedir— y uno con acceso al cifrado podría leer secretos
 que no le corresponden.
+
+`geometry` (issue #19) es "vacío" a propósito: el núcleo declara la forma
+(`nearest_on_surface`, punto más cercano en una superficie) pero nunca
+bundlea un adapter real detrás —ningún `trimesh` ni ninguna otra librería
+"curada" de geometría—. `build_default_adapters()` bindea siempre
+`NullGeometryAdapter`, con `available=False`, para que un plugin que pida
+este port pueda cargar igual (un port sin ningún adapter atado no carga) y
+falle explícito recién si un tool intenta usarlo de verdad. Una instalación
+que necesite cómputo geométrico escribe o instala su propio adapter y lo
+inyecta con `Instance(root, adapters={**build_default_adapters(), "geometry": ...})`.
 
 ## Escribir un plugin
 
@@ -154,6 +165,13 @@ params, porque un `{variable}` tiene que poder seguir resolviendo a cualquier
 valor. Un `options_from` que no nombra un `Resource` que el plugin declara
 se reporta al cargar, igual que un alias en conflicto: no impide que el tool
 ande, pero un typo no debería verse recién como un buscador vacío.
+
+Un `Param` también puede declarar `placeholder` (issue #29): un ejemplo del
+valor, para dibujar adentro del campo vacío (`Param("ruta", placeholder=
+r"D:\casos\AP962\stl")`). Convive con `doc` —`doc` explica qué es el param,
+`placeholder` muestra cómo se escribe— y, como `options_from`, es puramente
+informativo: no se valida contra él, no reemplaza a `default`, y viaja
+tal cual en el `to_dict()` que ve el catálogo.
 
 Un tool con `extra_params=True` puede además describir esos extras según lo
 que el nodo ya eligió (issue #27): `FunctionTool.describe_extra_params`, un
