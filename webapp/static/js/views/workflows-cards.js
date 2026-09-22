@@ -15,6 +15,7 @@
 import { h, poner, icono, ICONOS } from "../dom.js";
 import { api } from "../api.js";
 import { crearCampo } from "../components/campo.js";
+import { autocompletar } from "../components/autocompletar.js";
 
 /**
  * @param {object} grafo      el grafo mutable que edita la vista
@@ -247,13 +248,17 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
     ]),
   ]));
 
+  // Lo que este nodo puede interpolar, para el autocompletado de cada campo. Se
+  // calcula al abrir la lista y no acá, así refleja el grafo del momento.
+  const variables = () => opcionesDeVariables(id, grafo, catalogo);
+
   if (manifest) {
     partes.push(subtitulo("Parámetros", "salen del manifest del tool"));
     // De qué plugin es el tool: lo dice el catálogo, y hace falta para que un
     // param que declara su colección pueda ofrecerla.
     const plugin = (catalogo.plugins || []).find((p) => (p.tools || []).includes(manifest.id));
     for (const p of manifest.params || []) {
-      partes.push(paramDelCatalogo(nodo, p, alCambiar, plugin && plugin.name));
+      partes.push(paramDelCatalogo(nodo, p, alCambiar, plugin && plugin.name, variables));
     }
     if (!(manifest.params || []).length) {
       partes.push(nota("Este tool no declara parámetros."));
@@ -264,12 +269,12 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
       // Cuáles son depende de lo elegido en el propio nodo, así que se
       // preguntan y se dibujan aparte; ese bloque también se hace cargo de los
       // sobrantes, para no dibujar dos veces el mismo param.
-      extra = bloqueParamsExtra(nodo, manifest, alCambiar, plugin && plugin.name);
+      extra = bloqueParamsExtra(nodo, manifest, alCambiar, plugin && plugin.name, variables);
       partes.push(extra.elemento);
     } else {
       // Params que están en el nodo y el tool no declara. El diagnóstico los
       // reporta como ignorados; acá se pueden ver y borrar.
-      for (const parte of sobrantesDelNodo(nodo, manifest, [], alCambiar)) {
+      for (const parte of sobrantesDelNodo(nodo, manifest, [], alCambiar, variables)) {
         partes.push(parte);
       }
     }
@@ -324,7 +329,7 @@ function campoTexto(rotulo, valor, ayuda, alEscribir) {
  * asistente de fuentes — pero **todo se guarda como texto**: el DSL no tiene
  * tipos, y el valor puede ser `{una.interpolación}` en lugar de un número.
  */
-function paramDelCatalogo(nodo, p, alCambiar, plugin) {
+function paramDelCatalogo(nodo, p, alCambiar, plugin, variables) {
   const actual = (nodo.params || {})[p.name]
     ?? (p.aliases || []).map((a) => (nodo.params || {})[a]).find((v) => v !== undefined);
 
@@ -360,7 +365,18 @@ function paramDelCatalogo(nodo, p, alCambiar, plugin) {
   campo.elemento.querySelectorAll("input, textarea, select").forEach((el) => {
     el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", escribir);
   });
+  conAutocompletado(campo.elemento, variables);
   return campo.elemento;
+}
+
+/**
+ * Tipear `{` en cualquier campo de texto del param abre la lista de variables.
+ * Un campo con `<datalist>` (el que ofrece los items de una colección) queda
+ * afuera: el navegador ya le pone su propio desplegable y serían dos encimados.
+ */
+function conAutocompletado(raiz, variables) {
+  if (!variables) return;
+  raiz.querySelectorAll('input[type="text"]:not([list]), textarea').forEach((el) => autocompletar(el, variables));
 }
 
 /**
@@ -376,7 +392,7 @@ function paramDelCatalogo(nodo, p, alCambiar, plugin) {
  * Esta tarjeta sigue sin conocer un tool por nombre: le pregunta a cualquiera
  * que acepte extras y dibuja lo que venga, que para casi todos es nada.
  */
-function bloqueParamsExtra(nodo, manifest, alCambiar, plugin) {
+function bloqueParamsExtra(nodo, manifest, alCambiar, plugin, variables) {
   const caja = h("div", {});
   let pedido = 0;
   let ultima = null;
@@ -389,8 +405,8 @@ function bloqueParamsExtra(nodo, manifest, alCambiar, plugin) {
   function pintar() {
     poner(caja,
       descubiertos.length ? subtitulo("Parámetros de lo elegido", "los declara la conexión") : null,
-      ...descubiertos.map((p) => paramDelCatalogo(nodo, p, alCambiar, plugin)),
-      ...sobrantesDelNodo(nodo, manifest, descubiertos.map((p) => p.name), alCambiar));
+      ...descubiertos.map((p) => paramDelCatalogo(nodo, p, alCambiar, plugin, variables)),
+      ...sobrantesDelNodo(nodo, manifest, descubiertos.map((p) => p.name), alCambiar, variables));
   }
 
   async function refrescar() {
@@ -434,7 +450,7 @@ function bloqueParamsExtra(nodo, manifest, alCambiar, plugin) {
  * Params que están en el nodo y no los cubre nadie: ni el manifest ni lo que se
  * descubrió. El diagnóstico los reporta como ignorados; acá se ven y se borran.
  */
-function sobrantesDelNodo(nodo, manifest, descubiertos, alCambiar) {
+function sobrantesDelNodo(nodo, manifest, descubiertos, alCambiar, variables) {
   const cubiertos = new Set([
     ...(manifest.params || []).flatMap((p) => [p.name, ...(p.aliases || [])]),
     ...descubiertos,
@@ -444,14 +460,15 @@ function sobrantesDelNodo(nodo, manifest, descubiertos, alCambiar) {
   return [
     subtitulo("Parámetros no declarados",
       manifest.extra_params ? "los acepta este tool" : "el tool los ignora al ejecutar"),
-    ...sobrantes.map((clave) => paramLibre(nodo, clave, alCambiar, manifest.extra_params)),
+    ...sobrantes.map((clave) => paramLibre(nodo, clave, alCambiar, manifest.extra_params, variables)),
   ];
 }
 
-function paramLibre(nodo, clave, alCambiar, aceptado) {
+function paramLibre(nodo, clave, alCambiar, aceptado, variables) {
   const entrada = h("input", { class: "entrada entrada--mono", type: "text",
                                value: nodo.params[clave] ?? "",
                                onInput: (e) => { nodo.params[clave] = e.target.value; alCambiar({ redibujar: false }); } });
+  if (variables) autocompletar(entrada, variables);
   return h("div", { class: "campo" + (aceptado ? "" : " campo--falta") }, [
     h("div", { class: "campo__etiqueta" }, [
       h("div", { class: "campo__nombre mono", style: { fontSize: "11.5px" }, text: clave }),
@@ -469,10 +486,17 @@ function paramLibre(nodo, clave, alCambiar, aceptado) {
 }
 
 /**
- * Lo que este nodo puede interpolar: campos de la fila más salidas de los nodos
- * aguas arriba. Se calcula del grafo, no de una lista escrita a mano.
+ * Las salidas que dejan los nodos aguas arriba de `id`, agrupadas por nombre.
+ *
+ * Se calcula del grafo, no de una lista escrita a mano. Agrupadas porque el
+ * núcleo mezcla las salidas en un único diccionario por nombre: si dos nodos
+ * anteriores dejan `ruta`, `{ruta}` vale la del último que corrió, y quien
+ * escribe la tarjeta tiene que saberlo. Elegir el nodo (`{NODO.ruta}`) es
+ * core#30; hasta que llegue, lo único honesto es mostrar quiénes la dejan.
+ *
+ * @returns {Array<{nombre: string, de: string[]}>}  `de` son los nombres visibles (o ids) de los nodos
  */
-function variablesDisponibles(id, grafo, catalogo) {
+function salidasAguasArriba(id, grafo, catalogo) {
   const porId = new Map((catalogo.tools || []).map((t) => [t.id, t]));
   const entrantes = new Map();
   for (const a of grafo.edges || []) {
@@ -489,26 +513,75 @@ function variablesDisponibles(id, grafo, catalogo) {
     pila.push(...(entrantes.get(actual) || []));
   }
 
-  const salidas = [];
+  const porNombre = new Map();
   for (const nid of arriba) {
     const nodo = grafo.nodes[nid];
     if (!nodo || nodo.type !== "action") continue;
     const manifest = porId.get(nodo.fn);
     for (const o of (manifest && manifest.outputs) || []) {
-      salidas.push({ nombre: o.name, de: nodo.display || nid });
+      if (!porNombre.has(o.name)) porNombre.set(o.name, { nombre: o.name, de: [] });
+      porNombre.get(o.name).de.push(nodo.display || nid);
     }
   }
+  return [...porNombre.values()];
+}
+
+/** "la deja Mover PDF", o "la dejan Mover PDF y Mover DXF · vale la del último que corra". */
+function quienLaDeja(salida) {
+  if (salida.de.length === 1) return `la deja ${salida.de[0]}`;
+  const lista = salida.de.slice(0, -1).join(", ") + " y " + salida.de[salida.de.length - 1];
+  return `la dejan ${lista} · vale la del último que corra`;
+}
+
+// Los nombres de Config cambian poco y la lista se abre con cada tecla: se
+// piden una vez por rato, no por tecla.
+let _envCache = { cuando: 0, promesa: null };
+function nombresDeEnv() {
+  const ahora = Date.now();
+  if (!_envCache.promesa || ahora - _envCache.cuando > 30_000) {
+    _envCache = {
+      cuando: ahora,
+      promesa: api.env().then((r) => (r.items || []).map((i) => ({
+        nombre: `env.${i.name}`,
+        detalle: i.secret ? "secreto de Config" : "variable de Config",
+      }))).catch(() => []),
+    };
+  }
+  return _envCache.promesa;
+}
+
+/**
+ * Las opciones del autocompletado de un campo de este nodo: las salidas de
+ * arriba, con quién las deja, y los nombres de Config. Las columnas de la fila
+ * no están: un flujo corre contra cualquier fuente y no las conoce.
+ */
+async function opcionesDeVariables(id, grafo, catalogo) {
+  const salidas = salidasAguasArriba(id, grafo, catalogo).map((s) => ({ nombre: s.nombre, detalle: quienLaDeja(s) }));
+  return [...salidas, ...(await nombresDeEnv())];
+}
+
+/**
+ * Lo que este nodo puede interpolar: campos de la fila más salidas de los nodos
+ * aguas arriba. La misma lista que ofrece el autocompletado al tipear `{`.
+ */
+function variablesDisponibles(id, grafo, catalogo) {
+  const salidas = salidasAguasArriba(id, grafo, catalogo);
+  const repetidas = salidas.filter((s) => s.de.length > 1);
 
   return h("div", { style: { padding: "0 13px 11px" } }, [
     h("div", { class: "fichas" }, [
       h("span", { class: "ficha", title: "Cualquier columna de la fila de la fuente" }, ["{columna de la fila}"]),
       h("span", { class: "ficha", title: "Variables y secretos de Config" }, ["{env.CLAVE}"]),
-      ...salidas.map((s) => h("span", { class: "ficha", title: `La deja "${s.de}"` }, [`{${s.nombre}}`])),
+      ...salidas.map((s) => h("span", { class: "ficha", title: quienLaDeja(s) }, [
+        `{${s.nombre}}`,
+        s.de.length > 1 ? h("span", { style: { color: "var(--ambar)" }, text: ` ×${s.de.length}` }) : null,
+      ])),
     ]),
-    salidas.length
-      ? null
-      : h("div", { class: "campo__ayuda", text:
-          "Ningún nodo anterior deja salidas. Las que aparecen son las que siempre están." }),
+    h("div", { class: "campo__ayuda", text: salidas.length
+      ? "Tipeá { en cualquier parámetro para elegirlas de una lista, con quién deja cada una."
+      : "Ningún nodo anterior deja salidas. Las que aparecen son las que siempre están." }),
+    ...repetidas.map((s) => h("div", { class: "campo__ayuda", style: { color: "var(--ambar)" }, text:
+      `{${s.nombre}} la dejan ${s.de.join(" y ")}: vale la del último que corra. Elegir de cuál todavía no se puede (núcleo, core#30).` })),
   ]);
 }
 

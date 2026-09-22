@@ -6,6 +6,24 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **Las variables de una tarjeta se eligen de una lista al tipear `{`.** Había
+  que acordarse de memoria el nombre exacto de cada salida: el helper las
+  listaba, pero abajo de todo y sin decir cuál vale cuando dos nodos anteriores
+  dejan la misma. Ahora cualquier campo de parámetro (los declarados, los
+  descubiertos de una conexión, los no declarados, el JSON de un payload) abre
+  al tipear `{` un desplegable con las salidas de los nodos de arriba y los
+  nombres de Config, y cada opción dice de dónde sale: "la deja Mover PDF", o
+  "la dejan Llamar B y Llamar A · vale la del último que corra". Flechas, Enter
+  o Tab para insertar `{nombre}` entero, Esc para cerrar; se filtra mientras se
+  escribe. Es un componente propio (`components/autocompletar.js`), no un
+  `<datalist>`, porque ése completa el valor entero del campo y acá hay que
+  completar en el medio de `C:\salida\{intentos}.pdf`. Lo guardado sigue
+  siendo texto plano con sus llaves. El helper marca en ámbar las salidas
+  repetidas. Lo que no se puede todavía es elegir de qué nodo (`{NODO.ruta}`):
+  el núcleo mezcla las salidas por nombre y la del último que corre gana; es
+  core#30, y la lista ya está preparada para ofrecerlo cuando llegue. Tampoco
+  se ofrecen las columnas de la fila: un flujo corre contra cualquier fuente.
+  Verificado por CDP con un flujo de dos `connections.llamar` seguidos.
 - **El formulario de Acciones ofrece el buscador que el param declara.** Un
   `Param` con `options_from` nombra una colección del mismo plugin cuyos items
   son sus valores típicos, y el editor de flujos ya lo dibujaba como texto con

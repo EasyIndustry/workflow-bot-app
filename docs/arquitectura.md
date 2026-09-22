@@ -75,5 +75,7 @@ Sin build: `index.html` carga `main.js`, que enruta por hash
 `#agente`, `#plugins`). Ninguna vista conoce un plugin por nombre: settings,
 colecciones y acciones se dibujan desde `GET /tools`. Una sección que son dos
 pantallas se parte con `components/subvistas.js`, y la vista elegida va en la
-URL para que un enlace lleve a donde uno quiere. Sondeos: Sources
+URL para que un enlace lleve a donde uno quiere. Tipear `{` en un parámetro de
+la tarjeta de un nodo abre `components/autocompletar.js` con las salidas de los
+nodos de arriba (y quién deja cada una) y los nombres de Config. Sondeos: Sources
 (`runs/en-vuelo`, 1.5/5 s) y Workflows (lista, 5 s).
