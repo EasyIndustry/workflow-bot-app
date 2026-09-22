@@ -806,11 +806,23 @@ const ESTADO = {
   err: { clase: "badge badge--error", texto: "err" },
 };
 
-/** El flujo de una fila: el elegido a mano, o el de la fuente. */
+/**
+ * El flujo de una fila: el elegido a mano, el de la fuente, o —si ninguno— el
+ * único flujo que declara estar pensado para esta fuente (`%% source:`, núcleo
+ * v0.3.1-beta.11, core#31). Con dos o más declarados no se adivina: quedan
+ * primeros en el desplegable y se elige.
+ */
 function flujoDe(a, fuente, fila) {
   const caseId = claveDe(fuente, fila);
   if (a.flujoPorFila[caseId] !== undefined) return a.flujoPorFila[caseId];
-  return fuente.default_flow || "";
+  if (fuente.default_flow) return fuente.default_flow;
+  const propios = flujosParaLaFuente(fuente);
+  return propios.length === 1 ? propios[0].name : "";
+}
+
+/** Los flujos que declaran esta fuente en su cabecera. */
+function flujosParaLaFuente(fuente) {
+  return flujos.filter((w) => w.source === fuente.name);
 }
 
 function celdaBot(clave, fila, fuente, a, filas) {
@@ -851,6 +863,11 @@ function celdaBot(clave, fila, fuente, a, filas) {
       return h("span", { style: { color: "var(--texto-4)" },
                          title: "No hay ningún flujo guardado", text: "—" });
     }
+    // Primero los flujos pensados para esta fuente (core#31), después el resto.
+    // Sin ninguno declarado, la lista plana de siempre.
+    const propios = flujosParaLaFuente(fuente);
+    const otros = flujos.filter((w) => !propios.includes(w));
+    const opcion = (w) => h("option", { value: w.name, text: w.name });
     const selector = h("select", {
       class: "selector selector--chico",
       // No redibuja: cambiar el flujo de una fila no cambia nada más en la
@@ -858,7 +875,10 @@ function celdaBot(clave, fila, fuente, a, filas) {
       onChange: (e) => { a.flujoPorFila[caseId] = e.target.value; },
     }, [
       h("option", { value: "", text: "—" }),
-      ...flujos.map((w) => h("option", { value: w.name, text: w.name })),
+      ...(propios.length
+        ? [h("optgroup", { label: "Para esta fuente" }, propios.map(opcion)),
+           h("optgroup", { label: "Otros" }, otros.map(opcion))]
+        : flujos.map(opcion)),
     ]);
     selector.value = flujoDe(a, fuente, fila);
     return selector;

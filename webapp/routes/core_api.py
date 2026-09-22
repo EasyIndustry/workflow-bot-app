@@ -1616,6 +1616,11 @@ class WorkflowBody(BaseModel):
     folder: str = ""
     state: str = "enabled"
     description: str = ""
+    # Para qué fuente está pensado el flujo (núcleo v0.3.1-beta.11, core#31).
+    # Informativa: correr contra otra fuente sigue siendo válido. Es lo que le
+    # permite al editor ofrecer las columnas de la fila antes de la primera
+    # corrida, y a la grilla proponer el flujo para su fuente.
+    source: str = ""
 
 
 @router.put("/workflows/{name}")
@@ -1634,6 +1639,7 @@ def put_workflow(name: str, body: WorkflowBody):
             folder=body.folder,
             state=body.state,
             description=body.description,
+            source=body.source,
         )
     except StoreError as exc:
         raise HTTPException(400, str(exc)) from None

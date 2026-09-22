@@ -304,6 +304,7 @@ function contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila = 
 
   const caja = h("div", { style: { borderTop: "1px solid var(--borde)" } }, partes);
   if (extra) extra.escuchar(caja);
+  escucharDependencias(caja);
   return caja;
 }
 
@@ -350,12 +351,16 @@ function paramDelCatalogo(nodo, p, alCambiar, plugin, variables) {
     type: p.type === "json" || p.type === "bool" || p.type === "enum" ? p.type : "str",
     label: p.name, required: p.required, choices: p.choices, default: p.default,
     placeholder: p.placeholder,
-    // El param dice de qué colección salen sus valores y el campo la ofrece
-    // como buscador: la tarjeta no sabe cuál es, la trae del manifest.
+    // El param dice de dónde salen sus valores y el campo lo ofrece como
+    // buscador: la tarjeta no sabe cuál es, la trae del manifest. Si la lista
+    // depende de otro param (`core:resources:{plugin}`, core#32), se lee del
+    // nodo al momento de pedirla, y `escucharDependencias` la recarga cuando
+    // ese otro param cambia.
     options_from: plugin ? p.options_from : "",
     opciones: plugin && p.options_from
-      ? () => api.clavesDeColeccion(plugin, p.options_from)
+      ? () => api.opcionesDeParam(plugin, p.options_from, nodo.params || {})
       : null,
+    depende_de: api.dependenciaDeOpciones(p.options_from),
     doc: [p.doc, p.config_key ? `Si se deja vacío, sale de la configuración (${p.config_key}).` : ""]
       .filter(Boolean).join(" "),
   }, actual);
@@ -377,7 +382,33 @@ function paramDelCatalogo(nodo, p, alCambiar, plugin, variables) {
     el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", escribir);
   });
   conVariables(campo.elemento, variables);
+  // La tarjeta no arma un formulario: cada param es un campo suelto. Así que
+  // el que depende de otro se marca, y `escucharDependencias` lo recarga.
+  if (campo.recargarOpciones && campo.esquema.depende_de) {
+    campo.elemento.dataset.dependeDe = campo.esquema.depende_de;
+    campo.elemento.recargarOpciones = () => campo.recargarOpciones(nodo.params || {});
+    if ((nodo.params || {})[campo.esquema.depende_de]) campo.elemento.recargarOpciones();
+  }
   return campo.elemento;
+}
+
+/**
+ * Recarga las listas que dependen de otro param cuando algo de la tarjeta
+ * cambia. Los params escriben en `nodo.params` en su propio listener, que corre
+ * antes de que el evento suba hasta acá, así que la lista se pide con el valor
+ * nuevo. Se recargan todas las dependientes y no sólo la del param tocado: son
+ * una o dos por tarjeta y la lista sale de un catálogo guardado.
+ */
+function escucharDependencias(raiz) {
+  let timer = null;
+  const alTocar = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      raiz.querySelectorAll("[data-depende-de]").forEach((el) => el.recargarOpciones && el.recargarOpciones());
+    }, 250);
+  };
+  raiz.addEventListener("input", alTocar);
+  raiz.addEventListener("change", alTocar);
 }
 
 /**
@@ -629,10 +660,15 @@ function variablesDisponibles(id, grafo, catalogo, columnasDeLaFila = null) {
         fichaFila.replaceWith(...fila.columnas.map((c) =>
           h("span", { class: "ficha", title: `columna de la fila · ${fila.fuente}` + (c.ejemplo ? ` · ej. ${c.ejemplo}` : "") },
             [`{${c.nombre}}`])));
-        notaFila.textContent = `Columnas de "${fila.fuente}", la última fuente con la que corrió este flujo. `
-          + "Declarar la fuente en el flujo es core#31.";
+        notaFila.textContent = fila.declarada
+          ? `Columnas de "${fila.fuente}", la fuente declarada en Propiedades.`
+          : `Columnas de "${fila.fuente}", la última fuente con la que corrió este flujo. Se fija en Propiedades → Fuente.`;
+      } else if (fila && fila.existe === false) {
+        notaFila.style.color = "var(--ambar)";
+        notaFila.textContent = `La fuente "${fila.fuente}" no existe en esta instalación: sin columnas para ofrecer. `
+          + "Se cambia en Propiedades → Fuente.";
       } else if (!fila) {
-        notaFila.textContent = "Las columnas de la fila se ofrecen después de la primera corrida contra una fuente.";
+        notaFila.textContent = "Las columnas de la fila se ofrecen con la fuente de Propiedades, o después de la primera corrida contra una.";
       }
     }).catch(() => {});
   }
@@ -650,8 +686,11 @@ function variablesDisponibles(id, grafo, catalogo, columnasDeLaFila = null) {
     h("div", { class: "campo__ayuda", text: salidas.length
       ? "Tipeá { en cualquier parámetro para elegirlas de una lista, con quién deja cada una."
       : "Ningún nodo anterior deja salidas. Las que aparecen son las que siempre están." }),
+    // El id del nodo (`N3`) es lo que el núcleo resuelve, y casi nunca es lo
+    // que se ve en el diagrama: al lado va el nombre visible, para saber cuál es.
     ...repetidas.map((s) => h("div", { class: "campo__ayuda", style: { color: "var(--ambar)" }, text:
-      `{${s.nombre}} la dejan ${s.de.join(" y ")}: así, vale la del último que corra. Para elegir, ${s.nodos.map((n) => `{${n}.${s.nombre}}`).join(" o ")}.` })),
+      `{${s.nombre}} la dejan ${s.de.join(" y ")}: así, vale la del último que corra. Para elegir, `
+      + s.nodos.map((n, i) => `{${n}.${s.nombre}}` + (s.de[i] !== n ? ` (${s.de[i]})` : "")).join(" o ") + "." })),
   ]);
 }
 

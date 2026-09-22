@@ -62,6 +62,20 @@ async function pedir(ruta, { metodo = "GET", cuerpo, form } = {}) {
 
 const codificar = (s) => encodeURIComponent(s);
 
+// El catálogo de `GET /tools`, guardado un rato: las opciones que provee el
+// núcleo (`options_from="core:..."`) lo consultan por cada campo y cada tecla
+// en el campo del que dependen, y el catálogo no cambia mientras se escribe.
+let _catalogo = null;
+const VIGENCIA_CATALOGO = 30_000;
+async function catalogoReciente() {
+  if (!_catalogo || Date.now() - _catalogo.cuando > VIGENCIA_CATALOGO) {
+    const promesa = pedir("/tools");
+    _catalogo = { cuando: Date.now(), promesa };
+    promesa.catch(() => { _catalogo = null; });
+  }
+  return _catalogo.promesa;
+}
+
 export const api = {
   // Catálogo y salud
   tools: () => pedir("/tools"),
@@ -74,6 +88,41 @@ export const api = {
     const r = await pedir(`/resources/${codificar(plugin)}/${codificar(coleccion)}`);
     const clave = (r.resource && r.resource.key_field) || "name";
     return (r.items || []).map((i) => i[clave]).filter(Boolean);
+  },
+
+  // Las opciones de un param que declara `options_from`. Una colección del
+  // propio plugin (core#27): sus claves. Una fuente del núcleo, con el
+  // namespace `core:` (núcleo v0.3.1-beta.11, core#32): `core:plugins` son los
+  // plugins instalados y `core:resources:{plugin}` las colecciones del plugin
+  // que valga ese param en `valores` — por eso recibe lo que el formulario
+  // tiene cargado, y quien lo dibuja vuelve a pedir cuando ese campo cambia.
+  // Todo sale del catálogo de `GET /tools`; el núcleo no tiene un endpoint
+  // para esto porque la lista es una ayuda, no una validación: el valor puede
+  // ser una `{variable}` que recién se resuelve al correr.
+  //
+  // Un namespace que no se reconoce rechaza en vez de devolver vacío: el
+  // núcleo valida la forma de `core:...` al cargar pero no el nombre, así que
+  // `core:pluggins` pasa y se vería como un buscador mudo.
+  opcionesDeParam: async (plugin, optionsFrom, valores = {}) => {
+    if (!String(optionsFrom).startsWith("core:")) return api.clavesDeColeccion(plugin, optionsFrom);
+    const [espacio, argumento = ""] = optionsFrom.slice("core:".length).split(":");
+    const elegido = argumento.replace(/^\{(\w+)\}$/, (_, p) => String(valores[p] ?? ""));
+    const catalogo = await catalogoReciente();
+    const instalados = (catalogo.plugins || []).filter((p) => p.source !== "builtin");
+    if (espacio === "plugins") return instalados.map((p) => p.name);
+    if (espacio === "resources") {
+      const dueño = instalados.find((p) => p.name === elegido);
+      return dueño ? (dueño.resources || []).map((r) => r.name) : [];
+    }
+    throw new Error(`options_from "${optionsFrom}": el núcleo no ofrece "${espacio}"`);
+  },
+
+  // De qué otro param dependen las opciones (`core:resources:{plugin}` →
+  // "plugin"), o null. Un solo placeholder, un solo nombre: es la sintaxis que
+  // el núcleo valida al cargar el plugin.
+  dependenciaDeOpciones: (optionsFrom) => {
+    const m = /^core:[\w-]+:\{(\w+)\}$/.exec(optionsFrom || "");
+    return m ? m[1] : null;
   },
 
   // Los params extra que acepta un tool según lo que el nodo ya tenga cargado

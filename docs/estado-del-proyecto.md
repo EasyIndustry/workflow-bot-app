@@ -6,6 +6,31 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **Núcleo v0.3.1-beta.11 vendorizado: core#31 y core#32, y la app los usa.**
+  - *Un flujo declara su fuente* (`%% source:`, `Workflow.source`, columna
+    nueva en `workflows`). En la app: selector "Fuente" en Propiedades y en
+    Nuevo flujo, chip `fuente: X` en la cabecera (ámbar si esa fuente no existe
+    en la instalación: el flujo corre igual, pero sin columnas que ofrecer), y
+    el `PUT /workflows/{name}` lleva `source`. Las columnas de la fila salen
+    de la fuente declarada y, si no hay, de la última corrida como antes. En la
+    grilla de una fuente, el desplegable de flujo agrupa primero los pensados
+    para ella y, si es uno solo y la fuente no tiene flujo por defecto, lo
+    propone. Verificado en el server de desarrollo: helper "Columnas de
+    flujos-propios, la fuente declarada en Propiedades" con las seis columnas,
+    grilla con "Para esta fuente: prueba-columnas" preseleccionado.
+  - *Opciones del núcleo y dependientes* (`options_from="core:plugins"`,
+    `"core:resources:{plugin}"`). `api.opcionesDeParam` resuelve las dos
+    contra el catálogo de `GET /tools` (sin los `builtin`), `campo.js` expone
+    `recargarOpciones` y `crearFormulario` recarga la lista del campo que
+    declara `depende_de` cuando el otro cambia; la tarjeta del flujo hace lo
+    mismo escuchando la tarjeta entera. Un namespace que el núcleo no valida
+    (`core:pluggins` pasa el chequeo de carga) se ve en el placeholder del
+    campo en vez de como un buscador mudo. Verificado con el componente real:
+    `plugin=connections` → `sources, actions`; `conocimiento` → `notas`.
+  - El helper de salidas repetidas ahora dice `{N3.log_file} (Verificar log)`:
+    el id es lo que resuelve el núcleo y casi nunca coincide con el nombre visible.
+  - Suite de la webapp: 412 verdes, con `test_workflow_source.py` nuevo.
+
 - **El autocompletado ofrece las columnas de la fila, con un valor de ejemplo.**
   Un flujo no declara su fuente (core#31, abierto hoy), así que la app la
   infiere de la última corrida: `Run.source` dice contra qué fuente corrió y una

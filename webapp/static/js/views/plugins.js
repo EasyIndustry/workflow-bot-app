@@ -959,8 +959,17 @@ function seccionAcciones(plugin) {
  * los dé, es agregar la llamada — no cambiar esto.
  */
 function conBuscadores(plugin, params) {
+  // `options_from` puede ser una colección del plugin o una fuente del núcleo
+  // (`core:plugins`, `core:resources:{plugin}`; núcleo v0.3.1-beta.11,
+  // core#32). Cuál es y cómo se resuelve lo sabe `api`; acá sólo se le pasa lo
+  // que el formulario tiene cargado, porque la lista puede depender de otro
+  // campo, y se declara de cuál para que el formulario la recargue al cambiar.
   return (params || []).map((p) => (p.options_from
-    ? { ...p, opciones: () => api.clavesDeColeccion(plugin.name, p.options_from) }
+    ? {
+        ...p,
+        opciones: (valores) => api.opcionesDeParam(plugin.name, p.options_from, valores || {}),
+        depende_de: api.dependenciaDeOpciones(p.options_from),
+      }
     : p));
 }
 
