@@ -60,7 +60,7 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar). Su resultado puede traer `outputs.vista` y la pantalla lo dibuja: tabla, casillas y una acción de seguimiento |
 | `POST /diff`, `POST /migrar` | qué difiere contra otro Bot, y empujarle lo elegido. **Sólo desde la propia máquina**: la pantalla corre acá y un plugin que lo ofrezca corre adentro del propio Bot. `incluir_secretos` arranca en `false` — el item viaja igual y el destino conserva los suyos |
 | `POST /migrar/recibir` | el otro lado: abre el sobre cifrado y escribe. Que el sobre abra **es** la autenticación de esta ruta — la única autenticada |
-| `GET/POST/DELETE /emparejamientos`, `POST /emparejamientos/importar` | la clave compartida con otro Bot. **Sólo desde la propia máquina** (`127.0.0.1`): con esto abierto a la red, cualquiera pediría un código y el sobre dejaría de autenticar. La clave no sale nunca; el código se ve una vez |
+| `GET/POST/DELETE /emparejamientos`, `POST /emparejamientos/importar` | la clave compartida con otro Bot; la pantalla es Config → Emparejamientos. **Sólo desde la propia máquina** (`127.0.0.1`): con esto abierto a la red, cualquiera pediría un código y el sobre dejaría de autenticar. La clave no sale nunca; el código se ve una vez. Abrir el Bot por su IP, aun sentado en esa PC, también da 403 — la pantalla lo explica en vez de mostrar el error |
 | `GET /env`, `PUT /env/<N>` | variables y secretos |
 | `GET /updates`, `PUT /updates/config`, `GET /updates/releases`, `POST /updates/install/{tag,upload}`, `POST /updates/revert`, `POST /updates/restart` | actualizaciones |
 | `GET /agent`, `GET /agent/providers`, `WS /agent/terminal` | pestaña Agente |

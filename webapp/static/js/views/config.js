@@ -29,6 +29,7 @@ const SECCIONES = [
   { id: "diagnostico", label: "Diagnóstico", dibujar: dibujarDiagnostico },
   { id: "base", label: "Base de datos", dibujar: dibujarBase },
   { id: "seguridad", label: "Seguridad", dibujar: dibujarSeguridad },
+  { id: "emparejamientos", label: "Emparejamientos", dibujar: dibujarEmparejamientos },
   { id: "actualizaciones", label: "Actualizaciones", dibujar: dibujarActualizaciones },
 ];
 
@@ -82,11 +83,16 @@ function encabezado(titulo, sub) {
   ]);
 }
 
+/**
+ * Casi todo lo que se confirma salió bien y va en verde. Pisar un
+ * emparejamiento no: salió bien y además perdió algo, así que también se puede
+ * dejar `{tono, texto}` en vez de una cadena.
+ */
 function consumirConfirmacion() {
   if (!confirmacion) return null;
-  const texto = confirmacion;
+  const c = confirmacion;
   confirmacion = null;
-  return aviso("ok", texto, null);
+  return typeof c === "string" ? aviso("ok", c, null) : aviso(c.tono, c.texto, null);
 }
 
 // ── Secretos y variables ────────────────────────────────────────────────
@@ -852,6 +858,302 @@ function controlesDePolitica(datos, actual) {
 /** Una sección por su id. Por índice se rompe en silencio al reordenar la lista. */
 function seccionPorId(id) {
   return SECCIONES.find((s) => s.id === id);
+}
+
+// ── Emparejar con otro Bot ──────────────────────────────────────────────
+//
+// La clave compartida con la que viaja una migración (`webapp/emparejamiento.py`):
+// un lado genera el código y el otro lo pega. Ese copiado a mano es lo único
+// autenticado de esta API, así que la pantalla no puede negociarlo sola — no
+// hay, ni va a haber, un botón de "emparejar con aquel de la lista".
+//
+// Los cuatro endpoints contestan sólo a `127.0.0.1`, y eso incluye abrir el Bot
+// con la IP de su propia máquina: ahí el pedido sale con esa IP y el guardia lo
+// rechaza igual. Es el 403 que más desconcierta, así que se explica en vez de
+// mostrarse tal cual.
+
+function cabeceraEmparejar() {
+  return [
+    "Con qué otros Bots se puede migrar. Migrar mueve secretos por una red sin TLS, " +
+    "así que lo que viaja va adentro de un sobre cifrado con una clave ",
+    h("b", { text: "por par" }),
+    ", distinta de la llave local de cada Bot. Sin emparejamiento no se migra, y no hay " +
+    "camino en claro.",
+  ];
+}
+
+async function dibujarEmparejamientos() {
+  let items;
+  try {
+    items = (await api.emparejamientos()).items || [];
+  } catch (e) {
+    return [
+      encabezado("Emparejamientos", cabeceraEmparejar()),
+      e.status === 403
+        ? avisoSoloDesdeEsaMaquina()
+        : aviso("error", "No se pudo leer la lista", e.message),
+    ];
+  }
+
+  return [
+    encabezado("Emparejamientos", cabeceraEmparejar()),
+    consumirConfirmacion(),
+
+    aviso("info", "Uno genera el código y el otro lo pega", h("div", {}, [
+      "El Bot que va a ", h("b", { text: "recibir" }), " genera un código; el que va a ",
+      h("b", { text: "empujar" }), " lo pega, junto con la dirección del primero. Se copia " +
+      "a mano a propósito: es lo que ata la clave a alguien que puede ver las dos máquinas. " +
+      "Si se negociara sola al conectarse no habría autenticación ninguna. Hecho una vez, " +
+      "el mismo emparejamiento sirve para los dos sentidos.",
+    ])),
+
+    h("div", { class: "seccion" }, [
+      h("span", {}, ["EMPAREJADOS", h("span", {
+        class: "seccion__suave", text: " · la clave no se muestra, ni a quien la generó",
+      })]),
+    ]),
+    tablaEmparejamientos(items),
+
+    h("div", { style: { display: "flex", gap: "8px", marginTop: "10px" } }, [
+      h("button", {
+        class: "btn btn--primario", text: "Generar un código",
+        title: "Para cuando este Bot es el que recibe",
+        onClick: abrirGenerarEmparejamiento,
+      }),
+      h("button", {
+        class: "btn", text: "Pegar un código",
+        title: "Para cuando este Bot es el que empuja",
+        onClick: abrirImportarEmparejamiento,
+      }),
+    ]),
+
+    h("div", { class: "tabla__pie", style: { lineHeight: "1.55" }, text:
+      "Todo esto se hace sentado en cada máquina: los cuatro pedidos de esta pantalla sólo " +
+      "contestan desde el propio Bot. Un emparejamiento no depende de ningún plugin ni de " +
+      "ninguna colección — es de la instalación, y vive en data/, que queda fuera de lo que " +
+      "un flujo alcanza." }),
+  ];
+}
+
+/**
+ * El 403. Vale la pena explicarlo entero porque la causa más frecuente no es
+ * "estás en otra PC" sino "abriste el Bot por su dirección de red estando
+ * sentado en la PC del Bot", y ahí el mensaje del servidor manda a mover la
+ * silla en vez de a cambiar la URL.
+ */
+function avisoSoloDesdeEsaMaquina() {
+  const local = `http://localhost:${location.port || "8000"}`;
+  return aviso("falta", "Esto se hace sentado en la PC del Bot", h("div", {}, [
+    "Generar, pegar, listar y olvidar sólo contestan a un pedido que sale del propio Bot. " +
+    "Es lo que hace que el copiado a mano signifique algo: abiertos por la red, cualquiera " +
+    "pediría un código y quedaría emparejado solo.",
+    h("div", { style: { marginTop: "7px" } }, [
+      "Estás viendo esta pantalla como ", h("span", { class: "mono", text: location.origin }),
+      ". Hay que abrirla en esa máquina con ", h("span", { class: "mono", text: local }),
+      " — con la IP de la propia PC no alcanza, porque el pedido sale con esa IP y se " +
+      "rechaza igual.",
+    ]),
+  ]));
+}
+
+function tablaEmparejamientos(filas) {
+  const columnas = [
+    { clave: "nombre", label: "Nombre", ancho: "190px", peso: 500 },
+    {
+      // La dirección se compara tal cual contra el destino que pide la
+      // migración, así que se muestra entera y en mono: acá es donde se ve que
+      // sobra una barra, que falta el puerto o que es el nombre y no la IP.
+      clave: "url", label: "Dirección", mono: true,
+      render: (f) => f.url
+        ? h("span", { text: f.url })
+        : h("span", { style: { color: "var(--texto-4)" } },
+                     ["se completa cuando el otro Bot empuje"]),
+    },
+    {
+      clave: "creado_en", label: "Creado", ancho: "140px",
+      render: (f) => f.creado_en ? cuando(f.creado_en) : "—",
+    },
+    {
+      clave: "ultimo_uso", label: "Último uso", ancho: "140px",
+      render: (f) => f.ultimo_uso
+        ? cuando(f.ultimo_uso)
+        : h("span", { style: { color: "var(--texto-4)" }, text: "nunca" }),
+    },
+    {
+      clave: "_acciones", label: "", ancho: "contenido",
+      render: (f) => h("button", {
+        class: "btn btn--chico", text: "Olvidar", style: { color: "var(--rojo)" },
+        onClick: () => olvidarEmparejamiento(f),
+      }),
+    },
+  ];
+
+  return tabla(columnas, filas, {
+    vacio: "Todavía no hay ninguno: este Bot no puede migrarle a otro, ni recibir de otro.",
+  });
+}
+
+/** El lado que recibe. */
+function abrirGenerarEmparejamiento() {
+  const campoNombre = crearCampo({
+    name: "nombre", type: "str", label: "Nombre", required: true,
+    doc: "Para reconocerlo después en esta lista. El nombre de la otra máquina alcanza.",
+  }, "");
+
+  const error = h("div", { class: "aviso aviso--error", style: { display: "none", margin: "12px 16px 0" } });
+
+  const { cerrar } = abrirModal({
+    titulo: "Generar un código",
+    sub: "Para cuando este Bot es el que recibe. El código se pega en el que empuja.",
+    cuerpo: h("div", {}, [error, campoNombre.elemento]),
+    acciones: [
+      h("button", { class: "btn", text: "Cancelar", onClick: () => cerrar() }),
+      h("button", { class: "btn btn--primario", text: "Generar", onClick: async () => {
+        try {
+          const r = await api.generarEmparejamiento(campoNombre.leer().trim());
+          cerrar();
+          mostrarCodigoUnaVez(r);
+        } catch (e) {
+          error.style.display = "";
+          poner(error, h("div", { class: "aviso__cuerpo", text: e.message }));
+        }
+      } }),
+    ],
+  });
+
+  campoNombre.elemento.querySelector(".entrada")?.focus();
+}
+
+/**
+ * El código, una sola vez. No hay a dónde volver a buscarlo, y no es un olvido:
+ * lo forma la clave, y una clave que se relee por la API es una clave que sale
+ * por la API.
+ */
+function mostrarCodigoUnaVez(r) {
+  const copiar = h("button", { class: "btn btn--chico", text: "Copiar", onClick: async () => {
+    try {
+      await navigator.clipboard.writeText(r.codigo);
+      copiar.textContent = "Copiado";
+    } catch {
+      // Sin permiso de portapapeles: queda seleccionarlo a mano, que es para lo
+      // que el código se muestra entero y con `user-select: all`.
+      copiar.textContent = "Copialo a mano";
+    }
+  } });
+
+  const { cerrar } = abrirModal({
+    titulo: `Código de "${r.nombre}"`,
+    sub: "Se muestra una sola vez y no se puede volver a pedir.",
+    cuerpo: h("div", { style: { padding: "16px" } }, [
+      h("div", { class: "mono", style: {
+        fontSize: "12.5px", lineHeight: "1.6", wordBreak: "break-all", userSelect: "all",
+        padding: "10px 12px", borderRadius: "6px",
+        border: "1px solid var(--borde)", background: "var(--fondo-panel)",
+      }, text: r.codigo }),
+      h("div", { style: { marginTop: "10px" } }, [copiar]),
+      h("div", { style: { marginTop: "13px" } }, [
+        aviso("falta", "Va entero", h("div", {}, [
+          "Incluido todo lo que viene ", h("b", { text: "después del punto" }),
+          ": cortarlo ahí es el error más común, y del otro lado se ve como “ese código no " +
+          "es válido”. Si se pierde, se genera otro y se olvida éste.",
+        ])),
+      ]),
+      h("div", { class: "campo__ayuda", style: { marginTop: "13px", lineHeight: "1.55" } }, [
+        "En el otro Bot: Config → Emparejamientos → Pegar un código. Ahí, además del código, " +
+        "va la dirección de ", h("b", { text: "este" }), " Bot: la que se usa para abrirlo desde " +
+        "otra PC. El ícono de la bandeja la copia con “Copiar dirección para otras PCs”.",
+      ]),
+    ]),
+    acciones: [h("button", { class: "btn btn--primario", text: "Listo", onClick: () => cerrar() })],
+    alCerrar: async () => {
+      confirmacion = `Se generó "${r.nombre}". Falta pegar el código en el otro Bot.`;
+      await dibujarSeccion(seccionPorId("emparejamientos"));
+    },
+  });
+}
+
+/** El lado que empuja. */
+function abrirImportarEmparejamiento() {
+  const campoCodigo = crearCampo({
+    name: "codigo", type: "str", label: "Código", required: true,
+    doc: "El que generó el otro Bot, entero: los dos pedazos y el punto del medio.",
+  }, "");
+
+  const campoUrl = crearCampo({
+    name: "url", type: "str", label: "Dirección del otro Bot", required: true,
+    doc: "Con http:// y el puerto, igual que se abre ese Bot desde acá.",
+  }, "");
+
+  const campoNombre = crearCampo({
+    name: "nombre", type: "str", label: "Nombre",
+    doc: "Para reconocerlo en la lista. Vacío, queda la dirección.",
+  }, "");
+
+  const error = h("div", { class: "aviso aviso--error", style: { display: "none", margin: "12px 16px 0" } });
+
+  const { cerrar } = abrirModal({
+    titulo: "Pegar un código",
+    sub: "Para cuando este Bot es el que empuja.",
+    cuerpo: h("div", {}, [
+      error,
+      // El 90% de los intentos fallidos son esto, y el error que sale después
+      // —"no hay emparejamiento"— manda a buscar el problema al lugar
+      // equivocado: parece que faltó emparejar cuando lo que falló es una letra.
+      h("div", { style: { padding: "14px 16px 0" } }, [
+        aviso("info", "La dirección tiene que coincidir exacto", h("div", {}, [
+          "Cuando se pida la migración, el destino que se mande se compara contra esta " +
+          "dirección ", h("b", { text: "tal cual" }), ": sólo se ignora la barra del final. " +
+          "Si allá dice ", h("span", { class: "mono", text: "http://LUCAS:8000" }), " y acá ",
+          h("span", { class: "mono", text: "http://192.168.9.33:8000" }), ", no se encuentran, " +
+          "y lo que sale es “no hay emparejamiento con…”. Conviene copiar la dirección de " +
+          "donde vaya a salir el destino, y no escribirla de nuevo.",
+        ])),
+      ]),
+      campoCodigo.elemento, campoUrl.elemento, campoNombre.elemento,
+    ]),
+    acciones: [
+      h("button", { class: "btn", text: "Cancelar", onClick: () => cerrar() }),
+      h("button", { class: "btn btn--primario", text: "Guardar", onClick: async () => {
+        try {
+          const r = await api.importarEmparejamiento(
+            campoCodigo.leer().trim(), campoUrl.leer().trim(), campoNombre.leer().trim());
+          cerrar();
+          // Pisar uno que ya estaba es legítimo —es cómo se cambia la IP del
+          // otro Bot— pero el que se pierde hay que rehacerlo en las dos
+          // máquinas, así que no puede pasar en verde y sin nombre.
+          confirmacion = r.reemplazo
+            ? { tono: "falta", texto:
+                `Se guardó el emparejamiento con ${r.url}, y reemplazó al que estaba con el ` +
+                `mismo id: "${r.reemplazo.nombre}"${r.reemplazo.url ? ` (${r.reemplazo.url})` : ""}. ` +
+                "Ese ya no sirve; si hacía falta, hay que rehacerlo en las dos máquinas." }
+            : `Se guardó el emparejamiento con ${r.url}.`;
+          await dibujarSeccion(seccionPorId("emparejamientos"));
+        } catch (e) {
+          error.style.display = "";
+          poner(error, h("div", { class: "aviso__cuerpo", text: e.message }));
+        }
+      } }),
+    ],
+  });
+
+  campoCodigo.elemento.querySelector(".entrada")?.focus();
+}
+
+function olvidarEmparejamiento(f) {
+  confirmar({
+    titulo: `Olvidar "${f.nombre}"`,
+    texto:
+      "Este Bot deja de poder migrarle a ése, y de poder recibir lo que ése empuje. La clave " +
+      "se borra de acá y no se puede recuperar: para volver atrás hay que emparejarlos de " +
+      "nuevo, generando un código y pegándolo, sentado en cada una de las dos máquinas. Del " +
+      "otro lado el emparejamiento sigue estando: olvidarlo allá es hacerlo allá.",
+    botonTexto: "Olvidar",
+    alConfirmar: async () => {
+      await api.olvidarEmparejamiento(f.id);
+      confirmacion = `Se olvidó el emparejamiento "${f.nombre}".`;
+      await dibujarSeccion(seccionPorId("emparejamientos"));
+    },
+  });
 }
 
 // ── Actualizaciones del núcleo y de la web app ──────────────────────────

@@ -166,6 +166,23 @@ export const api = {
   guardarProgramas: (modo, ejecutables) =>
     pedir("/limites/programas", { metodo: "PUT", cuerpo: { modo, ejecutables } }),
 
+  // Emparejamientos: la clave compartida con la que viaja una migración, una
+  // por Bot del otro lado (webapp/emparejamiento.py). La clave no sale nunca,
+  // ni para mostrarla; `generar` devuelve el código una sola vez.
+  //
+  // Los cuatro contestan sólo a un pedido que sale de la propia máquina, así
+  // que un 403 acá significa "estás operando el Bot desde otra PC" y no que
+  // algo salió mal. Quien los llama tiene que distinguirlo.
+  emparejamientos: () => pedir("/emparejamientos"),
+  generarEmparejamiento: (nombre) =>
+    pedir("/emparejamientos", { metodo: "POST", cuerpo: { nombre } }),
+  // `url` se compara tal cual contra la dirección que pide la migración: no se
+  // normaliza más allá de la barra final, así que es lo que más falla.
+  importarEmparejamiento: (codigo, url, nombre = "") =>
+    pedir("/emparejamientos/importar", { metodo: "POST", cuerpo: { codigo, url, nombre } }),
+  olvidarEmparejamiento: (id) =>
+    pedir(`/emparejamientos/${codificar(id)}`, { metodo: "DELETE" }),
+
   // Actores: quién ejecuta y qué puede. Identidad y política, no autenticación.
   // Sin `borrar`: la baja es lógica (enabled=false), porque los runs apuntan al
   // actor por nombre.

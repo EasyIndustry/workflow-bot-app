@@ -6,6 +6,23 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **Emparejar dos Bots se puede hacer desde la app.** Los cuatro endpoints
+  estaban desde el 20/09 y ningún JS los llamaba: la única forma de emparejar
+  era un `Invoke-RestMethod` a mano en las dos máquinas, y quien intentaba
+  migrar chocaba con "No hay emparejamiento con…" sin nada a mano para
+  resolverlo. Config → Emparejamientos lista con quién habla este Bot, genera
+  el código (el lado que recibe), pega uno (el que empuja) y olvida. El código
+  se muestra una sola vez, con el aviso de que va entero: cortarlo en el punto
+  es el error más común y del otro lado se lee como "ese código no es válido".
+  Pegar avisa que la dirección se compara **tal cual** contra el destino que
+  pida la migración, que es lo que hace fallar casi todos los intentos; y si el
+  código pisa un emparejamiento que ya estaba, la pantalla lo dice en ámbar y
+  nombra al que se perdió, porque rehacerlo cuesta dos máquinas. Los cuatro
+  pedidos son loopback-only, así que operando el Bot desde otra PC la pantalla
+  explica el 403 en vez de mostrarlo — incluido el caso que más desconcierta:
+  abrirlo por la IP de su propia máquina tampoco alcanza. Verificado por CDP
+  contra la app: el recorrido entero, el código cortado, el reemplazo, y el 403
+  real entrando por `192.168.9.78`. Pedido por la sesión del plugin `bots`.
 - **El puerto del que empuja viaja adentro del sobre.** Al recibir una
   migración, el destino anotaba al otro Bot como `http://<su ip>:8000`, con el
   puerto escrito a mano: si ese Bot escuchaba en otro, quedaba anotada una
