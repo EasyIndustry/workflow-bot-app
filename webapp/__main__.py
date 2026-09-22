@@ -125,16 +125,23 @@ def ejecutable_propio() -> str:
         return sys.executable
 
 
-def _raiz_del_bot_en(url: str) -> Path | None:
+def _quien_escucha(url: str) -> tuple[str, Path | None]:
     """
-    ¿Lo que está escuchando ahí es un Bot, y de qué instalación?
+    Qué hay del otro lado del puerto ocupado.
 
-    Cambia qué hacer: si es el Bot de **esta** instalación, abrir la pantalla
-    es exactamente lo que quien hizo doble clic esperaba; si es otro Bot u
-    otro programa, hay que arrancar en otro puerto. Se pregunta por una ruta
-    de la API y no por la página, que la podría estar sirviendo cualquier
-    cosa. `None` si no es un Bot o no contesta.
+    Devuelve `("bot", raiz)` si contesta como un Bot; `("otro", None)` si es
+    otro programa —un HTTP sin esa ruta, algo que no habla HTTP, una
+    respuesta que no es JSON—; y `("desconocido", None)` si es HTTP pero no
+    pudo decir quién es: tardó más de 2,5 s o contestó 5xx.
+
+    Los tres se distinguen a propósito. Antes "no contestó" y "no es un Bot"
+    eran lo mismo, y el Bot de **esta misma instalación** tardando en
+    arrancar o con la base ocupada se tomaba por "otro programa": se buscaba
+    otro puerto y quedaban dos Bots sobre el mismo `data/`, que es
+    exactamente lo peor que puede pasar acá. Se pregunta por una ruta de la
+    API y no por la página, que la podría estar sirviendo cualquier cosa.
     """
+    import http.client
     import json
     import urllib.error
     import urllib.request
@@ -142,9 +149,19 @@ def _raiz_del_bot_en(url: str) -> Path | None:
     try:
         with urllib.request.urlopen(f"{url}/api/core/overview", timeout=2.5) as r:
             raiz = json.load(r).get("root")
-    except (OSError, ValueError, urllib.error.URLError):
-        return None
-    return Path(raiz) if isinstance(raiz, str) and raiz else None
+    except urllib.error.HTTPError as exc:
+        return ("desconocido" if exc.code >= 500 else "otro"), None
+    except TimeoutError:
+        return "desconocido", None
+    except urllib.error.URLError as exc:
+        return ("desconocido" if isinstance(exc.reason, TimeoutError) else "otro"), None
+    except (OSError, ValueError, http.client.HTTPException):
+        # Un servidor que no habla HTTP llega como BadStatusLine, que no es
+        # OSError: sin atraparlo el lanzador moría con un traceback.
+        return "otro", None
+    if isinstance(raiz, str) and raiz:
+        return "bot", Path(raiz)
+    return "otro", None
 
 
 def _misma_instalacion(a: Path, b: Path) -> bool:
@@ -159,6 +176,10 @@ def _misma_instalacion(a: Path, b: Path) -> bool:
 # alcanza para cualquier cantidad razonable de Bots y programas en una PC, y
 # preguntar por cada uno cuesta un connect rechazado al instante.
 PUERTOS_A_PROBAR = 50
+
+# Cuánto se insiste con algo que ocupa el puerto y no dice quién es. Es lo que
+# tarda, con margen, un Bot en levantar sobre una instalación grande.
+ESPERA_DESCONOCIDO = 8.0
 
 
 def _siguiente_puerto_libre(desde: int, cuantos: int = PUERTOS_A_PROBAR) -> int | None:
@@ -192,17 +213,39 @@ def _decidir_puerto(pedido: int | None, raiz: Path) -> tuple[str, int, str]:
     wizard, que ya buscó uno libre; el reinicio, que tiene que volver donde
     está el navegador; alguien desde una consola). Ahí un puerto ocupado por
     otra cosa sigue siendo un error que se avisa.
+
+    La espera de ocho segundos a que el puerto se libere es sólo con `--port`:
+    existe para el reinicio, donde el proceso anterior todavía está soltando
+    el socket, y el reinicio siempre lo pasa. Sin `--port` lo que ocupa el
+    puerto es permanente, y esperar era un doble clic que tardaba ocho
+    segundos en abrir la pantalla o en irse a otro puerto, sin decir nada.
     """
     puerto = pedido if pedido is not None else PUERTO_POR_DEFECTO
-    if _esperar_puerto_libre(puerto):
+    libre = _esperar_puerto_libre(puerto) if pedido is not None else _puerto_libre(puerto)
+    if libre:
         return "arrancar", puerto, ""
 
     url = f"http://127.0.0.1:{puerto}"
-    raiz_ahi = _raiz_del_bot_en(url)
-    if raiz_ahi is not None and _misma_instalacion(raiz_ahi, raiz):
+    quien, raiz_ahi = _quien_escucha(url)
+    if quien == "desconocido":
+        # HTTP que no pudo decir quién es: puede ser este mismo Bot levantando
+        # o con la base ocupada. Se insiste un rato, y si sigue sin contestar
+        # no se arranca otro sobre el mismo data/: se avisa y se sale.
+        limite = time.monotonic() + ESPERA_DESCONOCIDO
+        while quien == "desconocido" and time.monotonic() < limite:
+            time.sleep(0.5)
+            quien, raiz_ahi = _quien_escucha(url)
+        if quien == "desconocido":
+            return "fallar", puerto, (
+                f"En el puerto {puerto} hay algo que no termina de contestar. Si es un Bot que está "
+                f"arrancando, esperá un momento y volvé a abrirlo; si está colgado, cerralo desde el ícono "
+                f"de la bandeja o el Administrador de tareas (Bot.exe).\n\n"
+                f"Si es otro programa, abrí Bot en otro puerto con --port."
+            )
+    if quien == "bot" and raiz_ahi is not None and _misma_instalacion(raiz_ahi, raiz):
         return "abrir", puerto, f"Bot ya está abierto en {url}; se abre la pantalla."
 
-    ocupante = f"otro Bot ({raiz_ahi})" if raiz_ahi is not None else "otro programa"
+    ocupante = f"otro Bot ({raiz_ahi})" if quien == "bot" else "otro programa"
     if pedido is not None:
         return "fallar", puerto, (
             f"El puerto {puerto} está ocupado por {ocupante}, así que Bot no puede abrir ahí.\n\n"

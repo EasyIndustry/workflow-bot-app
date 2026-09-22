@@ -1010,8 +1010,11 @@ function dibujarVista(vista, plugin, correr) {
   const seleccion = vista.seleccion || null;
   const elegidas = new Set();
 
+  // `ancho` viene crudo de la Vista que armó el plugin: un largo CSS. El
+  // "contenido" de la tabla queda afuera a propósito: sólo alinea cuando cada
+  // fila dibuja lo mismo (una botonera), y acá cada fila dibuja su texto.
   const columnas = (vista.columnas || []).map((c) => ({
-    clave: c.campo, label: c.label || c.campo, ancho: c.ancho || null,
+    clave: c.campo, label: c.label || c.campo, ancho: c.ancho && c.ancho !== "contenido" ? c.ancho : null,
     render: (fila) => {
       const v = fila[c.campo];
       if (v === undefined || v === null || v === "") return "—";

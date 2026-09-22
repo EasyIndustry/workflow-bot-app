@@ -122,22 +122,20 @@ def direccion_red() -> str | None:
     Primero se le pregunta a la tabla de rutas por dónde saldría un paquete
     hacia afuera: ésa es la interfaz de verdad, y descarta solas las virtuales
     (VirtualBox, WSL, Hyper-V) que `gethostbyname(gethostname())` mezcla con
-    la real. Se prueba con un destino de cada rango privado y no con uno
-    solo, porque una red sin puerta de enlace —una PC de planta sin internet,
-    que es el caso normal de Bot— no tiene por dónde salir hacia `10.x` si su
-    red es `192.168.x`, y con un solo destino esto decía "sin red" en una
-    máquina que estaba en la red.
+    la real. Con una puerta de enlace, cualquier destino sirve.
 
-    Si aun así no hay ruta, se cae a las direcciones de los adaptadores,
-    prefiriendo las de una red de oficina. Peor que la tabla de rutas —puede
-    elegir una virtual—, pero mucho mejor que no ofrecer nada: hasta acá, la
-    única dirección que quedaba a la vista era el 127.0.0.1 de "Abrir Bot", y
-    era la que terminaba copiada.
+    Sin puerta de enlace —una PC de planta sin internet, que es el caso normal
+    de Bot— no hay ruta hacia ningún destino de afuera, ni siquiera hacia una
+    dirección del mismo rango privado si cae fuera de la subred, y esto decía
+    "sin red" en una máquina que estaba en la red. Ahí se cae a las
+    direcciones de los adaptadores, prefiriendo las de una red de oficina.
+    Peor que la tabla de rutas —puede elegir una virtual—, pero mucho mejor
+    que no ofrecer nada: hasta acá, la única dirección que quedaba a la vista
+    era el 127.0.0.1 de "Abrir Bot", y era la que terminaba copiada.
     """
-    for destino in ("10.255.255.255", "192.168.255.255", "172.31.255.255", "8.8.8.8"):
-        ip = _ip_de_salida_hacia(destino)
-        if ip:
-            return ip
+    ip = _ip_de_salida_hacia("10.255.255.255")
+    if ip:
+        return ip
     utiles = sorted((ip for ip in _ips_de_los_adaptadores() if _es_util(ip)), key=_prefiere_lan)
     return utiles[0] if utiles else None
 

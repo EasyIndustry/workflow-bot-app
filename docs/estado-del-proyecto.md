@@ -64,7 +64,13 @@ desarrollo o la PC de un cliente), no sólo con tests.
   se respeta y ocupado sigue siendo error: el wizard ya eligió uno libre y el
   reinicio tiene que volver adonde está el navegador. Verificado en esta
   máquina con la QA en el 8000: el Bot del repo avisó "ocupado por otro Bot
-  (D:\User\Bot)" y levantó en el 8001 con su propia raíz.
+  (D:\User\Bot)" y levantó en el 8001 con su propia raíz. Una revisión
+  adversarial antes del release encontró dos cosas y se corrigieron: lo que
+  ocupa el puerto y no dice quién es (HTTP que tarda o contesta 5xx, que puede
+  ser este mismo Bot levantando) ya no se toma por "otro programa" —se insiste
+  ocho segundos y, si sigue así, se avisa y no se arranca un segundo Bot sobre
+  el mismo `data/`—; y la espera de ocho segundos a que el puerto se libere
+  quedó sólo con `--port`, que es el reinicio: el doble clic decide al instante.
 - **La botonera de una colección ya no sale recortada.** En Plug ins → Bots
   conocidos, "Probar", "Comparar contenido", "Editar" y el tacho no entraban
   en la columna de acciones, que tenía 210px fijos y ocultaba el resto. Cuántos
