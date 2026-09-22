@@ -86,6 +86,11 @@ python -m pytest webapp installer -q
 ```
 
 Contra una instalación: `python -m webapp --root C:\...\Bot --port 8010`.
+Sin `--port` arranca en el 8000 y, si está ocupado, en el siguiente libre
+(hasta 50 más arriba); el puerto elegido sale en la consola o en `webapp.log`
+y en el ícono de la bandeja. Si en el 8000 está el Bot de **esta misma**
+instalación, no arranca otro: abre la pantalla de ése. Con `--port` el puerto
+se respeta y un puerto ocupado es un error que se avisa.
 Para probar la UI sin mirar: Chrome headless por CDP (ver un ejemplo en el
 historial de commits; `--headless=new --remote-debugging-port`).
 

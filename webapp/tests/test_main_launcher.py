@@ -200,3 +200,82 @@ def test_un_ejecutable_que_ya_se_llama_bot_no_se_vuelve_a_copiar(tmp_path, monke
     monkeypatch.setattr(lanzador.sys, "executable", str(propio))
 
     assert lanzador.ejecutable_propio() == str(propio)
+
+
+# ── Puerto ocupado: buscar otro, salvo que sea el Bot de esta misma instalación ──
+
+
+def test_el_siguiente_puerto_libre_saltea_al_que_tiene_un_servidor():
+    import socket
+
+    with socket.socket() as servidor:
+        servidor.bind(("127.0.0.1", 0))
+        servidor.listen(1)
+        ocupado = servidor.getsockname()[1]
+        elegido = lanzador._siguiente_puerto_libre(ocupado, cuantos=5)
+        assert elegido is not None and elegido != ocupado and ocupado < elegido < ocupado + 5
+
+
+def test_sin_rango_libre_no_devuelve_nada(monkeypatch):
+    monkeypatch.setattr(lanzador, "_puerto_libre", lambda p: False)
+    assert lanzador._siguiente_puerto_libre(8001, cuantos=3) is None
+
+
+def _puerto_ocupado_por(monkeypatch, raiz_del_otro):
+    """El 8000 está tomado; `raiz_del_otro` dice por quién (None: otro programa)."""
+    monkeypatch.setattr(lanzador, "_esperar_puerto_libre", lambda p, *a: p != 8000)
+    monkeypatch.setattr(lanzador, "_raiz_del_bot_en", lambda url: raiz_del_otro)
+    monkeypatch.setattr(lanzador, "_siguiente_puerto_libre", lambda desde, *a: desde)
+
+
+def test_sin_port_y_con_otro_programa_en_el_8000_arranca_en_el_siguiente(tmp_path, monkeypatch):
+    """
+    Antes salía un cartel pidiendo cerrar el otro programa o elegir puerto a
+    mano. Quien hizo doble clic en el acceso directo quiere el Bot, no un
+    número de puerto.
+    """
+    _puerto_ocupado_por(monkeypatch, None)
+    accion, puerto, mensaje = lanzador._decidir_puerto(None, tmp_path)
+    assert (accion, puerto) == ("arrancar", 8001)
+    assert "8000" in mensaje and "8001" in mensaje and "otro programa" in mensaje
+
+
+def test_sin_port_y_con_otro_bot_en_el_8000_no_abre_el_ajeno(tmp_path, monkeypatch):
+    """
+    Lo que se veía en la máquina de desarrollo: el 8000 con el Bot de otra
+    instalación, doble clic en el acceso directo de ésta, y se abría la
+    pantalla del otro —con sus datos— como si fuera el propio. Después no se
+    sabía cuál cerrar. Otro Bot es otro programa: se arranca en otro puerto.
+    """
+    otra = tmp_path / "otra-instalacion"
+    otra.mkdir()
+    _puerto_ocupado_por(monkeypatch, otra)
+    accion, puerto, mensaje = lanzador._decidir_puerto(None, tmp_path / "esta")
+    assert (accion, puerto) == ("arrancar", 8001)
+    assert "otro Bot" in mensaje
+
+
+def test_el_bot_de_esta_misma_instalacion_ya_abierto_se_abre_en_pantalla(tmp_path, monkeypatch):
+    # Aunque la raíz venga escrita distinto: mayúsculas, un `..` en el medio.
+    _puerto_ocupado_por(monkeypatch, tmp_path / "x" / ".." / "esta")
+    (tmp_path / "esta").mkdir()
+    accion, puerto, _ = lanzador._decidir_puerto(None, tmp_path / "esta")
+    assert (accion, puerto) == ("abrir", 8000)
+
+
+def test_con_port_explicito_un_puerto_ocupado_sigue_siendo_un_error(tmp_path, monkeypatch):
+    """
+    Quien escribió `--port` eligió ese puerto: el wizard ya buscó uno libre y
+    el reinicio tiene que volver adonde está el navegador. Cambiárselo por
+    detrás sería peor que avisar.
+    """
+    _puerto_ocupado_por(monkeypatch, None)
+    accion, puerto, mensaje = lanzador._decidir_puerto(8000, tmp_path)
+    assert (accion, puerto) == ("fallar", 8000)
+    assert "--port" in mensaje
+
+
+def test_con_el_puerto_libre_se_arranca_ahi_sin_mas(tmp_path, monkeypatch):
+    monkeypatch.setattr(lanzador, "_esperar_puerto_libre", lambda p, *a: True)
+    assert lanzador._decidir_puerto(None, tmp_path) == ("arrancar", 8000, "")
+    assert lanzador._decidir_puerto(8010, tmp_path) == ("arrancar", 8010, "")

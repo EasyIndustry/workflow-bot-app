@@ -6,6 +6,18 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **Con el 8000 ocupado, Bot arranca en el siguiente puerto libre.** Antes,
+  otro programa en el 8000 daba un cartel pidiendo cerrarlo o elegir puerto a
+  mano; y **otro Bot** ahí —otra instalación de la misma PC, el repo de
+  desarrollo— abría la pantalla de ese otro como si fuera el propio, con sus
+  datos, y después no se sabía cuál cerrar. Ahora el lanzador compara la raíz
+  del que contesta con la propia: sólo el Bot de esta misma carpeta cuenta
+  como "ya abierto"; otro Bot es otro programa y se busca puerto (hasta 50
+  arriba, `_decidir_puerto` en `webapp/__main__.py`). Con `--port` explícito
+  se respeta y ocupado sigue siendo error: el wizard ya eligió uno libre y el
+  reinicio tiene que volver adonde está el navegador. Verificado en esta
+  máquina con la QA en el 8000: el Bot del repo avisó "ocupado por otro Bot
+  (D:\User\Bot)" y levantó en el 8001 con su propia raíz.
 - **La botonera de una colección ya no sale recortada.** En Plug ins → Bots
   conocidos, "Probar", "Comparar contenido", "Editar" y el tacho no entraban
   en la columna de acciones, que tenía 210px fijos y ocultaba el resto. Cuántos

@@ -125,14 +125,15 @@ def ejecutable_propio() -> str:
         return sys.executable
 
 
-def _hay_un_bot_en(url: str) -> bool:
+def _raiz_del_bot_en(url: str) -> Path | None:
     """
-    ¿Lo que está escuchando ahí es un Bot, o es otro programa?
+    ¿Lo que está escuchando ahí es un Bot, y de qué instalación?
 
-    Cambia qué hacer: si es un Bot, abrir la pantalla es exactamente lo que
-    quien hizo doble clic esperaba; si es otro programa, hay que avisar. Se
-    pregunta por una ruta de la API y no por la página, que la podría estar
-    sirviendo cualquier cosa.
+    Cambia qué hacer: si es el Bot de **esta** instalación, abrir la pantalla
+    es exactamente lo que quien hizo doble clic esperaba; si es otro Bot u
+    otro programa, hay que arrancar en otro puerto. Se pregunta por una ruta
+    de la API y no por la página, que la podría estar sirviendo cualquier
+    cosa. `None` si no es un Bot o no contesta.
     """
     import json
     import urllib.error
@@ -140,9 +141,81 @@ def _hay_un_bot_en(url: str) -> bool:
 
     try:
         with urllib.request.urlopen(f"{url}/api/core/overview", timeout=2.5) as r:
-            return "root" in json.load(r)
+            raiz = json.load(r).get("root")
     except (OSError, ValueError, urllib.error.URLError):
+        return None
+    return Path(raiz) if isinstance(raiz, str) and raiz else None
+
+
+def _misma_instalacion(a: Path, b: Path) -> bool:
+    """Las dos rutas son la misma carpeta, aunque difieran en mayúsculas o en `..`."""
+    try:
+        return os.path.normcase(str(a.resolve())) == os.path.normcase(str(b.resolve()))
+    except OSError:
         return False
+
+
+# Hasta dónde se busca un puerto libre a partir del que estaba ocupado. Cincuenta
+# alcanza para cualquier cantidad razonable de Bots y programas en una PC, y
+# preguntar por cada uno cuesta un connect rechazado al instante.
+PUERTOS_A_PROBAR = 50
+
+
+def _siguiente_puerto_libre(desde: int, cuantos: int = PUERTOS_A_PROBAR) -> int | None:
+    """El primer puerto libre desde `desde` inclusive, o `None` si no hay en el rango."""
+    for puerto in range(desde, min(desde + cuantos, 65536)):
+        if _puerto_libre(puerto):
+            return puerto
+    return None
+
+
+def _decidir_puerto(pedido: int | None, raiz: Path) -> tuple[str, int, str]:
+    """
+    En qué puerto arrancar, o qué hacer si no se puede.
+
+    Devuelve `(accion, puerto, mensaje)`, con `accion` una de:
+      - "arrancar": levantar el servidor en `puerto`.
+      - "abrir": el Bot de esta instalación ya está en `puerto`; abrir la
+        pantalla y salir. Es el caso normal del doble clic repetido en el
+        acceso directo, no un error.
+      - "fallar": no hay dónde; `mensaje` es lo que hay que mostrar.
+
+    Sin `--port`, el puerto ocupado no frena: se busca el siguiente libre.
+    Antes, con otro programa en el 8000, salía un cartel pidiendo cerrarlo o
+    elegir puerto a mano; y con **otro Bot** ahí —otra instalación de la misma
+    PC, el repo de desarrollo— se abría la pantalla de ese otro, que es peor:
+    parece que abrió el que uno quería y es el de al lado, con sus datos, y
+    después no se sabe cuál cerrar. Por eso la raíz se compara: sólo el Bot de
+    esta misma carpeta cuenta como "ya abierto".
+
+    Con `--port` explícito se respeta: quien lo escribió eligió ese puerto (el
+    wizard, que ya buscó uno libre; el reinicio, que tiene que volver donde
+    está el navegador; alguien desde una consola). Ahí un puerto ocupado por
+    otra cosa sigue siendo un error que se avisa.
+    """
+    puerto = pedido if pedido is not None else PUERTO_POR_DEFECTO
+    if _esperar_puerto_libre(puerto):
+        return "arrancar", puerto, ""
+
+    url = f"http://127.0.0.1:{puerto}"
+    raiz_ahi = _raiz_del_bot_en(url)
+    if raiz_ahi is not None and _misma_instalacion(raiz_ahi, raiz):
+        return "abrir", puerto, f"Bot ya está abierto en {url}; se abre la pantalla."
+
+    ocupante = f"otro Bot ({raiz_ahi})" if raiz_ahi is not None else "otro programa"
+    if pedido is not None:
+        return "fallar", puerto, (
+            f"El puerto {puerto} está ocupado por {ocupante}, así que Bot no puede abrir ahí.\n\n"
+            f"Cerrá ese programa, o abrí Bot en otro puerto con --port."
+        )
+
+    libre = _siguiente_puerto_libre(puerto + 1)
+    if libre is None:
+        return "fallar", puerto, (
+            f"El puerto {puerto} está ocupado por {ocupante} y no se encontró ninguno libre "
+            f"hasta el {puerto + PUERTOS_A_PROBAR}."
+        )
+    return "arrancar", libre, f"El puerto {puerto} está ocupado por {ocupante}; Bot abre en el {libre}."
 
 
 def _avisar(mensaje: str) -> None:
@@ -196,7 +269,10 @@ def main(argv: list[str] | None = None) -> int:
     _asegurar_salida(PROGRAMA)
 
     parser.add_argument("--root", help="La carpeta de la instalación (boot.env, data/, workspace/).")
-    parser.add_argument("--port", type=int, default=PUERTO_POR_DEFECTO)
+    parser.add_argument(
+        "--port", type=int, default=None,
+        help=f"Puerto fijo. Sin esto, el {PUERTO_POR_DEFECTO} y, si está ocupado, el siguiente libre.",
+    )
     parser.add_argument("--no-abrir", action="store_true", help="No abrir el navegador.")
     parser.add_argument(
         "--red", action="store_true",
@@ -231,28 +307,26 @@ def main(argv: list[str] | None = None) -> int:
     if not raiz.is_dir():
         print(f"No existe la carpeta de instalación {raiz}.", file=sys.stderr)
         return 2
-    if not _esperar_puerto_libre(args.port):
-        # Bot ya abierto es el caso normal de esto, no un error: alguien hizo
-        # doble clic en el acceso directo y lo que quiere es la pantalla. Se
-        # abre el navegador y listo. Antes salía con código 3 y, como el
-        # acceso directo usa `pythonw` —sin consola—, no aparecía nada: el
-        # mensaje terminaba en el webapp.log de la carpeta del programa, que
-        # nadie mira. En la QA se juntaron cinco intentos así, todos en
-        # silencio, con el usuario clickeando el acceso directo sin respuesta.
-        url = f"http://127.0.0.1:{args.port}"
-        if _hay_un_bot_en(url):
-            print(f"Bot ya está abierto en {url}; se abre la pantalla.", flush=True)
-            if not args.no_abrir:
-                webbrowser.open(url)
-            return 0
-        _avisar(
-            f"El puerto {args.port} está ocupado por otro programa, así que Bot no puede abrir ahí.\n\n"
-            f"Cerrá ese programa, o abrí Bot en otro puerto con --port."
-        )
+    # Ver `_decidir_puerto`. "Ya abierto" no es un error: alguien hizo doble
+    # clic en el acceso directo y lo que quiere es la pantalla. Antes salía con
+    # código 3 y, como el acceso directo usa `pythonw` —sin consola—, no
+    # aparecía nada: el mensaje terminaba en el webapp.log de la carpeta del
+    # programa, que nadie mira. En la QA se juntaron cinco intentos así, todos
+    # en silencio, con el usuario clickeando el acceso directo sin respuesta.
+    accion, puerto, mensaje = _decidir_puerto(args.port, raiz)
+    if accion == "abrir":
+        print(mensaje, flush=True)
+        if not args.no_abrir:
+            webbrowser.open(f"http://127.0.0.1:{puerto}")
+        return 0
+    if accion == "fallar":
+        _avisar(mensaje)
         return 3
+    if mensaje:
+        print(mensaje, flush=True)
 
     os.environ["BOT_ROOT"] = str(raiz)
-    os.environ["BOT_PORT"] = str(args.port)
+    os.environ["BOT_PORT"] = str(puerto)
     # Ahora que se sabe la raíz, el registro va ahí (el mismo webapp.log que
     # escribe el wizard al lanzar la app), no en la carpeta del programa.
     _asegurar_salida(raiz)
@@ -265,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
     # reinicio quedaría colgado en la copia que nadie usa.
     from webapp.server import app, core_router
 
-    url = f"http://127.0.0.1:{args.port}"
+    url = f"http://127.0.0.1:{puerto}"
     host = "0.0.0.0" if args.red else "127.0.0.1"  # noqa: S104 — --red es pedir justamente eso
     print(f"Bot en {url} · instalación: {raiz}" + (" · accesible desde la red local" if args.red else ""), flush=True)
     if not args.no_abrir:
@@ -275,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
     # huérfano al hijo cuando se lo mata desde afuera. `Server` en vez de
     # `uvicorn.run` para tener el objeto: reiniciar es pedirle que termine y
     # volver a ejecutar este mismo comando —el núcleo nuevo se importa de cero.
-    servidor = uvicorn.Server(uvicorn.Config(app, host=host, port=args.port, log_level="info"))
+    servidor = uvicorn.Server(uvicorn.Config(app, host=host, port=puerto, log_level="info"))
     pedido_reinicio = {"si": False, "red": args.red}
 
     # Al pedir salir, uvicorn espera a que cada conexión abierta termine; una
@@ -317,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
         from webapp import bandeja
 
         icono = bandeja.iniciar(
-            bandeja.Estado(url=url, puerto=args.port, raiz=raiz, en_red=args.red, version=_version()),
+            bandeja.Estado(url=url, puerto=puerto, raiz=raiz, en_red=args.red, version=_version()),
             bandeja.Acciones(reiniciar=reiniciar, cerrar=cerrar, habilitar_red=None if args.red else habilitar_red),
         )
         if icono is None:
@@ -343,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if pedido_reinicio["si"]:
         print("Reiniciando…", flush=True)
-        _relanzar(comando_relanzar(raiz, args.port, red=pedido_reinicio["red"], sin_bandeja=args.sin_bandeja))
+        _relanzar(comando_relanzar(raiz, puerto, red=pedido_reinicio["red"], sin_bandeja=args.sin_bandeja))
     return 0
 
 
