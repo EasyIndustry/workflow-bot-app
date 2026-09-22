@@ -1403,13 +1403,21 @@ async def migrar(body: MigrarBody, request: Request):
         # que "no hay emparejamiento" tiene dos causas muy distintas y el mensaje
         # tiene que nombrar las dos: falta emparejar, o la dirección está mal
         # escrita allá. Sin eso se busca el problema en el lugar equivocado.
+        #
+        # Y nombra **la pantalla**. Quien lee esto está en la pantalla de un
+        # plugin, y el arreglo está en otra pestaña bajo un nombre que no dice
+        # "migrar": sin la ruta, el mensaje describe un procedimiento que no se
+        # sabe dónde hacer. Este texto es además el único camino por el que el
+        # plugin puede nombrar una pantalla de la app sin conocerla: lo recibe
+        # de acá y lo muestra tal cual.
         raise HTTPException(
             400,
-            f"No hay emparejamiento con {destino}. O falta emparejar los dos Bots —el "
-            "destino genera un código y se pega acá, sentado en cada máquina—, o esa "
-            "dirección no es la del Bot con el que se emparejó: si la sacaste de una "
-            "colección, revisala ahí. Sin emparejamiento no se migra: el secreto "
-            "viajaría en claro por la red.")
+            f"No hay emparejamiento con {destino}. O falta emparejar los dos Bots —en "
+            "Config → Emparejamientos: el destino genera un código y se pega acá, "
+            "sentado en cada máquina—, o esa dirección no es la del Bot con el que se "
+            "emparejó: si la sacaste de una colección, revisala ahí, porque se compara "
+            "tal cual. Sin emparejamiento no se migra: el secreto viajaría en claro "
+            "por la red.")
     try:
         return await run_in_threadpool(
             migracion.migrar,

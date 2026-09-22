@@ -504,6 +504,11 @@ def test_sin_emparejamiento_el_error_nombra_las_dos_causas(dos_bots):
     detalle = r.json()["detail"]
     assert "falta emparejar" in detalle
     assert "revisala ahí" in detalle
+    # Y dónde se arregla: quien lee esto está en la pantalla de un plugin y la
+    # pantalla que lo resuelve está en otra pestaña, con un nombre que no dice
+    # "migrar". Este texto es además el único modo que tiene el plugin de
+    # nombrarla sin conocer la app.
+    assert "Config → Emparejamientos" in detalle
 
 
 def test_migrar_contra_uno_mismo_no_se_intenta(dos_bots, monkeypatch):

@@ -23,6 +23,11 @@ desarrollo o la PC de un cliente), no sólo con tests.
   abrirlo por la IP de su propia máquina tampoco alcanza. Verificado por CDP
   contra la app: el recorrido entero, el código cortado, el reemplazo, y el 403
   real entrando por `192.168.9.78`. Pedido por la sesión del plugin `bots`.
+  De paso, el error de `POST /migrar` ahora **nombra la pantalla**: decía qué
+  hacer pero no dónde, porque cuando se escribió no existía dónde. Quien lo lee
+  está en la pantalla de un plugin y el arreglo vive en otra pestaña, bajo un
+  nombre que no dice "migrar"; y ese texto es además el único camino por el que
+  el plugin puede nombrar una pantalla de la app sin conocerla.
 - **El puerto del que empuja viaja adentro del sobre.** Al recibir una
   migración, el destino anotaba al otro Bot como `http://<su ip>:8000`, con el
   puerto escrito a mano: si ese Bot escuchaba en otro, quedaba anotada una
