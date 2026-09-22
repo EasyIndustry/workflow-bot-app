@@ -13,8 +13,13 @@ desarrollo o la PC de un cliente), no sólo con tests.
   comparar" con las mismas fichas. No entran las variables de Config ni
   `{NODO.salida}`, porque el núcleo no las resuelve ahí (`autocompletar` con
   `sinLlaves`, `opcionesDeDecision` en `views/workflows-cards.js`). Verificado
-  por CDP: al enfocar aparecen las seis columnas, `sta` filtra a `state`,
-  Enter deja `state` sin llaves.
+  por CDP: al enfocar aparecen las seis columnas más `response`, `status` y
+  `result` "la deja Llamar A"; `sta` filtra a `state` y `status`; Enter deja el
+  nombre sin llaves. Y con una corrida real: `N1` (connections.llamar) →
+  `D1{Estado § status}` → rama `|200|` tomada, así que una decisión compara
+  también contra la salida interna de un nodo anterior, no sólo contra la
+  fila. `D1{Estado § N1.status}` falla con "Sin rama para N1.status = None":
+  la forma calificada no vale en una decisión, y el helper lo dice.
 - **Cambiar de pestaña vuelve a donde se estaba.** La pestaña iba a la raíz de
   la vista (`#/sources`) y la vista elegía la primera fuente: se perdían los
   filtros de la grilla y el flujo que se estaba editando. Ahora el router
