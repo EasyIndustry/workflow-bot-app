@@ -340,6 +340,16 @@ def _entregar(url: str, sobre: dict) -> dict:
         raise MigracionError(f"{url} contestó algo que no es JSON") from None
 
 
+def _puerto_propio(url_propia: str) -> int | None:
+    """El puerto con el que escucha este Bot, sacado de su propia URL."""
+    try:
+        return urllib.parse.urlsplit(url_propia or "").port
+    except ValueError:
+        # Un puerto que no es un número: la URL la arma la app, así que esto no
+        # debería pasar — pero adivinar uno es justamente lo que se está sacando.
+        return None
+
+
 def migrar(instancia, *, emparejado: dict, destino_url: str, que: str, claves: list[str],
            plugin: str = "", coleccion: str = "", url_propia: str = "",
            incluir_secretos: bool = False) -> dict:
@@ -381,6 +391,17 @@ def migrar(instancia, *, emparejado: dict, destino_url: str, que: str, claves: l
         raise MigracionError("Con 'registros' hacen falta el plugin y la colección")
 
     contenido = {"que": que, "plugin": plugin, "coleccion": coleccion, "items": []}
+    # El destino ve nuestra IP —es la de la conexión— pero no nuestro puerto, y
+    # lo necesita para anotar con quién habló. Antes lo adivinaba (8000), y un
+    # Bot en otro puerto quedaba anotado allá con una dirección que no existe;
+    # cuando después la migración iba al revés, `para_url` no encontraba nada y
+    # el error era "no hay emparejamiento" — que manda a rehacer el
+    # emparejamiento en vez de a mirar el puerto. Va adentro del sobre, así que
+    # llega autenticado por la clave. Si no lo sabemos no se manda: que el otro
+    # lado deje la dirección vacía se ve, y una inventada no.
+    puerto = _puerto_propio(url_propia)
+    if puerto:
+        contenido["origen_puerto"] = puerto
     fallados = []
     for clave in claves:
         try:

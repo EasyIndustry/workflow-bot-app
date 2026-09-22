@@ -515,3 +515,68 @@ def test_migrar_contra_uno_mismo_no_se_intenta(dos_bots, monkeypatch):
 
     assert r.status_code == 400
     assert "este mismo Bot" in r.json()["detail"]
+
+
+def test_el_sobre_lleva_el_puerto_de_este_bot(dos_bots, monkeypatch):
+    """
+    El destino ve nuestra IP —es la de la conexión— pero no nuestro puerto: el
+    que trae la conexión es el efímero del cliente. Se lo decimos adentro del
+    sobre, así llega autenticado por la clave.
+    """
+    client, _ = dos_bots
+    core_api._instance.workflows.save("alta", content=MMD.format("hola"))
+    monkeypatch.setattr(core_api, "_url_app", lambda: "http://127.0.0.1:8010")
+
+    visto = {}
+    entregar_real = migracion._entregar
+
+    def espiar(url, sobre):
+        visto["sobre"] = sobre
+        return entregar_real(url, sobre)
+
+    monkeypatch.setattr(migracion, "_entregar", espiar)
+    _migrar(client, que="flujos", claves=["alta"])
+
+    _, contenido = emparejamiento.abrir(core_api._instance.boot.data_dir, visto["sobre"])
+    assert contenido["origen_puerto"] == 8010
+
+
+def test_la_direccion_anotada_usa_el_puerto_del_sobre(dos_bots):
+    """
+    Adivinar 8000 dejaba anotada una dirección que no existe cuando el otro Bot
+    escucha en otro puerto, y eso recién se veía cuando la migración iba al
+    revés: `para_url` no encontraba nada y el error decía "no hay
+    emparejamiento", que manda a rehacerlo en vez de a mirar el puerto.
+    """
+    _, otro = dos_bots
+    fila = emparejamiento._leer(otro.boot.data_dir)[0]
+    sobre = emparejamiento.sellar(
+        fila, {"que": "flujos", "items": [], "origen_puerto": 8010})
+
+    anterior = core_api._instance
+    core_api._instance = otro
+    try:
+        r = _cliente("192.168.1.77").post("/api/core/migrar/recibir", json=sobre)
+    finally:
+        core_api._instance = anterior
+
+    assert r.status_code == 200, r.text
+    assert emparejamiento._leer(otro.boot.data_dir)[0]["url"] == "http://192.168.1.77:8010"
+
+
+def test_sin_puerto_en_el_sobre_no_se_inventa_una_direccion(dos_bots):
+    """Una app vieja del otro lado no lo manda. Una dirección vacía se ve;
+    una inventada se lee como buena y hace buscar el problema en otro lado."""
+    _, otro = dos_bots
+    fila = emparejamiento._leer(otro.boot.data_dir)[0]
+    sobre = emparejamiento.sellar(fila, {"que": "flujos", "items": []})
+
+    anterior = core_api._instance
+    core_api._instance = otro
+    try:
+        r = _cliente("192.168.1.77").post("/api/core/migrar/recibir", json=sobre)
+    finally:
+        core_api._instance = anterior
+
+    assert r.status_code == 200, r.text
+    assert emparejamiento._leer(otro.boot.data_dir)[0]["url"] == ""

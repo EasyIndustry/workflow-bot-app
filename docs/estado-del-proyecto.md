@@ -6,6 +6,16 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **El puerto del que empuja viaja adentro del sobre.** Al recibir una
+  migración, el destino anotaba al otro Bot como `http://<su ip>:8000`, con el
+  puerto escrito a mano: si ese Bot escuchaba en otro, quedaba anotada una
+  dirección que no existe, y recién se veía cuando la migración iba al revés
+  —`para_url` no encontraba nada y el error decía "no hay emparejamiento", que
+  manda a rehacer el emparejamiento en vez de a mirar el puerto—. Ahora la IP
+  sale de la conexión y el puerto del sobre (`origen_puerto`), así que llega
+  autenticado por la clave; si del otro lado hay una app vieja que no lo manda,
+  la dirección queda vacía en vez de inventada, porque vacía se ve. Con tests.
+  Encontrado por la sesión del plugin `bots`.
 - **La bandeja encuentra la dirección de red en una PC sin internet, y dice si
   copió.** `direccion_red` preguntaba a la tabla de rutas por dónde saldría un
   paquete hacia `10.x`; en una red `192.168.x` sin puerta de enlace no hay por

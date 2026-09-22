@@ -1447,10 +1447,18 @@ async def migrar_recibir(sobre: dict, request: Request):
         raise HTTPException(403, str(exc)) from None
 
     resultados = await run_in_threadpool(migracion.aplicar, _instance, contenido)
+    # La IP sale de la conexión y el puerto del sobre (`origen_puerto`), porque
+    # de la conexión no se puede sacar: el que trae es el efímero del cliente y
+    # no el que ese Bot escucha. Antes se adivinaba 8000, y un Bot en otro
+    # puerto quedaba anotado acá con una dirección que no existe — que cuando la
+    # migración va al revés se ve igual que "falta emparejar". Si el sobre no lo
+    # trae (una app vieja del otro lado) no se anota nada: vacía se ve,
+    # inventada no.
     quien = request.client.host if request.client else ""
+    puerto = contenido.get("origen_puerto")
     await run_in_threadpool(
         emparejamiento.anotar_uso, data_dir, fila["id"],
-        f"http://{quien}:8000" if quien else "")
+        f"http://{quien}:{puerto}" if quien and puerto else "")
     _regenerar_manual()
     return {
         "resultados": resultados,
