@@ -6,6 +6,16 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **El autocompletado ofrece las columnas de la fila, con un valor de ejemplo.**
+  Un flujo no declara su fuente (core#31, abierto hoy), así que la app la
+  infiere de la última corrida: `Run.source` dice contra qué fuente corrió y una
+  página de esa fuente —la misma vista previa de Connections que usa la grilla—
+  da las columnas. Aparecen primero en la lista al tipear `{` ("columna de la
+  fila · flujos-propios · ej. PRUEBAS") y como fichas en el helper, con el
+  nombre de la fuente; un flujo que nunca corrió se queda con la ficha genérica
+  y lo dice. Se guarda un minuto por flujo. Cuando el núcleo traiga `%% source`,
+  la declaración manda sobre la inferencia y "Correr" la propone por defecto.
+  Verificado por CDP con una fuente apuntada a la propia API del Bot.
 - **La página se abre aunque el navegador tenga guardado el Bot viejo.** En la
   PC de producción, Chrome y Edge mostraban `127.0.0.1:8000` en blanco: el
   servidor entregaba la página nueva (`GET / 200`) y el navegador ejecutaba la

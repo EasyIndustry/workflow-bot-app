@@ -17,9 +17,9 @@ import { contenidoDeNodo, TIPO_ROTULO } from "./workflows-cards.js";
  * @param {string} id
  * @param {object} grafo      el grafo mutable que edita la vista
  * @param {object} catalogo   GET /tools
- * @param {object} opts       {alCambiar, alCerrar, alAbrirCompleta}
+ * @param {object} opts       {alCambiar, alCerrar, alAbrirCompleta, columnasDeLaFila}
  */
-export function tarjetaFlotante(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirCompleta }) {
+export function tarjetaFlotante(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirCompleta, columnasDeLaFila }) {
   const nodo = grafo.nodes[id];
   if (!nodo) return null;
 
@@ -48,7 +48,7 @@ export function tarjetaFlotante(id, grafo, catalogo, { alCambiar, alCerrar, alAb
       h("button", { class: "btn btn--chico", title: "Cerrar", onClick: alCerrar }, [icono(ICONOS.cerrar, 11, 2)]),
     ]),
     h("div", { style: { flex: "1", minHeight: "0", overflow: "auto" } }, [
-      contenidoDeNodo(id, grafo, catalogo, alCambiar),
+      contenidoDeNodo(id, grafo, catalogo, alCambiar, columnasDeLaFila),
     ]),
   ]);
 }

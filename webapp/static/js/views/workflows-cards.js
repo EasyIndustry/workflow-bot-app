@@ -23,7 +23,7 @@ import { resaltarVariables } from "../components/resaltar-variables.js";
  * @param {object} catalogo   GET /tools
  * @param {object} opts       {alCambiar, seleccionado, alSeleccionar}
  */
-export function pilaDeTarjetas(grafo, catalogo, { alCambiar, seleccionado, alSeleccionar, alUbicar } = {}) {
+export function pilaDeTarjetas(grafo, catalogo, { alCambiar, seleccionado, alSeleccionar, alUbicar, columnasDeLaFila } = {}) {
   const orden = ordenTopologico(grafo);
   const porId = new Map((catalogo.tools || []).map((t) => [t.id, t]));
 
@@ -34,6 +34,7 @@ export function pilaDeTarjetas(grafo, catalogo, { alCambiar, seleccionado, alSel
   // Es el mismo camino que ya se había elegido para el filtro — tocar las
   // tarjetas que están, no reconstruirlas.
   const cajas = orden.map((id, i) => tarjeta(id, grafo, porId, catalogo, {
+    columnasDeLaFila,
     alCambiar, abierta: seleccionado === id, alSeleccionar, alUbicar, indice: i + 1,
     alAlternar: (quien) => {
       const caja = cajas.find((c) => c.dataset.nodo === quien);
@@ -96,14 +97,14 @@ export const TIPO_ROTULO = { start: "inicio", action: "acción", decision: "deci
  * abre el diagrama (`workflows-node-panel.js`) sin duplicar el selector de
  * tool, los params ni la edición de aristas.
  */
-export function contenidoDeNodo(id, grafo, catalogo, alCambiar) {
+export function contenidoDeNodo(id, grafo, catalogo, alCambiar, columnasDeLaFila) {
   const nodo = grafo.nodes[id];
   const porId = new Map((catalogo.tools || []).map((t) => [t.id, t]));
   const manifest = nodo.type === "action" ? porId.get(nodo.fn) : null;
-  return contenido(id, grafo, manifest, catalogo, alCambiar);
+  return contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila);
 }
 
-function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar, alAlternar, alUbicar, indice }) {
+function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar, alAlternar, alUbicar, indice, columnasDeLaFila }) {
   const nodo = grafo.nodes[id];
   const manifest = nodo.type === "action" ? porId.get(nodo.fn) : null;
   const desconocido = nodo.type === "action" && !manifest;
@@ -163,7 +164,7 @@ function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar
     if (si === caja.estaAbierta()) return;
     // El cuerpo se arma recién al abrir, como antes: son cuarenta tarjetas y
     // cada cuerpo pregunta sus params al catálogo.
-    if (si) caja.appendChild(contenido(id, grafo, manifest, catalogo, alCambiar));
+    if (si) caja.appendChild(contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila));
     else caja.removeChild(caja.lastChild);
     cabecera.style.background = si ? "var(--fondo-cabecera)" : "var(--fondo)";
   };
@@ -182,7 +183,12 @@ export function textoBuscable(id, nodo) {
     .filter(Boolean).map((v) => String(v).toLowerCase()).join(" ");
 }
 
-function contenido(id, grafo, manifest, catalogo, alCambiar) {
+/**
+ * `columnasDeLaFila` es opcional: una función que promete `{fuente, columnas:
+ * [{nombre, ejemplo}]}` o null. La da la vista, que sabe qué flujo es y con
+ * qué fuente corrió; la tarjeta sólo la ofrece en el autocompletado y el helper.
+ */
+function contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila = null) {
   const nodo = grafo.nodes[id];
   const partes = [];
   // El bloque de params extra, si el tool acepta: necesita la tarjeta ya
@@ -253,7 +259,7 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
   // calcula al abrir la lista y no acá, así refleja el grafo del momento. El
   // resaltado además sabe qué nombres son nodos, para dibujar `{NODO.salida}`
   // como la relación que es.
-  const variables = () => opcionesDeVariables(id, grafo, catalogo);
+  const variables = () => opcionesDeVariables(id, grafo, catalogo, columnasDeLaFila);
   variables.esNodo = (nombre) => Object.prototype.hasOwnProperty.call(grafo.nodes, nombre);
 
   if (manifest) {
@@ -293,7 +299,7 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
   }
 
   partes.push(subtitulo("Variables que puede usar", "de la fila y de los nodos anteriores"));
-  partes.push(variablesDisponibles(id, grafo, catalogo));
+  partes.push(variablesDisponibles(id, grafo, catalogo, columnasDeLaFila));
   partes.push(...aristas(id, grafo, alCambiar));
 
   const caja = h("div", { style: { borderTop: "1px solid var(--borde)" } }, partes);
@@ -589,32 +595,58 @@ function nombresDeEnv() {
 }
 
 /**
- * Las opciones del autocompletado de un campo de este nodo: las salidas de
- * arriba, con quién las deja, y los nombres de Config. Las columnas de la fila
- * no están: un flujo corre contra cualquier fuente y no las conoce.
+ * Las opciones del autocompletado de un campo de este nodo: las columnas de la
+ * fila si se conocen, las salidas de arriba con quién las deja, y los nombres
+ * de Config. Las columnas van primero porque son las que más se usan.
  */
-async function opcionesDeVariables(id, grafo, catalogo) {
+async function opcionesDeVariables(id, grafo, catalogo, columnasDeLaFila) {
+  const fila = columnasDeLaFila ? await Promise.resolve(columnasDeLaFila()).catch(() => null) : null;
+  const columnas = fila ? fila.columnas.map((c) => ({
+    nombre: c.nombre,
+    detalle: `columna de la fila · ${fila.fuente}` + (c.ejemplo ? ` · ej. ${c.ejemplo}` : ""),
+  })) : [];
   const salidas = salidasAguasArriba(id, grafo, catalogo).flatMap(opcionesDeSalida);
-  return [...salidas, ...(await nombresDeEnv())];
+  return [...columnas, ...salidas, ...(await nombresDeEnv())];
 }
 
 /**
  * Lo que este nodo puede interpolar: campos de la fila más salidas de los nodos
  * aguas arriba. La misma lista que ofrece el autocompletado al tipear `{`.
  */
-function variablesDisponibles(id, grafo, catalogo) {
+function variablesDisponibles(id, grafo, catalogo, columnasDeLaFila = null) {
   const salidas = salidasAguasArriba(id, grafo, catalogo);
   const repetidas = salidas.filter((s) => s.de.length > 1);
 
+  // Las columnas de la fila llegan después, de una página de la fuente con la
+  // que este flujo corrió por última vez: se dibuja la ficha genérica y se
+  // reemplaza cuando llegan. Un flujo que nunca corrió se queda con la genérica
+  // y lo dice, para que no parezca que la fuente no tiene columnas.
+  const fichaFila = h("span", { class: "ficha", title: "Cualquier columna de la fila de la fuente" }, ["{columna de la fila}"]);
+  const notaFila = h("div", { class: "campo__ayuda" });
+  if (columnasDeLaFila) {
+    Promise.resolve(columnasDeLaFila()).then((fila) => {
+      if (fila && fila.columnas.length) {
+        fichaFila.replaceWith(...fila.columnas.map((c) =>
+          h("span", { class: "ficha", title: `columna de la fila · ${fila.fuente}` + (c.ejemplo ? ` · ej. ${c.ejemplo}` : "") },
+            [`{${c.nombre}}`])));
+        notaFila.textContent = `Columnas de "${fila.fuente}", la última fuente con la que corrió este flujo. `
+          + "Declarar la fuente en el flujo es core#31.";
+      } else if (!fila) {
+        notaFila.textContent = "Las columnas de la fila se ofrecen después de la primera corrida contra una fuente.";
+      }
+    }).catch(() => {});
+  }
+
   return h("div", { style: { padding: "0 13px 11px" } }, [
     h("div", { class: "fichas" }, [
-      h("span", { class: "ficha", title: "Cualquier columna de la fila de la fuente" }, ["{columna de la fila}"]),
+      fichaFila,
       h("span", { class: "ficha", title: "Variables y secretos de Config" }, ["{env.CLAVE}"]),
       ...salidas.map((s) => h("span", { class: "ficha", title: quienLaDeja(s) }, [
         `{${s.nombre}}`,
         s.de.length > 1 ? h("span", { style: { color: "var(--ambar)" }, text: ` ×${s.de.length}` }) : null,
       ])),
     ]),
+    notaFila,
     h("div", { class: "campo__ayuda", text: salidas.length
       ? "Tipeá { en cualquier parámetro para elegirlas de una lista, con quién deja cada una."
       : "Ningún nodo anterior deja salidas. Las que aparecen son las que siempre están." }),

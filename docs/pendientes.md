@@ -11,6 +11,18 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
   app la rechaza y usar una unidad entera obliga a enumerar carpeta por
   carpeta. Cuando exista: sacar ese rechazo de `webapp/limites.py` y mostrar
   en Inicio qué queda negado.
+- **core#31**: `%% source:` en la cabecera del flujo, para que un flujo
+  declare para qué fuente está pensado. Hoy la app infiere la fuente de la
+  última corrida (`columnasDeLaFila` en `views/workflows.js`). Cuando llegue:
+  selector "Fuente" en Propiedades que escribe la cabecera, la declaración manda
+  sobre la inferencia, y "Correr" la propone por defecto.
+- **core#32** (lo abrió la sesión del plugin `bots`): `options_from` con
+  namespace `core:` (`core:plugins`, `core:resources:{plugin}`) y opciones
+  dependientes de otro param. Cuando el núcleo lo publique: resolverlo en
+  `components/campo.js` con el catálogo de `GET /tools` (ya trae plugins y
+  colecciones con nombre y etiqueta) y recargar el datalist cuando cambia el
+  campo del que depende; también en Plug ins → Acciones, que hoy no pasa por
+  `params-extra`.
 - Nada abierto que frene a la webapp: core#15 (`on_step`), #16 (root y
   plugins por defecto en el MCP) y #17 (tools de orientación) llegaron en
   v0.3.1-beta.1. Los issues quedan abiertos hasta verificarlos en la QA y

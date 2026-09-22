@@ -62,6 +62,41 @@ function vigente() {
   return rutaActual().vista === "workflows";
 }
 
+// Las columnas de la fila por flujo, para el autocompletado de las tarjetas.
+// Un flujo no declara su fuente (core#31), así que se infiere de la última
+// corrida: `Run.source` dice contra qué fuente corrió, y una página de esa
+// fuente —la misma vista previa que usa la grilla de Sources— da las columnas
+// con un valor de ejemplo. Se guarda un rato por flujo: la lista se abre con
+// cada `{` tipeada, y esto son dos pedidos y una lectura de la fuente.
+const _columnasPorFlujo = new Map();
+const VIGENCIA_COLUMNAS = 60_000;
+
+function ejemploCorto(valor) {
+  if (valor === null || valor === undefined || valor === "") return "";
+  const texto = typeof valor === "object" ? JSON.stringify(valor) : String(valor);
+  return texto.length > 28 ? texto.slice(0, 27) + "…" : texto;
+}
+
+async function columnasDeLaFila(nombreFlujo) {
+  const guardado = _columnasPorFlujo.get(nombreFlujo);
+  if (guardado && Date.now() - guardado.cuando < VIGENCIA_COLUMNAS) return guardado.promesa;
+  const promesa = (async () => {
+    const runs = await api.runs({ limit: 200 });
+    const ultimo = runs.find((r) => r.flow === nombreFlujo && r.source);
+    if (!ultimo) return null;
+    const fuente = (await api.fuentes()).find((f) => f.name === ultimo.source);
+    if (!fuente) return null;
+    const resp = await api.filasDeFuente(fuente, { limit: 1 });
+    const fila = resp.result && resp.result.status === "ok" ? (resp.result.outputs.rows || [])[0] : null;
+    return {
+      fuente: ultimo.source,
+      columnas: fila ? Object.keys(fila).map((c) => ({ nombre: c, ejemplo: ejemploCorto(fila[c]) })) : [],
+    };
+  })().catch(() => null);
+  _columnasPorFlujo.set(nombreFlujo, { cuando: Date.now(), promesa });
+  return promesa;
+}
+
 export async function montar(elShell, partes) {
   shell = elShell;
   shell.ponerRotulo("WORKFLOWS");
@@ -552,6 +587,7 @@ function panelTarjetas(a) {
   // propósito: cuando eran uno, abrir una tarjeta abría también el panel
   // sobre el diagrama y quedaban dos editores del mismo nodo a la vista.
   const pila = pilaDeTarjetas(a.grafo, catalogo, {
+    columnasDeLaFila: () => columnasDeLaFila(a.nombre),
     seleccionado: a.abierta,
     // Sin `dibujar()`: abrir y cerrar lo resuelve la propia pila sobre las
     // tarjetas que ya están (#2). Acá sólo se anota cuál quedó abierta, para
@@ -663,6 +699,7 @@ function panelRender(a) {
     const mostrar = a.seleccionado && a.grafo.nodes[a.seleccionado];
     poner(huecoFlotante, mostrar
       ? tarjetaFlotante(a.seleccionado, a.grafo, catalogo, {
+          columnasDeLaFila: () => columnasDeLaFila(a.nombre),
           alCambiar: ({ redibujar }) => {
             a.sucio = true;
             // El grafo manda al guardar aunque `a.modo` siga en "texto": esto
