@@ -251,7 +251,7 @@ async def get_doctor():
       guardado" en una instalación con once. Un diagnóstico que miente en lo
       que se puede comprobar de un vistazo no se lee más.
     - **Un falso negativo**: sin `boot` no corría `check_boot`, que es
-      justamente el que dice "fs_root: \server-nuevo no existe". Así que el
+      justamente el que dice "fs_root: \\server-nuevo no existe". Así que el
       valor mal escrito que rompió una instalación de producción no aparecía
       en la única pantalla que estaba para eso.
     """

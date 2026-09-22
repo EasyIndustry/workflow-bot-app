@@ -97,7 +97,10 @@ historial de commits; `--headless=new --remote-debugging-port`).
 ## Desde otra PC o desde un agente remoto
 
 Con `--red`, `http://<ip>:8000` sirve la misma UI y la misma API. "Copiar
-dirección para otras PCs" en la bandeja da la URL. Un agente remoto usa la
+dirección para otras PCs" en la bandeja da la URL y avisa con un globo qué
+copió (o que no pudo, y cuál es). La IP sale de la tabla de rutas y, en una
+red sin puerta de enlace, de los adaptadores; si igual dice "Sin red", la
+máquina no tiene ninguna IPv4 que otra PC pueda usar. Un agente remoto usa la
 API (ver `docs/arquitectura.md` y el README del plugin `bots` en el
 catálogo). Un flujo puede hablarle a otro Bot con el plugin `bots`.
 

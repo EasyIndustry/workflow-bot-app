@@ -6,6 +6,21 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **La bandeja encuentra la dirección de red en una PC sin internet, y dice si
+  copió.** `direccion_red` preguntaba a la tabla de rutas por dónde saldría un
+  paquete hacia `10.x`; en una red `192.168.x` sin puerta de enlace no hay por
+  dónde, y el menú decía "Sin red" en una máquina que estaba en la red: la
+  única dirección a la vista quedaba el `127.0.0.1` de "Abrir Bot", y era la
+  que se copiaba. Ahora prueba un destino por rango privado y, si ninguno
+  tiene ruta, cae a las IPs de los adaptadores prefiriendo las de oficina.
+  Copiar va por la API de Windows (sin la ventana negra de `clip.exe` ni
+  depender del PATH; `clip` queda de rescate con las salidas redirigidas) y
+  siempre avisa con un globo qué copió, o que no pudo y cuál es la dirección:
+  antes un fallo era silencioso y el portapapeles quedaba con lo anterior.
+  Reportado desde una PC nueva con Windows 11 al copiar para otras máquinas.
+- **`core_api.py` ya no imprime un `SyntaxWarning` al arrancar.** Un `\s` en
+  un docstring (`\server-nuevo`) que Python 3.12 marca en cada inicio; era
+  la primera línea del registro y parecía un error.
 - **Con el 8000 ocupado, Bot arranca en el siguiente puerto libre.** Antes,
   otro programa en el 8000 daba un cartel pidiendo cerrarlo o elegir puerto a
   mano; y **otro Bot** ahí —otra instalación de la misma PC, el repo de

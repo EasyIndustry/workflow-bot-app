@@ -75,3 +75,61 @@ def test_url_red_arma_la_direccion_con_el_puerto():
 def test_direccion_red_nunca_devuelve_loopback():
     ip = bandeja.direccion_red()
     assert ip is None or not ip.startswith("127.")
+
+
+# ── Copiar dice qué pasó, y la IP aparece aunque no haya ruta hacia afuera ──
+
+
+def test_copiar_avisa_que_copio(monkeypatch):
+    monkeypatch.setattr(bandeja, "copiar_al_portapapeles", lambda t: True)
+    avisos = []
+    assert bandeja.copiar_y_avisar("http://192.168.3.26:8000", avisos.append) is True
+    assert avisos == ["Copiado: http://192.168.3.26:8000"]
+
+
+def test_si_no_puede_copiar_lo_dice_y_muestra_la_direccion(monkeypatch):
+    """
+    Antes fallaba en silencio: el portapapeles quedaba con lo que tuviera de
+    antes —un 127.0.0.1 copiado de la barra del navegador— y se leía como que
+    Bot había copiado mal. Un clic en la bandeja no tiene otra pantalla.
+    """
+    monkeypatch.setattr(bandeja, "copiar_al_portapapeles", lambda t: False)
+    avisos = []
+    assert bandeja.copiar_y_avisar("http://192.168.3.26:8000", avisos.append) is False
+    assert len(avisos) == 1 and "No se pudo copiar" in avisos[0] and "http://192.168.3.26:8000" in avisos[0]
+
+
+def test_el_menu_copia_con_aviso_por_el_canal_de_acciones(tmp_path, monkeypatch):
+    monkeypatch.setattr(bandeja, "direccion_red", lambda: "192.168.1.20")
+    monkeypatch.setattr(bandeja, "copiar_al_portapapeles", lambda t: False)
+    avisos = []
+    acciones = _acciones([])
+    acciones.notificar = avisos.append
+    entradas = bandeja.opciones(_estado(tmp_path, en_red=True), acciones)
+    entradas[1][1]()
+    assert avisos and "http://192.168.1.20:8000" in avisos[0]
+
+
+def test_sin_ruta_hacia_afuera_usa_la_ip_del_adaptador_de_oficina(monkeypatch):
+    """
+    Una PC de planta sin internet no tiene puerta de enlace: ninguna ruta
+    hacia 10.x ni hacia 8.8.8.8. Antes eso era "Sin red" en una máquina que
+    estaba en la red. La virtual (172.21, WSL) y la de autoconfiguración
+    (169.254) no sirven para otra PC.
+    """
+    monkeypatch.setattr(bandeja, "_ip_de_salida_hacia", lambda destino: None)
+    monkeypatch.setattr(bandeja, "_ips_de_los_adaptadores",
+                        lambda: ["127.0.0.1", "172.21.192.1", "169.254.7.7", "192.168.3.26"])
+    assert bandeja.direccion_red() == "192.168.3.26"
+
+
+def test_con_ruta_manda_la_tabla_de_rutas_y_no_los_adaptadores(monkeypatch):
+    monkeypatch.setattr(bandeja, "_ip_de_salida_hacia", lambda destino: "10.0.5.14" if destino.startswith("10.") else None)
+    monkeypatch.setattr(bandeja, "_ips_de_los_adaptadores", lambda: ["192.168.99.1"])
+    assert bandeja.direccion_red() == "10.0.5.14"
+
+
+def test_sin_ninguna_ip_util_no_inventa_una(monkeypatch):
+    monkeypatch.setattr(bandeja, "_ip_de_salida_hacia", lambda destino: None)
+    monkeypatch.setattr(bandeja, "_ips_de_los_adaptadores", lambda: ["127.0.0.1", "169.254.1.1"])
+    assert bandeja.direccion_red() is None
