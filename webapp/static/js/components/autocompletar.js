@@ -59,16 +59,31 @@ function filtrar(opciones, prefijo) {
 }
 
 /**
+ * El campo entero es el nombre, sin llaves: la variable de una decisión. Se
+ * completa desde el principio del campo y se abre también al enfocar, porque
+ * no hay `{` que tipear para pedir la lista.
+ */
+function nombreEnCurso(texto, cursor) {
+  const antes = texto.slice(0, cursor);
+  return /^[\w.]*$/.test(antes) ? { desde: 0, prefijo: antes } : null;
+}
+
+/**
  * @param {HTMLInputElement|HTMLTextAreaElement} campo
  * @param {() => Array<{nombre: string, detalle?: string}>|Promise} obtenerOpciones
  *   `nombre` es lo que va entre llaves (`ruta`, `env.CLAVE`); `detalle` es de
  *   dónde sale, para leerlo al lado ("la deja Mover PDF").
+ * @param {{sinLlaves?: boolean}} opciones  `sinLlaves`: el campo es un nombre
+ *   pelado y no un texto con `{variables}` adentro — la variable de un nodo de
+ *   decisión, que el núcleo lee por nombre y no interpola.
  */
-export function autocompletar(campo, obtenerOpciones) {
+export function autocompletar(campo, obtenerOpciones, { sinLlaves = false } = {}) {
   let lista = null;      // el <div> del desplegable, o null si está cerrado
   let visibles = [];     // las opciones dibujadas, en orden
   let elegida = 0;
   let enCurso = null;    // {desde, prefijo} de la variable que se está escribiendo
+  const detectar = sinLlaves ? nombreEnCurso : variableEnCurso;
+  const escribir = (nombre) => (sinLlaves ? nombre : `{${nombre}}`);
 
   const cerrar = () => {
     if (lista) lista.remove();
@@ -81,7 +96,7 @@ export function autocompletar(campo, obtenerOpciones) {
     if (!enCurso) return;
     const valor = campo.value;
     const cursor = campo.selectionStart;
-    const texto = `{${opcion.nombre}}`;
+    const texto = escribir(opcion.nombre);
     campo.value = valor.slice(0, enCurso.desde) + texto + valor.slice(cursor);
     const fin = enCurso.desde + texto.length;
     campo.setSelectionRange(fin, fin);
@@ -111,7 +126,7 @@ export function autocompletar(campo, obtenerOpciones) {
         onMousedown: (e) => { e.preventDefault(); insertar(o); },
         onMousemove: () => { if (elegida !== i) { elegida = i; dibujar(); } },
       }, [
-        h("span", { class: "autocompletar__nombre mono", text: `{${o.nombre}}` }),
+        h("span", { class: "autocompletar__nombre mono", text: escribir(o.nombre) }),
         o.detalle ? h("span", { class: "autocompletar__detalle", text: o.detalle }) : null,
       ])));
     const activa = lista.children[elegida];
@@ -119,7 +134,7 @@ export function autocompletar(campo, obtenerOpciones) {
   };
 
   const abrir = async () => {
-    enCurso = variableEnCurso(campo.value, campo.selectionStart);
+    enCurso = detectar(campo.value, campo.selectionStart);
     if (!enCurso) { cerrar(); return; }
     let opciones;
     try {
@@ -128,7 +143,7 @@ export function autocompletar(campo, obtenerOpciones) {
       opciones = [];
     }
     // Mientras se esperaba la lista el cursor pudo moverse o el campo perder el foco.
-    enCurso = variableEnCurso(campo.value, campo.selectionStart);
+    enCurso = detectar(campo.value, campo.selectionStart);
     if (!enCurso || document.activeElement !== campo) { cerrar(); return; }
     visibles = filtrar(opciones || [], enCurso.prefijo);
     if (!visibles.length) { cerrar(); return; }
@@ -145,6 +160,8 @@ export function autocompletar(campo, obtenerOpciones) {
 
   campo.addEventListener("input", abrir);
   campo.addEventListener("click", () => { if (lista) abrir(); });
+  // Un nombre pelado no tiene `{` que dispare la lista: se abre al entrar al campo.
+  if (sinLlaves) campo.addEventListener("focus", abrir);
   campo.addEventListener("blur", cerrar);
   campo.addEventListener("keydown", (e) => {
     if (!lista) return;

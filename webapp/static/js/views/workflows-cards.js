@@ -208,9 +208,18 @@ function contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila = 
     (valor) => { nodo.display = valor; alCambiar({ redibujar: false }); }));
 
   if (nodo.type === "decision") {
-    partes.push(campoTexto("Variable", nodo.variable || "",
-      "El valor que se compara en las condiciones de las aristas que salen de acá.",
-      (valor) => { nodo.variable = valor; alCambiar({ redibujar: false }); }));
+    // La variable se escribe pelada, sin llaves: el núcleo la lee por nombre
+    // (`decision_value`: primero la fila, después las salidas de los nodos
+    // anteriores) y no la interpola. La lista se abre al entrar al campo.
+    const campoVariable = campoTexto("Variable", nodo.variable || "",
+      "Sin llaves. Se busca primero en la fila y después en las salidas de los nodos anteriores; "
+      + "las condiciones de las aristas comparan contra su valor.",
+      (valor) => { nodo.variable = valor; alCambiar({ redibujar: false }); });
+    autocompletar(campoVariable.querySelector("input"),
+      () => opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila), { sinLlaves: true });
+    partes.push(campoVariable);
+    partes.push(subtitulo("Variables que puede comparar", "de la fila y de los nodos anteriores"));
+    partes.push(variablesDeDecision(id, grafo, catalogo, columnasDeLaFila));
     partes.push(...aristas(id, grafo, alCambiar));
     return h("div", { style: { borderTop: "1px solid var(--borde)" } }, partes);
   }
@@ -638,6 +647,37 @@ async function opcionesDeVariables(id, grafo, catalogo, columnasDeLaFila) {
   })) : [];
   const salidas = salidasAguasArriba(id, grafo, catalogo).flatMap(opcionesDeSalida);
   return [...columnas, ...salidas, ...(await nombresDeEnv())];
+}
+
+/**
+ * Lo que una decisión puede comparar. Es menos que lo que un param puede
+ * interpolar, y a propósito: `decision_value` lee la fila y después `vars` por
+ * nombre pelado, así que no entran las variables de Config ni `{NODO.salida}`
+ * (con dos nodos que dejan la misma salida, vale la del último que corrió, y
+ * acá no hay forma de elegir).
+ */
+async function opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila) {
+  const fila = columnasDeLaFila ? await Promise.resolve(columnasDeLaFila()).catch(() => null) : null;
+  const columnas = fila ? fila.columnas.map((c) => ({
+    nombre: c.nombre,
+    detalle: `columna de la fila · ${fila.fuente}` + (c.ejemplo ? ` · ej. ${c.ejemplo}` : ""),
+  })) : [];
+  const salidas = salidasAguasArriba(id, grafo, catalogo).map((s) => ({ nombre: s.nombre, detalle: quienLaDeja(s) }));
+  return [...columnas, ...salidas];
+}
+
+/** El helper de la decisión: las mismas opciones que la lista, como fichas sin llaves. */
+function variablesDeDecision(id, grafo, catalogo, columnasDeLaFila) {
+  const fichas = h("div", { class: "fichas" }, [
+    h("span", { class: "ficha", title: "Cualquier columna de la fila de la fuente" }, ["columna de la fila"]),
+  ]);
+  const nota = h("div", { class: "campo__ayuda", text:
+    "Se escribe el nombre solo, sin llaves. Las variables de Config no valen acá." });
+  Promise.resolve(opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila)).then((opciones) => {
+    if (!opciones.length) return;
+    poner(fichas, ...opciones.map((o) => h("span", { class: "ficha", title: o.detalle || "" }, [o.nombre])));
+  }).catch(() => {});
+  return h("div", { style: { padding: "0 13px 11px" } }, [fichas, nota]);
 }
 
 /**

@@ -6,6 +6,15 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **La tarjeta de decisión también ofrece las variables.** El campo Variable
+  abre la lista al entrar (sin tipear `{`, porque la variable de una decisión
+  se escribe pelada: `decision_value` la lee por nombre) con las columnas de la
+  fila y las salidas de los nodos anteriores, y un helper "Variables que puede
+  comparar" con las mismas fichas. No entran las variables de Config ni
+  `{NODO.salida}`, porque el núcleo no las resuelve ahí (`autocompletar` con
+  `sinLlaves`, `opcionesDeDecision` en `views/workflows-cards.js`). Verificado
+  por CDP: al enfocar aparecen las seis columnas, `sta` filtra a `state`,
+  Enter deja `state` sin llaves.
 - **Cambiar de pestaña vuelve a donde se estaba.** La pestaña iba a la raíz de
   la vista (`#/sources`) y la vista elegía la primera fuente: se perdían los
   filtros de la grilla y el flujo que se estaba editando. Ahora el router
