@@ -294,6 +294,10 @@
 /* Opt-in por columna. La grilla de casos trunca a una línea a propósito;
    una tabla de diagnóstico o de rutas necesita envolver o no se lee. */
 .tabla__celda--envuelve { white-space: normal; overflow-wrap: anywhere; }
+/* La copia de la primera fila que una columna `ancho: "contenido"` lleva en la
+   cabecera para medir igual que el cuerpo (tabla.js). Sin alto, sin verse y sin
+   la negrita de la cabecera, que la haría más ancha que las filas. */
+.tabla__fantasma { height: 0; overflow: hidden; visibility: hidden; font-weight: normal; }
 .tabla__fila--alto { align-items: flex-start; }
 .tabla__pie { padding: 7px 0; font-size: 11.5px; color: var(--texto-3); }
 .tabla__vacia { padding: 22px; text-align: center; color: var(--texto-3); font-size: 12.5px; line-height: 1.6; }

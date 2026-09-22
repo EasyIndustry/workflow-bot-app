@@ -708,10 +708,13 @@ async function seccionResource(plugin, recurso) {
   const items = datos.items || [];
 
   // Se muestran las tres primeras columnas del esquema, más la clave. Ver los
-  // demás campos es abrir el item: una tabla con doce columnas no se lee.
+  // demás campos es abrir el item: una tabla con doce columnas no se lee. La
+  // clave suele estar también entre los campos, y salía dos veces —"Nombre |
+  // Nombre"—, así que se la saca de los tres.
+  const campoClave = (recurso.fields || []).find((f) => f.name === claveDe);
   const columnas = [
-    { clave: claveDe, label: "Nombre", ancho: "230px", peso: "600" },
-    ...(recurso.fields || []).slice(0, 3).map((f) => ({
+    { clave: claveDe, label: (campoClave && campoClave.label) || "Nombre", ancho: "230px", peso: "600" },
+    ...(recurso.fields || []).filter((f) => f.name !== claveDe).slice(0, 3).map((f) => ({
       clave: f.name, label: f.label || f.name, mono: true,
       ancho: f.type === "enum" ? "110px" : null,
       render: (fila) => {
@@ -722,7 +725,10 @@ async function seccionResource(plugin, recurso) {
       },
     })),
     {
-      clave: "_acciones", label: "", ancho: accionesDeFila(plugin, recurso).length ? "210px" : "122px",
+      // Lo que ocupen los botones: cuántos hay y qué dicen lo decide el plugin
+      // (sus Actions sobre la colección), así que un ancho fijo se quedaba
+      // corto y "Probar", "Comparar contenido" y el tacho salían recortados.
+      clave: "_acciones", label: "", ancho: "contenido",
       render: (fila) => h("div", { style: { display: "flex", gap: "6px" } }, [
         // Las Actions que el plugin declaró **sobre esta colección**. El
         // contrato del núcleo dice que su botón va en la fila y no suelto, y

@@ -4,6 +4,22 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-09-22
+
+- **La botonera de una colección ya no sale recortada.** En Plug ins → Bots
+  conocidos, "Probar", "Comparar contenido", "Editar" y el tacho no entraban
+  en la columna de acciones, que tenía 210px fijos y ocultaba el resto. Cuántos
+  botones hay y qué dicen lo decide el plugin con sus Actions sobre la
+  colección, así que ningún número fijo sirve: la tabla (`components/tabla.js`)
+  acepta `ancho: "contenido"` y la columna mide lo que dibuja; la cabecera
+  lleva adentro, sin alto y sin verse, una copia de la primera fila para medir
+  igual y que las columnas de al lado alineen. De paso, la clave de la
+  colección salía dos veces ("Nombre | Nombre") porque también está entre los
+  campos; se la saca de los tres que se muestran. Verificado por CDP contra una
+  copia de los datos de la QA: cabecera y filas miden lo mismo y ningún botón
+  queda afuera de su celda. El tope de 900px de `.columna` sigue: no era la
+  causa.
+
 ## 2026-09-21
 
 - **Núcleo v0.3.1-beta.9** (core#28): el catálogo declara `flow.ejecutar` y
