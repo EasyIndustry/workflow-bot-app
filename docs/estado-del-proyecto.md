@@ -37,7 +37,14 @@ desarrollo o la PC de un cliente), no sólo con tests.
   sale de la conexión y el puerto del sobre (`origen_puerto`), así que llega
   autenticado por la clave; si del otro lado hay una app vieja que no lo manda,
   la dirección queda vacía en vez de inventada, porque vacía se ve. Con tests.
-  Encontrado por la sesión del plugin `bots`.
+  Encontrado por la sesión del plugin `bots`. Y el puerto se **valida** antes de
+  armar la dirección: que el sobre abra dice que del otro lado hay alguien con
+  la clave, no que lo de adentro sea sano —lo escribió otra máquina, con su
+  versión de la app—, así que un string o un número absurdo se interpolaba tal
+  cual y quedaba guardado como la dirección de un par, que es lo que después se
+  muestra y se compara. De paso, un IPv6 va entre corchetes: `::1` suelto arma
+  `http://::1:8010`, que no es una URL y termina igual que el puerto adivinado.
+  Encontrado en revisión, en paralelo, por esta sesión y por la del release.
 - **La bandeja encuentra la dirección de red en una PC sin internet, y dice si
   copió.** `direccion_red` preguntaba a la tabla de rutas por dónde saldría un
   paquete hacia `10.x`; en una red `192.168.x` sin puerta de enlace no hay por

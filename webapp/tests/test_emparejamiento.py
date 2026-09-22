@@ -240,4 +240,9 @@ def test_importar_avisa_si_pisa_uno_que_ya_estaba(client, data_dir, tmp_path):
 
     assert primera["reemplazo"] is None
     assert segunda["reemplazo"]["nombre"] == "uno"
+    # Y la clave tampoco sale por acá. Es la respuesta que dibuja Config →
+    # Emparejamientos al pisar uno, así que si se colara terminaría en pantalla.
+    assert "clave" not in primera
+    assert "clave" not in segunda
+    assert "clave" not in segunda["reemplazo"]
     otro.close()

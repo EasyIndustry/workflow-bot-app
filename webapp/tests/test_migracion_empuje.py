@@ -585,3 +585,50 @@ def test_sin_puerto_en_el_sobre_no_se_inventa_una_direccion(dos_bots):
 
     assert r.status_code == 200, r.text
     assert emparejamiento._leer(otro.boot.data_dir)[0]["url"] == ""
+
+
+@pytest.mark.parametrize("basura", [
+    "8000/../otra-cosa", "no-es-un-puerto", 0, -1, 99999, True,
+    {"puerto": 8010}, [8010], None,
+])
+def test_un_origen_puerto_raro_no_llega_a_la_direccion_guardada(dos_bots, basura):
+    """
+    Que el sobre abra dice que del otro lado hay alguien con la clave, no que
+    lo de adentro sea sano: lo escribió otra máquina. Sin validar, esto se
+    interpolaba tal cual en la dirección del par, que después se muestra en
+    Config → Emparejamientos y se compara en `para_url` — o sea que una
+    dirección basura se termina leyendo como "falta emparejar".
+    """
+    _, otro = dos_bots
+    fila = emparejamiento._leer(otro.boot.data_dir)[0]
+    sobre = emparejamiento.sellar(
+        fila, {"que": "flujos", "items": [], "origen_puerto": basura})
+
+    anterior = core_api._instance
+    core_api._instance = otro
+    try:
+        r = _cliente("192.168.1.77").post("/api/core/migrar/recibir", json=sobre)
+    finally:
+        core_api._instance = anterior
+
+    assert r.status_code == 200, r.text
+    assert emparejamiento._leer(otro.boot.data_dir)[0]["url"] == ""
+
+
+def test_una_ip_v6_va_entre_corchetes(dos_bots):
+    """`::1` suelto arma `http://::1:8010`, que no es una URL y no vuelve a
+    coincidir con nada — el mismo final que el puerto adivinado."""
+    _, otro = dos_bots
+    fila = emparejamiento._leer(otro.boot.data_dir)[0]
+    sobre = emparejamiento.sellar(
+        fila, {"que": "flujos", "items": [], "origen_puerto": 8010})
+
+    anterior = core_api._instance
+    core_api._instance = otro
+    try:
+        r = _cliente("fe80::1").post("/api/core/migrar/recibir", json=sobre)
+    finally:
+        core_api._instance = anterior
+
+    assert r.status_code == 200, r.text
+    assert emparejamiento._leer(otro.boot.data_dir)[0]["url"] == "http://[fe80::1]:8010"

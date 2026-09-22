@@ -1435,6 +1435,33 @@ async def migrar(body: MigrarBody, request: Request):
         raise HTTPException(400, str(exc)) from None
 
 
+def _puerto_del_sobre(valor) -> int | None:
+    """
+    El puerto que dijo el que empujó, validado antes de armar una URL con él.
+
+    Que el sobre esté autenticado dice que del otro lado hay alguien con la
+    clave, **no** que lo de adentro sea sano: lo escribió otra máquina, con su
+    propia versión de la app y sus propios bugs. Sin esto, cualquier cosa que
+    entre por acá —un string, una lista, un número absurdo— se interpola tal
+    cual y queda guardada como la dirección de un par: se muestra en Config →
+    Emparejamientos y se compara en `para_url`, así que una dirección basura se
+    lee después como "falta emparejar".
+
+    `bool` se descarta aparte porque en Python es un `int`, y `True` daría el
+    puerto 1.
+    """
+    if isinstance(valor, bool) or not isinstance(valor, int):
+        return None
+    return valor if 1 <= valor <= 65535 else None
+
+
+def _host_para_url(host: str) -> str:
+    """Un IPv6 va entre corchetes: `::1` suelto arma `http://::1:8000`, que no
+    es una URL y no vuelve a coincidir con nada. La IP la da la conexión, así
+    que acá no hay nada que validar, sólo que escribirla como corresponde."""
+    return f"[{host}]" if ":" in host else host
+
+
 @router.post("/migrar/recibir")
 async def migrar_recibir(sobre: dict, request: Request):
     """
@@ -1463,10 +1490,10 @@ async def migrar_recibir(sobre: dict, request: Request):
     # trae (una app vieja del otro lado) no se anota nada: vacía se ve,
     # inventada no.
     quien = request.client.host if request.client else ""
-    puerto = contenido.get("origen_puerto")
+    puerto = _puerto_del_sobre(contenido.get("origen_puerto"))
     await run_in_threadpool(
         emparejamiento.anotar_uso, data_dir, fila["id"],
-        f"http://{quien}:{puerto}" if quien and puerto else "")
+        f"http://{_host_para_url(quien)}:{puerto}" if quien and puerto else "")
     _regenerar_manual()
     return {
         "resultados": resultados,
