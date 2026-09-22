@@ -6,6 +6,17 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **La página se abre aunque el navegador tenga guardado el Bot viejo.** En la
+  PC de producción, Chrome y Edge mostraban `127.0.0.1:8000` en blanco: el
+  servidor entregaba la página nueva (`GET / 200`) y el navegador ejecutaba la
+  del Bot viejo que tenía guardada para esa dirección, pidiendo `state.js`,
+  `bots-red.js` y `/api/ks/...`, que ya no existen. En modo invitado entraba.
+  La página sale ahora con `Clear-Site-Data: "cache", "storage"` la primera vez
+  que un navegador la pide (cookie de marca `bot_limpio`), que borra la caché
+  y los service workers de ese origen; una sola vez porque también borra el
+  localStorage propio. Los navegadores la respetan en `127.0.0.1` y
+  `localhost`, que es donde pasa. Con tests del criterio; el efecto real se ve
+  en esa PC al recargar.
 - **Núcleo v0.3.1-beta.10 vendorizado: core#30, #29 y #19.** `{NODO.salida}`
   elige entre dos nodos que dejan la misma salida (`merge_outputs` agrupa
   además bajo el id del nodo; la plana sigue igual y gana si colisiona con un
