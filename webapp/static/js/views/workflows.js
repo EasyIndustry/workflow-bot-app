@@ -274,6 +274,11 @@ function dibujarSinElegir() {
 // ── El flujo abierto ────────────────────────────────────────────────────
 
 async function abrirFlujo(nombre) {
+  // El mismo flujo que ya estaba abierto, con cambios sin guardar: se vuelve a
+  // dibujar lo que hay en memoria. Volver de otra pestaña no puede descartar
+  // una edición a medias, y menos en silencio; el aviso "sin guardar" sigue ahí.
+  if (abierto && abierto.nombre === nombre && abierto.sucio) return dibujar();
+
   poner(shell.vista, h("div", { class: "cargando", text: "Cargando el flujo…" }));
 
   let wf, grafo;
@@ -287,24 +292,29 @@ async function abrirFlujo(nombre) {
   }
   if (!vigente()) return;
 
+  // Sin cambios pendientes se relee del servidor —otro Bot o un agente pueden
+  // haberlo guardado— pero cómo se estaba mirando (pestaña Nodos/Texto, tarjeta
+  // abierta, nodo elegido en el diagrama, dry run desplegado) se conserva.
+  const previo = abierto && abierto.nombre === nombre ? abierto : null;
   abierto = {
+    ...(previo || {}),
     nombre,
     wf,
     // El grafo se edita en memoria; el texto es la otra cara del mismo objeto.
     grafo: grafo.graph || grafo,
     diagnosticos: (grafo.graph || grafo).diagnostics || grafo.diagnostics || [],
     texto: wf.content || "",
-    modo: (abierto && abierto.nombre === nombre) ? abierto.modo : "tarjetas",
+    modo: previo ? previo.modo : "tarjetas",
     // Quién manda al guardar: el grafo o el texto — no necesariamente el
     // mismo que `modo` está mostrando. Cambian juntos casi siempre, pero la
     // tarjeta flotante del diagrama edita el grafo sin tocar `modo` (no
     // cambia de pestaña), así que tienen que ser dos cosas separadas o un
     // cambio ahí se perdería en silencio si `modo` seguía en "texto".
     fuenteDeVerdad: "grafo",
-    seleccionado: null,
+    seleccionado: previo ? previo.seleccionado : null,
     sucio: false,
-    dryRun: null,
-    dryAbierto: false,
+    dryRun: previo ? previo.dryRun : null,
+    dryAbierto: previo ? previo.dryAbierto : false,
     diagnosticoAbierto: false,
   };
   dibujar();

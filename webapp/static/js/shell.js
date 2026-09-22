@@ -6,7 +6,7 @@
  */
 
 import { h, poner, marca, vaciar, icono, ICONOS } from "./dom.js";
-import { irA } from "./router.js";
+import { irA, volverA } from "./router.js";
 
 export const PESTANAS = [
   { id: "sources", label: "Sources" },
@@ -57,7 +57,9 @@ export function crearShell(raiz) {
   const pestanas = h("div", { class: "pestanas" });
   const botones = {};
   for (const p of PESTANAS) {
-    const b = h("div", { class: "pestana", text: p.label, onClick: () => irA(p.id) });
+    // La pestaña vuelve a donde se dejó esa vista (la fuente, el flujo, el
+    // item), no a su primera pantalla: cambiar de pestaña no es perder el lugar.
+    const b = h("div", { class: "pestana", text: p.label, onClick: () => volverA(p.id) });
     botones[p.id] = b;
     pestanas.appendChild(b);
   }

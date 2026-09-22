@@ -6,7 +6,7 @@
  */
 
 import { crearShell } from "./shell.js";
-import { alCambiar, rutaActual, irA } from "./router.js";
+import { alCambiar, rutaActual, irA, recordarRuta } from "./router.js";
 import { h, poner } from "./dom.js";
 
 const VISTAS = {
@@ -36,6 +36,7 @@ async function navegar(ruta) {
 
   const cargar = VISTAS[id];
   if (!cargar) return pendiente(id);
+  recordarRuta({ vista: id, partes: ruta.partes });
 
   poner(shell.vista, h("div", { class: "cargando", text: "Cargando…" }));
   try {

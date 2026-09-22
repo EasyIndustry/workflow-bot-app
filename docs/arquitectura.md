@@ -72,7 +72,11 @@ pide un proxy que la ponga.
 
 Sin build: `index.html` carga `main.js`, que enruta por hash
 (`#sources/...`, `#workflows/<nombre>`, `#/config/<seccion>[/<subvista>]`,
-`#agente`, `#plugins`). Ninguna vista conoce un plugin por nombre: settings,
+`#agente`, `#plugins`). El router recuerda la última ruta completa de cada
+vista (`recordarRuta`/`volverA`, en sessionStorage) y la barra de pestañas
+vuelve por ahí: cambiar de pestaña no es perder la fuente con sus filtros ni el
+flujo a medio editar; el editor de flujos, además, no relee del servidor un
+flujo con cambios sin guardar. Ninguna vista conoce un plugin por nombre: settings,
 colecciones y acciones se dibujan desde `GET /tools`. Una sección que son dos
 pantallas se parte con `components/subvistas.js`, y la vista elegida va en la
 URL para que un enlace lleve a donde uno quiere. Tipear `{` en un parámetro de

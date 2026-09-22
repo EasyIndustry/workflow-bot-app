@@ -6,6 +6,16 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **Cambiar de pestaña vuelve a donde se estaba.** La pestaña iba a la raíz de
+  la vista (`#/sources`) y la vista elegía la primera fuente: se perdían los
+  filtros de la grilla y el flujo que se estaba editando. Ahora el router
+  recuerda la última ruta completa de cada vista (sessionStorage, por pestaña
+  del navegador) y la barra vuelve por ahí; la grilla ya redibujaba de memoria
+  la misma fuente, así que los filtros quedan. El editor de flujos no relee
+  del servidor un flujo con cambios sin guardar, y si no los tiene lo relee
+  pero conserva cómo se lo miraba (Nodos/Texto, nodo elegido, dry run
+  desplegado). Verificado por CDP: filtro "sin" de la columna Estado y nombre
+  visible editado sobreviven a Sources → Workflows → Sources.
 - **Núcleo v0.3.1-beta.11 vendorizado: core#31 y core#32, y la app los usa.**
   - *Un flujo declara su fuente* (`%% source:`, `Workflow.source`, columna
     nueva en `workflows`). En la app: selector "Fuente" en Propiedades y en
