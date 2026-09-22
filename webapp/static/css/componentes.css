@@ -326,6 +326,28 @@
 .autocompletar__nombre { font-weight: 600; color: var(--texto); white-space: nowrap; }
 .autocompletar__detalle { color: var(--texto-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ── {variables} resaltadas en un campo (components/resaltar-variables.js) ──
+   El input va arriba con el texto transparente y el cursor visible; el espejo
+   abajo, con las mismas clases del input, dibuja el mismo texto con cada
+   variable marcada. Los dos en la misma celda de una grilla para medir igual. */
+.resaltado { display: grid; }
+.resaltado > * { grid-area: 1 / 1; min-width: 0; }
+.resaltado__espejo { pointer-events: none; overflow: hidden; white-space: pre; color: var(--texto); }
+.resaltado__campo { position: relative; background: transparent; color: transparent; caret-color: var(--texto); }
+.resaltado__campo::selection { color: transparent; }
+/* Sin `font-weight`: la negrita ensancha la letra y el espejo dejaría de
+   coincidir con el input. El trazo se engorda con la sombra, que no mueve nada. */
+.variable {
+  color: var(--azul-oscuro); background: var(--azul-fondo); border-radius: 2px;
+  text-shadow: 0.35px 0 currentColor;
+}
+/* {NODO.salida}: la relación entera a la vista, el nodo en azul y la salida en
+   negro. Mientras el núcleo no resuelva esa forma (core#30) va en ámbar. */
+.variable--nodo .variable__nodo { color: var(--azul-oscuro); }
+.variable--nodo .variable__nombre { color: var(--texto); }
+.variable--sin-nucleo { background: var(--ambar-fondo); color: var(--ambar); }
+.variable--sin-nucleo .variable__nodo, .variable--sin-nucleo .variable__nombre { color: var(--ambar); }
+
 /* ── Modal ───────────────────────────────────────────────────────────── */
 
 .velo {

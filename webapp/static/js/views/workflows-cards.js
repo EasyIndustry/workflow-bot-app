@@ -16,6 +16,7 @@ import { h, poner, icono, ICONOS } from "../dom.js";
 import { api } from "../api.js";
 import { crearCampo } from "../components/campo.js";
 import { autocompletar } from "../components/autocompletar.js";
+import { resaltarVariables } from "../components/resaltar-variables.js";
 
 /**
  * @param {object} grafo      el grafo mutable que edita la vista
@@ -249,8 +250,11 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
   ]));
 
   // Lo que este nodo puede interpolar, para el autocompletado de cada campo. Se
-  // calcula al abrir la lista y no acá, así refleja el grafo del momento.
+  // calcula al abrir la lista y no acá, así refleja el grafo del momento. El
+  // resaltado además sabe qué nombres son nodos, para dibujar `{NODO.salida}`
+  // como la relación que es.
   const variables = () => opcionesDeVariables(id, grafo, catalogo);
+  variables.esNodo = (nombre) => Object.prototype.hasOwnProperty.call(grafo.nodes, nombre);
 
   if (manifest) {
     partes.push(subtitulo("Parámetros", "salen del manifest del tool"));
@@ -366,16 +370,19 @@ function paramDelCatalogo(nodo, p, alCambiar, plugin, variables) {
   campo.elemento.querySelectorAll("input, textarea, select").forEach((el) => {
     el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", escribir);
   });
-  conAutocompletado(campo.elemento, variables);
+  conVariables(campo.elemento, variables);
   return campo.elemento;
 }
 
 /**
- * Tipear `{` en cualquier campo de texto del param abre la lista de variables.
- * Un campo con `<datalist>` (el que ofrece los items de una colección) queda
- * afuera: el navegador ya le pone su propio desplegable y serían dos encimados.
+ * Los campos de texto de un param saben de variables: tipear `{` abre la lista
+ * (también en el textarea del JSON), y las `{variables}` escritas se ven
+ * marcadas dentro del campo (sólo en los de una línea). Un campo con
+ * `<datalist>` —el que ofrece los items de una colección— no abre la lista:
+ * el navegador ya le pone su propio desplegable y serían dos encimados.
  */
-function conAutocompletado(raiz, variables) {
+function conVariables(raiz, variables) {
+  raiz.querySelectorAll('input[type="text"]').forEach((el) => resaltarVariables(el, opcionesDeResaltado(variables)));
   if (!variables) return;
   raiz.querySelectorAll('input[type="text"]:not([list]), textarea').forEach((el) => autocompletar(el, variables));
 }
@@ -470,7 +477,7 @@ function paramLibre(nodo, clave, alCambiar, aceptado, variables) {
                                value: nodo.params[clave] ?? "",
                                onInput: (e) => { nodo.params[clave] = e.target.value; alCambiar({ redibujar: false }); } });
   if (variables) autocompletar(entrada, variables);
-  return h("div", { class: "campo" + (aceptado ? "" : " campo--falta") }, [
+  const elemento = h("div", { class: "campo" + (aceptado ? "" : " campo--falta") }, [
     h("div", { class: "campo__etiqueta" }, [
       h("div", { class: "campo__nombre mono", style: { fontSize: "11.5px" }, text: clave }),
     ]),
@@ -484,6 +491,16 @@ function paramLibre(nodo, clave, alCambiar, aceptado, variables) {
       aceptado ? null : h("div", { class: "campo__error", text: "El tool no declara este parámetro: al ejecutar se ignora." }),
     ]),
   ]);
+  resaltarVariables(entrada, opcionesDeResaltado(variables));
+  return elemento;
+}
+
+// El núcleo todavía no resuelve `{NODO.salida}`: es core#30. Cuando llegue
+// vendorizado, esto pasa a true y la marca deja de ser ámbar.
+const NODO_CALIFICADO_SOPORTADO = false;
+
+function opcionesDeResaltado(variables) {
+  return { esNodo: (variables && variables.esNodo) || (() => false), nodoSoportado: NODO_CALIFICADO_SOPORTADO };
 }
 
 /**

@@ -6,6 +6,21 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **Las `{variables}` se ven marcadas dentro del campo mientras se escribe.**
+  Un espejo detrás del input (`components/resaltar-variables.js`): el input
+  queda arriba con el texto transparente y el cursor visible, y debajo una caja
+  con las mismas clases dibuja el mismo texto con cada `{ruta}` marcada. Así
+  `C:\salida\{carpeta}\{env.CLIENTE}.pdf` se lee de un vistazo y lo guardado
+  sigue siendo texto plano con sus llaves. No es negrita de verdad: la negrita
+  ensancha la letra y el espejo dejaría de coincidir con el input; el peso se
+  hace con `text-shadow`. Una variable calificada por nodo, `{LLAMAR_A.response}`,
+  muestra la relación entera —nodo en azul oscuro, salida en negro— cuando el
+  primer tramo es un nodo del flujo; como el núcleo todavía no resuelve esa
+  forma (core#30), va en ámbar con el aviso, y pasa a azul cambiando
+  `NODO_CALIFICADO_SOPORTADO` en `views/workflows-cards.js` cuando llegue.
+  Sólo en los campos de una línea; el JSON del payload queda para después.
+  Verificado por CDP: espejo e input miden lo mismo, misma fuente y padding,
+  y escribir una variable nueva la marca al instante.
 - **Un param con `placeholder` en el manifest se dibuja con su ejemplo adentro
   del campo** (core#29, todavía sin implementar en el núcleo: el vendorizado
   v0.3.1-beta.9 no lo tiene). La app lo lee de la entrada del catálogo en
