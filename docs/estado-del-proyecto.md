@@ -6,6 +6,23 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-22
 
+- **El formulario de Acciones ofrece el buscador que el param declara.** Un
+  `Param` con `options_from` nombra una colección del mismo plugin cuyos items
+  son sus valores típicos, y el editor de flujos ya lo dibujaba como texto con
+  buscador desde core#27 — pero en Plug ins no, así que la misma Action que en
+  un nodo ofrecía la lista, disparada a mano, era un texto pelado y había que
+  acordarse del nombre exacto. `campo.js` ya sabía hacerlo; lo que faltaba era
+  que quien arma el formulario le dijera cómo traer los valores, igual que en
+  `workflows-cards.js`. Sigue siendo texto y no un `<select>`: el valor puede
+  ser una `{variable}` que recién se resuelve al correr, y por eso el núcleo lo
+  declara informativo. Sólo `Param` lo tiene —ni `Setting` ni `Field`—, así que
+  los formularios de settings y de un item no cambian: la pantalla no promete
+  lo que el contrato no da. Verificado por CDP contra una instalación con un
+  plugin de prueba que lo declara: el campo queda input + datalist con las
+  claves de la colección, el param sin `options_from` sigue pelado, y una
+  `{variable}` se puede escribir igual. Pedido por la sesión del plugin `bots`:
+  es lo que le va a dar el desplegable de direcciones a `bots.migrar`, cuyo
+  param `destino` ya declara `options_from`.
 - **Emparejar dos Bots se puede hacer desde la app.** Los cuatro endpoints
   estaban desde el 20/09 y ningún JS los llamaba: la única forma de emparejar
   era un `Invoke-RestMethod` a mano en las dos máquinas, y quien intentaba

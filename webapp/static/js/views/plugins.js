@@ -936,8 +936,37 @@ function seccionAcciones(plugin) {
   ];
 }
 
+/**
+ * Los mismos params, con el buscador que cada uno declara.
+ *
+ * Un `Param` con `options_from` nombra una colección **del mismo plugin** cuyos
+ * items son sus valores típicos (`contract.py`), y `campo.js` ya sabe dibujarlo
+ * como texto con buscador — pero pide que quien arma el campo le diga cómo
+ * traer los valores, y hace bien: así el componente no importa `api` ni sabe de
+ * colecciones. El editor de flujos ya lo resuelve igual
+ * (`workflows-cards.js`); acá faltaba, así que un param que declaraba de dónde
+ * salen sus valores se dibujaba como un texto pelado y había que acordarse del
+ * nombre exacto.
+ *
+ * Es una ayuda y no una lista cerrada: el valor puede ser una `{variable}` que
+ * recién se resuelve al correr, y por eso el núcleo declara `options_from`
+ * informativo y no lo valida. Que el nombre exista sí lo validó `registry` al
+ * cargar el plugin, así que acá se confía en él y un fallo al traer la lista
+ * deja el campo como estaba.
+ *
+ * Sólo `Param` lo declara: ni `Setting` ni `Field` lo tienen, así que los
+ * formularios de settings y de un item no pasan por acá. Cuando el núcleo se
+ * los dé, es agregar la llamada — no cambiar esto.
+ */
+function conBuscadores(plugin, params) {
+  return (params || []).map((p) => (p.options_from
+    ? { ...p, opciones: () => api.clavesDeColeccion(plugin.name, p.options_from) }
+    : p));
+}
+
 function tarjetaDeAccion(plugin, accion) {
-  const form = (accion.params || []).length ? crearFormulario(accion.params) : null;
+  const params = conBuscadores(plugin, accion.params);
+  const form = params.length ? crearFormulario(params) : null;
   const resultado = h("div", { style: { marginTop: "10px" } });
 
   // `cual` deja que la vista de un resultado dispare **otra** Action del mismo
@@ -1226,7 +1255,7 @@ async function dibujarItem(plugin, recurso, clave) {
   // ejemplo "vars", los valores para resolver un {id_externo} incrustado en la
   // URL o el payload. En un run real salen del contexto del caso; acá los da
   // quien está probando, así que necesitan su propio mini-formulario.
-  const extras = accion ? accionExtras(accion, recurso) : [];
+  const extras = conBuscadores(plugin, accion ? accionExtras(accion, recurso) : []);
   const extrasForm = extras.length ? crearFormulario(extras) : null;
 
   const botonProbar = accion ? h("button", {
