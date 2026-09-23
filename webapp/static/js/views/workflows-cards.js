@@ -686,7 +686,16 @@ function variablesDeDecision(id, grafo, catalogo, columnasDeLaFila) {
  */
 function variablesDisponibles(id, grafo, catalogo, columnasDeLaFila = null) {
   const salidas = salidasAguasArriba(id, grafo, catalogo);
-  const repetidas = salidas.filter((s) => s.de.length > 1);
+
+  // Dos nodos del mismo tool dejan todas sus salidas repetidas: una nota por
+  // salida eran cinco párrafos iguales, y se acumulaban cuanto más abajo
+  // estaba la tarjeta. Se agrupan por el juego de nodos que las deja.
+  const repetidas = new Map();
+  for (const s of salidas.filter((s) => s.de.length > 1)) {
+    const clave = s.nodos.join("|");
+    if (!repetidas.has(clave)) repetidas.set(clave, { de: s.de, nodos: s.nodos, nombres: [] });
+    repetidas.get(clave).nombres.push(s.nombre);
+  }
 
   // Las columnas de la fila llegan después, de una página de la fuente con la
   // que este flujo corrió por última vez: se dibuja la ficha genérica y se
@@ -728,9 +737,17 @@ function variablesDisponibles(id, grafo, catalogo, columnasDeLaFila = null) {
       : "Ningún nodo anterior deja salidas. Las que aparecen son las que siempre están." }),
     // El id del nodo (`N3`) es lo que el núcleo resuelve, y casi nunca es lo
     // que se ve en el diagrama: al lado va el nombre visible, para saber cuál es.
-    ...repetidas.map((s) => h("div", { class: "campo__ayuda", style: { color: "var(--ambar)" }, text:
-      `{${s.nombre}} la dejan ${s.de.join(" y ")}: así, vale la del último que corra. Para elegir, `
-      + s.nodos.map((n, i) => `{${n}.${s.nombre}}` + (s.de[i] !== n ? ` (${s.de[i]})` : "")).join(" o ") + "." })),
+    ...[...repetidas.values()].map((g) => {
+      const quienes = g.de.slice(0, -1).join(", ") + " y " + g.de[g.de.length - 1];
+      const cuales = g.nombres.length === 1
+        ? `{${g.nombres[0]}}`
+        : `${g.nombres.length} salidas (${g.nombres.join(", ")})`;
+      const ej = g.nombres[0];
+      return h("div", { class: "campo__ayuda", style: { color: "var(--ambar)" }, text:
+        `${quienes} dejan ${g.nombres.length === 1 ? "" : "las mismas "}${cuales}: con el nombre solo, vale la del último que corra. `
+        + "Para elegir, se antepone el nodo: "
+        + g.nodos.map((n, i) => `{${n}.${ej}}` + (g.de[i] !== n ? ` es la de ${g.de[i]}` : "")).join(", ") + "." });
+    }),
   ]);
 }
 
