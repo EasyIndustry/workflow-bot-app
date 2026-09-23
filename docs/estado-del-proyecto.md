@@ -6,6 +6,11 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-23
 
+- **La rueda sobre el nodo abierto del lienzo scrollea sus params** en vez
+  de hacer zoom (rama `lienzo-n8n-main`, v0.5.0-lienzo.2). Ctrl+rueda sigue
+  siendo zoom en cualquier lado, y al llegar al final del panel la rueda no
+  sigue de largo. Verificado por CDP con eventos de rueda reales.
+
 - **"Solo diagrama" en Workflows** (rama `lienzo-n8n-main`): un tercer botón
   al lado de Tarjetas/Texto esconde la columna izquierda y le deja la fila
   entera al lienzo, que ya agrega, conecta y edita los nodos en el lugar. Se

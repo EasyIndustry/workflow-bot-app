@@ -475,6 +475,11 @@ function crearLienzo(svg, anchoBase, altoBase, contenedor) {
   };
 
   const alRueda = (e) => {
+    // Sobre el nodo abierto la rueda es del panel, que scrollea sus params:
+    // haciendo zoom ahí, un tool con muchos params sólo se recorría arrastrando
+    // la barra. Ctrl+rueda (y el pellizco del trackpad, que llega así) sigue
+    // siendo zoom en cualquier lado.
+    if (!e.ctrlKey && e.target.closest && e.target.closest("foreignObject")) return;
     e.preventDefault();
     // Exponencial y no lineal: así una rueda de mouse (saltos de ~100) y un
     // trackpad (deltas chicos y continuos) dan la misma sensación de zoom,

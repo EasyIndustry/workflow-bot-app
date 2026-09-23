@@ -69,7 +69,9 @@ export function panelDeNodo(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirC
       h("button", { class: "btn btn--chico", text: "Abrir en Tarjetas", onClick: alAbrirCompleta }),
       h("button", { class: "btn btn--chico", title: "Cerrar", onClick: alCerrar }, [icono(ICONOS.cerrar, 11, 2)]),
     ]),
-    h("div", { style: { flex: "1", minHeight: "0", overflow: "auto" } }, [
+    // `overscrollBehavior`: al llegar al final, la rueda no sigue de largo a
+    // scrollear lo que haya detrás del lienzo.
+    h("div", { style: { flex: "1", minHeight: "0", overflow: "auto", overscrollBehavior: "contain" } }, [
       paso ? resultadoDry(paso) : null,
       contenidoDeNodo(id, grafo, catalogo, alCambiar, columnasDeLaFila),
     ]),
