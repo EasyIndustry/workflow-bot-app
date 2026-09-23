@@ -6,6 +6,14 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-23
 
+- **El aviso de salidas repetidas en una tarjeta va de a una línea por
+  grupo de nodos, no por salida.** Dos nodos del mismo tool dejan todas sus
+  salidas repetidas, y la tarjeta mostraba un párrafo ámbar por cada una
+  (cinco casi iguales con Verificar log y Agregar QR), que se acumulaban
+  cuanto más abajo estaba el nodo. Ahora se agrupan por el juego de nodos
+  que las deja y se da un solo ejemplo de `{NODO.salida}`
+  (`views/workflows-cards.js`). Verificado por CDP con un grafo de dos pares.
+
 - **Campana de notificaciones de releases, y el changelog se puede leer
   entero sin ir a GitHub.** Dos pedidos sueltos:
   - Un botón en `.pestanas` (no adentro de ninguna vista, como el de Avisos
