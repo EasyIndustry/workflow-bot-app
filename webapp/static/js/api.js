@@ -143,6 +143,11 @@ export const api = {
   config: () => pedir("/config"),
   guardarConfig: (values) => pedir("/config", { metodo: "PATCH", cuerpo: { values } }),
 
+  // Cómo se llama este Bot (webapp/identidad.py). `resumen()` ya lo trae, así
+  // que esto es sólo para la pantalla de Config que lo edita.
+  identidad: () => pedir("/identidad"),
+  guardarIdentidad: (nombre) => pedir("/identidad", { metodo: "PUT", cuerpo: { nombre } }),
+
   // Variables y secretos. No hay un `get` de un secreto: el almacén es
   // write-only, así que el valor no existe del lado del navegador.
   env: () => pedir("/env"),

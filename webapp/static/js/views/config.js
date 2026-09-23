@@ -5,9 +5,8 @@
  * Es la razón por la que esta pantalla no crece cuando se instala un plugin —
  * que es cómo el front viejo terminó con nueve secciones escritas a mano.
  *
- * Seis secciones tienen backend y funcionan; General está diseñada y todavía
- * no. Las que no, lo dicen y nombran lo que falta, en vez de mostrar controles
- * que no hacen nada.
+ * Las secciones tienen backend y funcionan. Las que no lo tengan lo dicen y
+ * nombran lo que falta, en vez de mostrar controles que no hacen nada.
  */
 
 import { h, poner, icono, ICONOS } from "../dom.js";
@@ -23,6 +22,7 @@ let shell = null;
 let confirmacion = null;
 
 const SECCIONES = [
+  { id: "general", label: "General", dibujar: dibujarGeneral },
   { id: "secretos", label: "Configurar entorno", dibujar: dibujarSecretos },
   { id: "almacenamiento", label: "Almacenamiento", dibujar: dibujarAlmacenamiento },
   { id: "limites", label: "Alcance", dibujar: dibujarLimites },
@@ -93,6 +93,54 @@ function consumirConfirmacion() {
   const c = confirmacion;
   confirmacion = null;
   return typeof c === "string" ? aviso("ok", c, null) : aviso(c.tono, c.texto, null);
+}
+
+// ── General ──────────────────────────────────────────────────────────────
+//
+// Cómo se llama este Bot (webapp/identidad.py). No es un setting de plugin
+// —por eso no vive en la pantalla de ningún plugin— y tampoco es un límite
+// que impida arrancar como los de boot.env: es un rótulo, y se usa sobre
+// todo para titular la pestaña, así que con varios Bots abiertos en el mismo
+// navegador se distinguen por su nombre y no por la URL.
+
+async function dibujarGeneral() {
+  const { nombre } = await api.identidad();
+  const campoNombre = crearCampo({
+    name: "nombre", type: "str", label: "Nombre de este Bot",
+    doc: "Titula la pestaña del navegador al abrirse — la propia, o la que otra " +
+      "máquina abre con la IP de ésta. Vacío deja \"Bot\" genérico.",
+  }, nombre || "");
+
+  const error = h("div", { class: "aviso aviso--error", style: { display: "none", margin: "12px 0 0" } });
+
+  return [
+    encabezado("General", "Lo que identifica a esta instalación, más allá de su URL."),
+    consumirConfirmacion(),
+
+    h("div", { class: "seccion" }, [h("span", { text: "IDENTIDAD" })]),
+    h("div", { class: "tarjeta" }, [
+      campoNombre.elemento,
+      error,
+      h("div", { style: { padding: "0 13px 13px" } }, [
+        h("button", { class: "btn btn--primario", text: "Guardar", onClick: async () => {
+          try {
+            await api.guardarIdentidad(campoNombre.leer().trim());
+            confirmacion = "Se guardó el nombre.";
+            await dibujarSeccion(seccionPorId("general"));
+          } catch (e) {
+            error.style.display = "";
+            poner(error, h("div", { class: "aviso__cuerpo", text: e.message }));
+          }
+        } }),
+      ]),
+    ]),
+
+    h("div", { class: "tabla__pie", style: { lineHeight: "1.55" }, text:
+      "Lo lee cualquiera que sepa la URL de este Bot con GET /api/core/identidad — no es un " +
+      "secreto. Es lo que un plugin que conecta varios Bots por IP (como \"bots\" del catálogo) " +
+      "puede usar para saber cómo se llama el que está del otro lado, sin que este Bot tenga " +
+      "ese plugin ni ningún otro instalado." }),
+  ];
 }
 
 // ── Secretos y variables ────────────────────────────────────────────────

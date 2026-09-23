@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import contexto_agente, db_view, emparejamiento, items_secretos, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, emparejamiento, identidad, items_secretos, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -162,6 +162,10 @@ def get_overview():
     actores = _instance.users.list(include_disabled=False)
     return {
         "root": str(ROOT),
+        # Cómo se llama este Bot (webapp/identidad.py). Vacío = nunca se puso
+        # uno; `main.js` lo usa para titular la pestaña sin esperar a que se
+        # abra ninguna pantalla.
+        "nombre": identidad.nombre(_instance),
         # `fs_root` es el único límite que decide si un flujo llega o no a un
         # archivo, y era el único que no se veía en ninguna pantalla: se
         # descubría en producción como "PortError: ruta fuera del árbol
@@ -297,6 +301,31 @@ def get_config():
 def patch_config(body: ConfigBody):
     """Mergea las claves dadas; el resto queda como está."""
     return {"values": _instance.config.update(body.values)}
+
+
+# ── Identidad ────────────────────────────────────────────────────────────
+
+
+class IdentidadBody(BaseModel):
+    nombre: str = ""
+
+
+@router.get("/identidad")
+def get_identidad():
+    """
+    Cómo se llama este Bot. Sin autenticación propia, como el resto de esta
+    API sobre HTTP plano (ver decisiones.md, "Los secretos viajan en un
+    sobre"): no es un secreto, así que un Bot remoto que ya conoce esta URL
+    —el plugin `bots`, por ejemplo— la puede leer para nombrar la pestaña que
+    abre hacia acá, sin que este Bot tenga instalado ningún plugin.
+    """
+    return {"nombre": identidad.nombre(_instance)}
+
+
+@router.put("/identidad")
+def put_identidad(body: IdentidadBody):
+    """Guarda el nombre. Vacío lo borra: no hay nombre por defecto inventado."""
+    return {"nombre": identidad.guardar_nombre(_instance, body.nombre)}
 
 
 # ── Límites de archivos ─────────────────────────────────────────────────

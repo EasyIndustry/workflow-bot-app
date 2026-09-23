@@ -39,6 +39,7 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `webapp/contexto_agente.py` | el manual agéntico: `describir` (el `describe_installation` del núcleo más fuentes y notas) y el `AGENTS.md` que se deja en la instalación al arrancar y al cambiar flujos, plugins o colecciones |
 | `webapp/plugin_install.py` · `plugin_catalog.py` | instalar un plugin desde archivo o desde el catálogo en GitHub, validando en otro proceso |
 | `webapp/updates.py` | actualizar `backend/` y `webapp/` desde releases, por `Componente` |
+| `webapp/identidad.py` | cómo se llama este Bot (Config → General); `main.js` lo usa para titular la pestaña |
 | `webapp/agent_providers.py` · `instalar_agente.py` · `mcp_registration.py` · `mcp_servidor.py` · `agent_terminal.py` | la pestaña Agente: CLIs, su instalación, su registro MCP, el servidor MCP de la instalación, la terminal por websocket |
 | `webapp/bandeja.py` | el ícono de la bandeja del sistema |
 | `webapp/static/js/views/*.js` | una vista por pestaña; `api.js` es el único que habla con la API; `dom.js` el `h()` |
@@ -47,7 +48,8 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 
 | Ruta | Para qué |
 |---|---|
-| `GET /overview` | resumen |
+| `GET /overview` | resumen; trae `nombre` (webapp/identidad.py) para que `main.js` titule la pestaña sin otro viaje |
+| `GET/PUT /identidad` | cómo se llama este Bot. Sin autenticación propia, igual que el resto de esta API: no es un secreto, así que un plugin que conecte Bots por IP lo puede leer sin que este Bot tenga ese plugin instalado |
 | `GET/PUT /workflows[/<n>]`, `GET /workflows/<n>/graph` | flujos |
 | `POST /validate` | dry run |
 | `POST /run` | correr y esperar |

@@ -54,6 +54,16 @@ async function navegar(ruta) {
 
 alCambiar(navegar);
 
+// El título de la pestaña es el nombre que esta instalación se puso (Config →
+// General, webapp/identidad.py), no siempre "Bot". Con varios Bots abiertos
+// en pestañas del mismo navegador —cada uno con su URL, por IP— es lo único
+// que distingue una de otra sin leer la barra de direcciones; y funciona
+// tanto en la pestaña propia como en la que otra máquina abrió con la IP de
+// ésta, porque cada Bot titula la suya sola, sin depender de qué la abrió.
+function titular(r) {
+  document.title = (r && r.nombre) || "Bot";
+}
+
 // Sin hash: una instalación recién hecha —sin plugins, fuentes ni flujos—
 // arranca en Inicio, que dice qué sigue; una en uso, en Plug ins como siempre.
 // Si el resumen no contesta, Plug ins igual: la pantalla de arranque no puede
@@ -61,8 +71,11 @@ alCambiar(navegar);
 if (!location.hash) {
   import("./api.js")
     .then(({ api }) => api.resumen())
-    .then((r) => irA(r.fresh ? "inicio" : "plugins"))
+    .then((r) => { titular(r); irA(r.fresh ? "inicio" : "plugins"); })
     .catch(() => irA("plugins"));
 } else {
   navegar(rutaActual());
+  // Con hash ya hay ruta: el título no puede esperar a que se resuelva, así
+  // que se pide aparte y en paralelo.
+  import("./api.js").then(({ api }) => api.resumen()).then(titular).catch(() => {});
 }

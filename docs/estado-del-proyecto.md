@@ -6,6 +6,23 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-23
 
+- **Cómo se llama este Bot, para titular la pestaña (`webapp/identidad.py`,
+  `GET`/`PUT /identidad`, Config → General).** Con varios Bots abiertos en
+  pestañas del mismo navegador —cada uno por su IP— todas decían "Bot" y no
+  se distinguían sin mirar la URL. El nombre se guarda por instalación en
+  `resource_store("webapp", ...)`, el mismo mecanismo que ya usa
+  `webapp/updates.py` para el repo de cada componente: no depende de ningún
+  plugin instalado. `/overview` lo trae junto con el resto, y `main.js` lo
+  usa como `document.title` en cuanto arranca, sea la pestaña propia o la
+  que otra máquina abrió con la IP de ésta — el Bot titula su propia
+  pestaña, así que no hace falta que quien la abre sepa el nombre de
+  antemano. Queda preparado para que el plugin `bots` del catálogo (conecta
+  varios Bots por IP) lo lea con un `GET` simple, sin instalarse nada de
+  este lado — pendiente coordinar con ese plugin qué usa exactamente al
+  abrir una pestaña nueva. Verificado por CDP: el título cambia al guardar
+  el nombre y las tres vistas tocadas (`config`, `plugins`, `inicio`)
+  importan sin error; `webapp/tests/test_identidad.py` verde.
+
 - **Núcleo v0.3.1-beta.12 vendorizado: core#33.** `FsPort.walk(max_depth)`
   para listar los hijos directos de una carpeta sin statear ni recursar todo
   el árbol: bajar a una subcarpeta de un share con 50k entradas costaba 80 s.
