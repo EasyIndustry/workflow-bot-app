@@ -28,6 +28,7 @@ import { dibujarGrafo } from "./workflows-graph.js";
 import { dibujarMermaid } from "./workflows-mermaid.js";
 import { pilaDeTarjetas, textoBuscable, crearNodo, quitarNodo } from "./workflows-cards.js";
 import { panelDeNodo } from "./workflows-node-panel.js";
+import { soloDiagrama, guardarSoloDiagrama } from "../preferencias.js";
 
 let shell = null;
 let flujos = [];
@@ -360,6 +361,15 @@ function dibujar() {
  * correr el límite entre una y otra.
  */
 function filaDeColumnas(a) {
+  // Con "Solo diagrama" la izquierda ni se arma —así `a.cajaTarjetas` queda en
+  // null y nadie le pone scroll a una caja fuera del documento—: el diagrama
+  // se queda con la fila entera, y el reparto del divisor vuelve intacto al
+  // mostrarla.
+  if (soloDiagrama()) {
+    return h("div", { style: { display: "flex", flex: "1", minHeight: "0" } }, [
+      h("div", { style: { flex: "1 1 auto", minWidth: "0", minHeight: "0", display: "flex" } }, [panelRender(a)]),
+    ]);
+  }
   // `display:flex` y no `overflow:auto` en cada columna: cada panel arma su
   // propio corte entre lo que queda fijo (el título, "Volver a parsear") y lo
   // que scrollea — sin esto, un texto largo hacía crecer el editor entero sin
@@ -487,18 +497,39 @@ function cabecera(a, errores, avisos) {
   ]);
 }
 
-/** Tarjetas ↔ texto. Un toggle porque es el mismo artefacto visto de dos formas. */
+/**
+ * Tarjetas ↔ texto ↔ sólo el diagrama. Un toggle porque es el mismo artefacto
+ * visto de varias formas. "Solo diagrama" no es un `modo`: esconde la columna
+ * izquierda y deja `a.modo` como estaba, así volver con Tarjetas o Texto
+ * encuentra lo mismo que había, y lo que decide qué se guarda
+ * (`fuenteDeVerdad`) no se entera.
+ */
 function toggle(a) {
+  const oculta = soloDiagrama();
   const boton = (modo, etiqueta) => h("button", {
-    class: "btn" + (a.modo === modo ? " btn--activo" : ""),
+    class: "btn" + (!oculta && a.modo === modo ? " btn--activo" : ""),
     text: etiqueta,
     onClick: () => {
-      if (a.modo === modo) return;
+      if (!oculta && a.modo === modo) return;
+      guardarSoloDiagrama(false);
       a.modo = modo;
       dibujar();
     },
   });
-  return h("div", { class: "grupo-botones" }, [boton("tarjetas", "Tarjetas"), boton("texto", "Texto")]);
+  return h("div", { class: "grupo-botones" }, [
+    boton("tarjetas", "Tarjetas"),
+    boton("texto", "Texto"),
+    h("button", {
+      class: "btn" + (oculta ? " btn--activo" : ""),
+      text: "Solo diagrama",
+      title: "Esconde la columna de Tarjetas/Texto: el lienzo agrega, conecta y edita los nodos ahí mismo",
+      onClick: () => {
+        if (oculta) return;
+        guardarSoloDiagrama(true);
+        dibujar();
+      },
+    }),
+  ]);
 }
 
 /**
@@ -797,10 +828,12 @@ function panelRender(a) {
     },
     alCerrar: () => { a.seleccionado = null; dibujar(); },
     alAbrirCompleta: () => {
-      // Pasa a la pila y cierra el nodo: un solo editor a la vista.
+      // Pasa a la pila y cierra el nodo: un solo editor a la vista. Con la
+      // columna escondida no habría pila a la que pasar, así que se muestra.
       a.abierta = id;
       a.seleccionado = null;
       a.modo = "tarjetas";
+      guardarSoloDiagrama(false);
       dibujar();
       const tarjeta = shell.vista.querySelector(`.tarjeta[data-nodo="${a.abierta}"]`);
       if (tarjeta) tarjeta.scrollIntoView({ block: "nearest" });

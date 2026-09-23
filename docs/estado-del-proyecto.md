@@ -6,6 +6,13 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-23
 
+- **"Solo diagrama" en Workflows** (rama `lienzo-n8n-main`): un tercer botón
+  al lado de Tarjetas/Texto esconde la columna izquierda y le deja la fila
+  entera al lienzo, que ya agrega, conecta y edita los nodos en el lugar. Se
+  recuerda por navegador (`preferencias.js`, como "incluir releases de
+  prueba"). No es un `modo`: Tarjetas o Texto la vuelven a mostrar con lo que
+  había, y "Abrir en Tarjetas" desde un nodo también. Verificado por CDP.
+
 - **El lienzo estilo n8n (`lienzo-n8n`, del 17/09) se puso al día con main
   en la rama `lienzo-n8n-main`**, para publicarlo como release opcional sin
   meterlo en main. El nodo abierto en el lienzo ahora recibe
