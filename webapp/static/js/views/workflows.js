@@ -45,6 +45,12 @@ let anchoIzquierdoPct = 55;
 // preferencia de cómo mirar, no del flujo.
 let render = "propio";
 
+// Las medidas del nodo abierto agrandado ({ancho, alto}), o null si va con el
+// tamaño de siempre. Misma razón que `render`: es cómo se mira, no el flujo,
+// así que abrir otro nodo u otro flujo lo respeta. Se toman del visor al
+// apretar el botón (`medidaGrande`), para que entre entero.
+let nodoGrande = null;
+
 // Estado del flujo abierto. Vive acá y no en el DOM porque el editor de tarjetas
 // y el de texto son vistas del mismo grafo.
 let abierto = null;
@@ -814,6 +820,11 @@ function panelRender(a) {
     paso: pinturaDry(a).pasos[id] || null,
     hayCorrida: Boolean(a.dryRun),
     columnasDeLaFila: () => columnasDeLaFila(a),
+    grande: Boolean(nodoGrande),
+    alAgrandar: () => {
+      nodoGrande = nodoGrande ? null : diagramaEl.medidaGrande();
+      dibujar();
+    },
     alCambiar: ({ redibujar }) => {
       a.sucio = true;
       // El grafo manda al guardar aunque `a.modo` siga en "texto": esto
@@ -854,6 +865,7 @@ function panelRender(a) {
     seleccionado: a.seleccionado,
     ...pintura,
     panelDeNodo: armarPanel,
+    nodoGrande,
     // Un segundo clic sobre el mismo nodo lo cierra, igual que en la pila de
     // Tarjetas.
     alClic: (id) => {

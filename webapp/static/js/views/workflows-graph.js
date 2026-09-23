@@ -45,6 +45,12 @@ const NODO_ALTO = 100;
 // una sola pasada.
 const NODO_ANCHO_ABIERTO = 400;
 const NODO_ALTO_ABIERTO = 420;
+// Agrandado con el botón de su cabecera: un tool con muchos params, o ayudas
+// largas, se leía de a pedazos en 400×420. Las medidas las trae la vista
+// (`nodoGrande`), sacadas del visor en el momento de agrandar: un tamaño fijo
+// grande no entraba con las dos columnas a la vista, y quedaban afuera justo
+// los botones para achicarlo y cerrarlo. Sigue siendo fijo mientras dura el
+// layout, por la misma razón de arriba.
 
 const SEP_X = 60;      // entre nodos de la misma fila
 const SEP_Y = 78;      // entre filas (el eje del flujo): lugar para el rótulo de la arista
@@ -90,12 +96,15 @@ const s = (tag, attrs = {}, hijos = []) => {
  *     nodo `seleccionado` se dibuja **abierto**, con ese panel adentro. Este
  *     módulo no sabe qué hay en el panel: lo arma la vista, que es la que
  *     conoce el catálogo y los params.
+ *   - nodoGrande: {ancho, alto} en unidades del dibujo para el nodo abierto,
+ *     o null para el tamaño de siempre. El botón que lo alterna vive en el
+ *     panel; `medidaGrande()` del resultado dice cuánto entra en el visor.
  */
 export function dibujarGrafo(grafo, {
   alClic, estados = {}, pasos = {}, recorridas = new Set(),
   seleccionado = null, alCorrer = null, dry = null, extras = null,
   edicion = null, vista = null, aristaSeleccionada = null, panelDeNodo = null,
-  alClicFondo = null,
+  alClicFondo = null, nodoGrande = null,
 } = {}) {
   const nodos = grafo.nodes || {};
   const aristas = grafo.edges || [];
@@ -112,8 +121,10 @@ export function dibujarGrafo(grafo, {
   // Cuál nodo está abierto: el seleccionado, si la vista sabe dibujarle un
   // panel. Uno solo a la vez — dos cajas grandes dejan de ser un diagrama.
   const abierto = panelDeNodo && seleccionado && nodos[seleccionado] ? seleccionado : null;
-  const anchoDe = (id) => (id === abierto ? NODO_ANCHO_ABIERTO : esDummy(id) ? ANCHO_DUMMY : NODO_ANCHO);
-  const altoDe = (id) => (id === abierto ? NODO_ALTO_ABIERTO : NODO_ALTO);
+  const anchoAbierto = nodoGrande ? nodoGrande.ancho : NODO_ANCHO_ABIERTO;
+  const altoAbierto = nodoGrande ? nodoGrande.alto : NODO_ALTO_ABIERTO;
+  const anchoDe = (id) => (id === abierto ? anchoAbierto : esDummy(id) ? ANCHO_DUMMY : NODO_ANCHO);
+  const altoDe = (id) => (id === abierto ? altoAbierto : NODO_ALTO);
 
   const { capas, cadenaPorArista, segmentosOrden, haciaAtras } = porCapas(grafo);
   const posicion = new Map();
@@ -328,6 +339,19 @@ export function dibujarGrafo(grafo, {
 
   if (pill) envoltura.appendChild(pill.elemento);
   for (const t of aristasInfo) t.marcarRecorrida(recorridas.has(t.clave));
+
+  // Cuánto puede medir el nodo agrandado para entrar entero en el visor a la
+  // escala actual: el ancho menos los márgenes, y el alto menos además la
+  // franja del pie (Correr, Registro), que va encima del dibujo. Nunca menos
+  // que el tamaño normal —agrandar no puede achicar— ni más de 900.
+  envoltura.medidaGrande = () => {
+    const esc = lienzo.obtenerEscala();
+    const acotar = (v, min) => Math.round(Math.min(900, Math.max(min, v)));
+    return {
+      ancho: acotar((envoltura.clientWidth - 48) / esc, NODO_ANCHO_ABIERTO),
+      alto: acotar((envoltura.clientHeight - 110) / esc, NODO_ALTO_ABIERTO),
+    };
+  };
 
   envoltura.lienzo = lienzo;
   return envoltura;

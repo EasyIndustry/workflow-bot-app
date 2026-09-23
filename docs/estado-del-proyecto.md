@@ -6,6 +6,20 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-23
 
+- **La selección de texto se ve en los campos con `{variables}`.** El
+  `::selection` del campo resaltado sólo declaraba `color: transparent`, y
+  con un `::selection` declarado Chrome deja de pintar el fondo por defecto:
+  se seleccionaba sin que se viera, en todas las tarjetas (viene del
+  resaltado de variables, así que también está en main). Ahora lleva un
+  fondo azul translúcido: el campo va encima del espejo, que es el que
+  muestra las letras.
+- **El nodo abierto del lienzo se agranda** con un botón en su cabecera
+  (rama `lienzo-n8n-main`, v0.5.0-lienzo.4). No es un tamaño fijo: toma lo
+  que entra en el visor en ese momento (entre 400×420 y 900), porque un
+  720 fijo no entraba con las dos columnas y dejaba afuera justo los
+  botones para achicarlo y cerrarlo. Se mantiene al abrir otro nodo.
+  Verificado por CDP con las dos columnas y con "Solo diagrama".
+
 - **Tres bugs del lienzo, arreglados** (rama `lienzo-n8n-main`,
   v0.5.0-lienzo.3). Verificado por CDP con mouse y teclado reales, y la
   misma prueba contra lienzo.2 los reproduce los tres:

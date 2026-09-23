@@ -24,16 +24,18 @@ import { contenidoDeNodo, TIPO_ROTULO } from "./workflows-cards.js";
  * @param {string} id
  * @param {object} grafo      el grafo mutable que edita la vista
  * @param {object} catalogo   GET /tools
- * @param {object} opts       {alCambiar, alCerrar, alAbrirCompleta, paso, hayCorrida, columnasDeLaFila}
+ * @param {object} opts       {alCambiar, alCerrar, alAbrirCompleta, paso, hayCorrida, columnasDeLaFila, grande, alAgrandar}
  *   `paso` es la entrada de este nodo en el trace del último dry run (o null si
  *   el recorrido no pasó por él); `hayCorrida` dice si hubo algún dry run, para
  *   distinguir "no se corrió nada" de "se corrió y este nodo quedó afuera".
  *   `columnasDeLaFila` es lo que el autocompletado ofrece como columnas.
+ *   `grande` dice con qué tamaño está dibujado, y `alAgrandar` lo alterna: el
+ *   tamaño lo decide el layout del lienzo, no el panel.
  * @returns {HTMLElement} pensado para llenar la caja del nodo: ocupa el 100 %
  *   de lo que le den y scrollea adentro. El marco (borde, sombra) lo pone el
  *   propio nodo del SVG.
  */
-export function panelDeNodo(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirCompleta, paso = null, hayCorrida = false, columnasDeLaFila = null }) {
+export function panelDeNodo(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirCompleta, paso = null, hayCorrida = false, columnasDeLaFila = null, grande = false, alAgrandar = null }) {
   const nodo = grafo.nodes[id];
   if (!nodo) return null;
 
@@ -67,6 +69,10 @@ export function panelDeNodo(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirC
                       text: paso.status === "err" ? "falló en seco" : "ok en seco" })
         : hayCorrida ? h("span", { class: "badge", text: "no recorrido" }) : null,
       h("button", { class: "btn btn--chico", text: "Abrir en Tarjetas", onClick: alAbrirCompleta }),
+      alAgrandar
+        ? h("button", { class: "btn btn--chico", title: grande ? "Achicar el nodo" : "Agrandar el nodo", onClick: alAgrandar },
+            [icono(grande ? ICONOS.achicar : ICONOS.agrandar, 11, 2)])
+        : null,
       h("button", { class: "btn btn--chico", title: "Cerrar", onClick: alCerrar }, [icono(ICONOS.cerrar, 11, 2)]),
     ]),
     // `overscrollBehavior`: al llegar al final, la rueda no sigue de largo a
