@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import contexto_agente, db_view, emparejamiento, items_secretos, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, emparejamiento, identidad, indicadores, items_secretos, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -162,6 +162,10 @@ def get_overview():
     actores = _instance.users.list(include_disabled=False)
     return {
         "root": str(ROOT),
+        # Cómo se llama este Bot (webapp/identidad.py). Vacío = nunca se puso
+        # uno; `main.js` lo usa para titular la pestaña sin esperar a que se
+        # abra ninguna pantalla.
+        "nombre": identidad.nombre(_instance),
         # `fs_root` es el único límite que decide si un flujo llega o no a un
         # archivo, y era el único que no se veía en ninguna pantalla: se
         # descubría en producción como "PortError: ruta fuera del árbol
@@ -297,6 +301,31 @@ def get_config():
 def patch_config(body: ConfigBody):
     """Mergea las claves dadas; el resto queda como está."""
     return {"values": _instance.config.update(body.values)}
+
+
+# ── Identidad ────────────────────────────────────────────────────────────
+
+
+class IdentidadBody(BaseModel):
+    nombre: str = ""
+
+
+@router.get("/identidad")
+def get_identidad():
+    """
+    Cómo se llama este Bot. Sin autenticación propia, como el resto de esta
+    API sobre HTTP plano (ver decisiones.md, "Los secretos viajan en un
+    sobre"): no es un secreto, así que un Bot remoto que ya conoce esta URL
+    —el plugin `bots`, por ejemplo— la puede leer para nombrar la pestaña que
+    abre hacia acá, sin que este Bot tenga instalado ningún plugin.
+    """
+    return {"nombre": identidad.nombre(_instance)}
+
+
+@router.put("/identidad")
+def put_identidad(body: IdentidadBody):
+    """Guarda el nombre. Vacío lo borra: no hay nombre por defecto inventado."""
+    return {"nombre": identidad.guardar_nombre(_instance, body.nombre)}
 
 
 # ── Límites de archivos ─────────────────────────────────────────────────
@@ -1273,9 +1302,19 @@ _con_los_secretos_guardados = items_secretos.con_los_secretos_guardados
 def list_resource(plugin: str, resource: str):
     """Items de una colección que administra un plugin (conexiones, comandos…)."""
     definicion = _resource(plugin, resource)
+    items = _instance.resource_items_masked(plugin, resource)
+    # `_indicador`: el último resultado de una Action de fila sobre cada item
+    # (webapp/indicadores.py), calculado acá y no guardado en el item del
+    # plugin — ver el docstring de ese módulo. Ausente = nunca se probó.
+    marcas = indicadores.de_coleccion(_instance, plugin, resource)
+    clave = definicion.key_field
+    for item in items:
+        marca = marcas.get(str(item.get(clave)))
+        if marca:
+            item["_indicador"] = marca
     return {
         "resource": definicion.to_dict(),
-        "items": _instance.resource_items_masked(plugin, resource),
+        "items": items,
     }
 
 
@@ -1315,6 +1354,7 @@ def delete_resource_item(plugin: str, resource: str, key: str):
         _store(plugin, resource).delete(key)
     except ResourceError as exc:
         raise HTTPException(404, str(exc)) from None
+    indicadores.borrar(_instance, plugin, resource, key)
     _regenerar_manual()
     return {"ok": True}
 
@@ -1916,6 +1956,18 @@ async def run_plugin_action(plugin: str, action: str, body: ActionBody):
     resultado, registro = await run_in_threadpool(
         lambda: _instance.run_action(plugin, action, params=body.params, item=body.item)
     )
+    # `outputs.indicador` (en el ok y en el err) es el check persistente de la
+    # fila (webapp/indicadores.py). Sólo tiene dónde guardarse si la Action
+    # corrió atada a un item de una colección: `item` trae la clave y la
+    # propia Action declarada dice de qué resource.
+    if body.item:
+        declarada = next((a for a in _instance.registry.actions_of(plugin) if a.name == action), None)
+        indicador = (resultado.outputs or {}).get("indicador")
+        if declarada and declarada.resource and isinstance(indicador, dict):
+            indicadores.guardar(
+                _instance, plugin, declarada.resource, body.item,
+                str(indicador.get("estado") or ""), str(indicador.get("texto") or ""),
+            )
     return {
         "result": resultado.to_dict(),
         "log": [{"message": mensaje, "level": nivel} for mensaje, nivel in registro],

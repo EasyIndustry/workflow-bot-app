@@ -5,9 +5,8 @@
  * Es la razón por la que esta pantalla no crece cuando se instala un plugin —
  * que es cómo el front viejo terminó con nueve secciones escritas a mano.
  *
- * Seis secciones tienen backend y funcionan; General está diseñada y todavía
- * no. Las que no, lo dicen y nombran lo que falta, en vez de mostrar controles
- * que no hacen nada.
+ * Las secciones tienen backend y funcionan. Las que no lo tengan lo dicen y
+ * nombran lo que falta, en vez de mostrar controles que no hacen nada.
  */
 
 import { h, poner, icono, ICONOS } from "../dom.js";
@@ -18,11 +17,15 @@ import { tabla } from "../components/tabla.js";
 import { abrirModal, confirmar } from "../components/modal.js";
 import { aviso } from "../components/aviso.js";
 import { subVistas, vistaElegida } from "../components/subvistas.js";
+import { primeraLinea, renderMarkdown } from "../components/markdown.js";
+import { incluirPrueba as incluirPruebaGuardado, guardarIncluirPrueba } from "../preferencias.js";
+import { COMPONENTES_UPDATE, instalarRelease as aplicarRelease, mostrarResultadoUpdate, reiniciarApp } from "../actualizar_componente.js";
 
 let shell = null;
 let confirmacion = null;
 
 const SECCIONES = [
+  { id: "general", label: "General", dibujar: dibujarGeneral },
   { id: "secretos", label: "Configurar entorno", dibujar: dibujarSecretos },
   { id: "almacenamiento", label: "Almacenamiento", dibujar: dibujarAlmacenamiento },
   { id: "limites", label: "Alcance", dibujar: dibujarLimites },
@@ -93,6 +96,54 @@ function consumirConfirmacion() {
   const c = confirmacion;
   confirmacion = null;
   return typeof c === "string" ? aviso("ok", c, null) : aviso(c.tono, c.texto, null);
+}
+
+// ── General ──────────────────────────────────────────────────────────────
+//
+// Cómo se llama este Bot (webapp/identidad.py). No es un setting de plugin
+// —por eso no vive en la pantalla de ningún plugin— y tampoco es un límite
+// que impida arrancar como los de boot.env: es un rótulo, y se usa sobre
+// todo para titular la pestaña, así que con varios Bots abiertos en el mismo
+// navegador se distinguen por su nombre y no por la URL.
+
+async function dibujarGeneral() {
+  const { nombre } = await api.identidad();
+  const campoNombre = crearCampo({
+    name: "nombre", type: "str", label: "Nombre de este Bot",
+    doc: "Titula la pestaña del navegador al abrirse — la propia, o la que otra " +
+      "máquina abre con la IP de ésta. Vacío deja \"Bot\" genérico.",
+  }, nombre || "");
+
+  const error = h("div", { class: "aviso aviso--error", style: { display: "none", margin: "12px 0 0" } });
+
+  return [
+    encabezado("General", "Lo que identifica a esta instalación, más allá de su URL."),
+    consumirConfirmacion(),
+
+    h("div", { class: "seccion" }, [h("span", { text: "IDENTIDAD" })]),
+    h("div", { class: "tarjeta" }, [
+      campoNombre.elemento,
+      error,
+      h("div", { style: { padding: "0 13px 13px" } }, [
+        h("button", { class: "btn btn--primario", text: "Guardar", onClick: async () => {
+          try {
+            await api.guardarIdentidad(campoNombre.leer().trim());
+            confirmacion = "Se guardó el nombre.";
+            await dibujarSeccion(seccionPorId("general"));
+          } catch (e) {
+            error.style.display = "";
+            poner(error, h("div", { class: "aviso__cuerpo", text: e.message }));
+          }
+        } }),
+      ]),
+    ]),
+
+    h("div", { class: "tabla__pie", style: { lineHeight: "1.55" }, text:
+      "Lo lee cualquiera que sepa la URL de este Bot con GET /api/core/identidad — no es un " +
+      "secreto. Es lo que un plugin que conecta varios Bots por IP (como \"bots\" del catálogo) " +
+      "puede usar para saber cómo se llama el que está del otro lado, sin que este Bot tenga " +
+      "ese plugin ni ningún otro instalado." }),
+  ];
 }
 
 // ── Secretos y variables ────────────────────────────────────────────────
@@ -1165,15 +1216,6 @@ function olvidarEmparejamiento(f) {
 // subir el archivo si no hay internet, volver al anterior, y reiniciar. Los
 // dos componentes se dibujan con el mismo bloque: cambia el dato, no la UI.
 
-let incluirPrueba = true;
-
-// `titulo` va en mayúscula porque encabeza una sección; `label` es el mismo
-// nombre para la pestaña, donde gritar al lado de "Repos" se lee mal.
-const COMPONENTES_UPDATE = [
-  { id: "core", titulo: "NÚCLEO", label: "Núcleo", carpeta: "backend/", que: "el núcleo", de: "del núcleo" },
-  { id: "webapp", titulo: "WEB APP", label: "Web app", carpeta: "webapp/", que: "la web app", de: "de la web app" },
-];
-
 // Repos y un componente por vista. Antes era todo una pantalla: los dos
 // bloques traían treinta releases cada uno al abrirla —sesenta pedidos de
 // notas para instalar uno— y había que barrer con el scroll para llegar al
@@ -1283,7 +1325,7 @@ function bloqueComponente(c, estado) {
       h("span", { text: "RELEASES PUBLICADOS" }),
       h("div", { style: { display: "flex", gap: "10px", alignItems: "center" } }, [
         h("label", { class: "fila-control", style: { cursor: "pointer", fontSize: "12px", fontWeight: "400" } }, [
-          h("input", { type: "checkbox", checked: incluirPrueba, onChange: (e) => { incluirPrueba = e.target.checked; cargarReleases(c, listaReleases, comp); } }),
+          h("input", { type: "checkbox", checked: incluirPruebaGuardado(), onChange: (e) => { guardarIncluirPrueba(e.target.checked); cargarReleases(c, listaReleases, comp); } }),
           h("span", { text: "incluir releases de prueba" }),
         ]),
         h("button", { class: "btn btn--chico", text: "Volver a buscar", onClick: () => cargarReleases(c, listaReleases, comp) }),
@@ -1300,7 +1342,8 @@ function bloqueComponente(c, estado) {
           h("button", { class: "btn", text: "Instalar", onClick: (e) => {
             const archivo = input.files && input.files[0];
             if (!archivo) return;
-            instalarRelease(c, { archivo, tag: campoTag.value.trim() }, e.target);
+            aplicarRelease(c, { archivo, tag: campoTag.value.trim() },
+              { boton: e.target, alTerminar: () => dibujarSeccion(seccionPorId("actualizaciones")) });
           } }),
         ]);
       })(),
@@ -1314,11 +1357,18 @@ function bloqueComponente(c, estado) {
 // es un payload grande y una lista que nadie lee.
 const RELEASES_POR_PAGINA = 5;
 
+// Qué filas de notas están expandidas, por `<componente>:<tag>` — dos
+// componentes podrían compartir un tag ("v1.0.0") y no son la misma fila.
+// Vive acá y no adentro de `tabla()` porque cada click reconstruye la tabla
+// entera (`dibujarTabla` abajo): si el estado viviera adentro del componente
+// se perdería en esa misma reconstrucción.
+const notasExpandidas = new Set();
+
 async function cargarReleases(c, contenedor, comp, pagina = 1) {
   poner(contenedor, h("div", { class: "tabla__vacia", text: "Buscando releases en GitHub…" }));
   let datos;
   try {
-    datos = await api.releases(c.id, incluirPrueba, pagina, RELEASES_POR_PAGINA);
+    datos = await api.releases(c.id, incluirPruebaGuardado(), pagina, RELEASES_POR_PAGINA);
   } catch (e) {
     poner(contenedor, aviso("falta", e.message, (e.errores || []).join(" · ") || null));
     return;
@@ -1328,11 +1378,12 @@ async function cargarReleases(c, contenedor, comp, pagina = 1) {
     poner(contenedor, h("div", {}, [
       h("div", { class: "tabla__vacia", text: pagina > 1
         ? "No hay más releases para mostrar."
-        : (incluirPrueba ? `No hay ningún release publicado en ${comp.repo}.` : "No hay releases finales; sólo de prueba.") }),
+        : (incluirPruebaGuardado() ? `No hay ningún release publicado en ${comp.repo}.` : "No hay releases finales; sólo de prueba.") }),
       paginador(c, contenedor, comp, pagina, datos.hay_mas),
     ]));
     return;
   }
+
   const columnas = [
     {
       clave: "tag", label: "Release", ancho: "170px",
@@ -1346,21 +1397,48 @@ async function cargarReleases(c, contenedor, comp, pagina = 1) {
     },
     { clave: "published_at", label: "Publicado", ancho: "110px", render: (r) => cuandoTexto(r.published_at ? Date.parse(r.published_at) / 1000 : 0) },
     {
+      // Colapsada: la primera línea no vacía, para no traer un changelog
+      // entero a la vista de un vistazo. Un click en la fila la expande y
+      // renderiza el markdown completo (`components/markdown.js`) — no hay
+      // otra forma de leerlo entero sin ir a GitHub.
+      //
+      // `stopPropagation` en el contenido: la fila entera escucha el click
+      // para expandir/colapsar (`alClic`, más abajo), y sin esto abrir un
+      // link de las notas —o simplemente seleccionar un pedazo de texto
+      // para copiarlo— también disparaba el toggle, colapsando la fila en
+      // el medio del gesto. El costo es que clickear el texto ya no expande
+      // por sí solo; para eso queda cualquier otro punto de la fila (el
+      // tag, la fecha), que es donde ya se ve el cursor de "clickeable".
       clave: "body", label: "Notas", envuelve: true,
-      render: (r) => h("div", { style: { fontSize: "12px", whiteSpace: "pre-wrap", maxHeight: "72px", overflow: "hidden" }, title: r.body, text: r.body || "—" }),
+      render: (r) => h("div", { onClick: (e) => e.stopPropagation() }, [
+        notasExpandidas.has(`${c.id}:${r.tag}`)
+          ? renderMarkdown(r.body)
+          : h("div", { style: { fontSize: "12px", color: "var(--texto-3)" }, text: primeraLinea(r.body) || "—" }),
+      ]),
     },
     {
       clave: "acciones", label: "", ancho: "100px",
       render: (r) => h("button", {
         class: "btn btn--chico", text: r.tag === comp.tag ? "Reinstalar" : "Instalar",
-        onClick: (e) => instalarRelease(c, { tag: r.tag }, e.target),
+        // `stopPropagation`: la fila entera también escucha el click para
+        // expandir las notas (`alClic` de acá abajo); sin esto, instalar
+        // también la expandía o la colapsaba de paso.
+        onClick: (e) => { e.stopPropagation(); aplicarRelease(c, { tag: r.tag }, { boton: e.target, alTerminar: () => cargarReleases(c, contenedor, comp, pagina) }); },
       }),
     },
   ];
-  poner(contenedor, h("div", {}, [
-    tabla(columnas, releases, {}),
+
+  const dibujarTabla = () => poner(contenedor, h("div", {}, [
+    tabla(columnas, releases, {
+      alClic: (r) => {
+        const clave = `${c.id}:${r.tag}`;
+        notasExpandidas.has(clave) ? notasExpandidas.delete(clave) : notasExpandidas.add(clave);
+        dibujarTabla();
+      },
+    }),
     paginador(c, contenedor, comp, pagina, datos.hay_mas),
   ]));
+  dibujarTabla();
 }
 
 /**
@@ -1382,71 +1460,6 @@ function paginador(c, contenedor, comp, pagina, hayMas) {
   ]);
 }
 
-async function instalarRelease(c, { tag, archivo }, boton) {
-  const etiqueta = tag || (archivo && archivo.name);
-  confirmar({
-    titulo: `Actualizar ${c.que} a ${etiqueta}`,
-    texto: `Se reemplaza ${c.carpeta} entero; el actual queda guardado al lado para poder volver. Ningún run puede estar corriendo mientras se aplica, y después hay que reiniciar la app.`,
-    alConfirmar: async () => {
-      if (boton) { boton.disabled = true; boton.textContent = "Validando…"; }
-      try {
-        const r = archivo ? await api.instalarReleaseArchivo(c.id, archivo, tag || "") : await api.instalarRelease(c.id, tag);
-        mostrarResultadoUpdate(c, r);
-      } catch (e) {
-        abrirModal({
-          titulo: "No se aplicó",
-          sub: e.message,
-          cuerpo: h("pre", { class: "mono", style: { margin: "12px 16px", whiteSpace: "pre-wrap", fontSize: "11.5px" }, text: (e.errores || []).join("\n") || "Sin más detalle." }),
-          acciones: [h("button", { class: "btn", text: "Cerrar", onClick: () => { document.querySelector(".velo")?.remove(); } })],
-        });
-        if (boton) { boton.disabled = false; boton.textContent = "Instalar"; }
-      }
-    },
-  });
-}
-
-function mostrarResultadoUpdate(c, r) {
-  const que = c.que.charAt(0).toUpperCase() + c.que.slice(1);
-  const cuerpo = h("div", { style: { padding: "12px 16px", fontSize: "12.5px", lineHeight: "1.55" } }, [
-    h("div", {}, [`${que} `, h("span", { class: "mono", text: r.applied.tag }), r.core_version ? ` (versión ${r.core_version})` : "", ` copiado en ${c.carpeta}. El anterior quedó guardado al lado.`]),
-    r.new_requirements && r.new_requirements.length
-      ? aviso("falta", "Pide dependencias que el actual no tenía", h("div", { class: "mono", style: { fontSize: "11.5px" }, text: r.new_requirements.join("\n") }))
-      : null,
-    h("div", { style: { marginTop: "8px" } }, [
-      r.can_restart
-        ? "Python ya tiene cargado el código viejo: hasta reiniciar sigue corriendo ese. Reiniciar corta la app unos segundos."
-        : "Python ya tiene cargado el código viejo: hay que reiniciar el proceso a mano para que corra el nuevo.",
-    ]),
-  ]);
-  const { cerrar } = abrirModal({
-    titulo: "Actualización aplicada",
-    sub: "Falta reiniciar.",
-    cuerpo,
-    acciones: [
-      h("button", { class: "btn", text: "Más tarde", onClick: () => { cerrar(); dibujarSeccion(seccionPorId("actualizaciones")); } }),
-      r.can_restart ? h("button", { class: "btn btn--primario", text: "Reiniciar ahora", onClick: () => { cerrar(); reiniciarApp(); } }) : null,
-    ].filter(Boolean),
-  });
-}
-
-/** Pide el reinicio y espera a que el servidor vuelva; después recarga la página entera. */
-async function reiniciarApp() {
-  poner(shell.vista, h("div", { class: "cargando", text: "Reiniciando… la app vuelve sola en unos segundos." }));
-  try { await api.reiniciar(); } catch (e) { /* la conexión se corta justo al reiniciar: es lo esperado */ }
-  const espera = (ms) => new Promise((r) => setTimeout(r, ms));
-  await espera(1500);
-  for (let i = 0; i < 40; i++) {
-    try {
-      await api.actualizaciones();
-      location.hash = "#/config/actualizaciones";
-      location.reload();
-      return;
-    } catch { await espera(1000); }
-  }
-  poner(shell.vista, aviso("error", "La app no volvió",
-    "Si no levanta con lo nuevo, desde una consola en la carpeta del programa: python -m webapp --revertir-nucleo (o --revertir-webapp), y arrancarla de nuevo."));
-}
-
 function revertirComponente(c) {
   const carpeta = c.carpeta.replace("/", "");
   confirmar({
@@ -1455,7 +1468,8 @@ function revertirComponente(c) {
     alConfirmar: async () => {
       try {
         const r = await api.revertirComponente(c.id);
-        mostrarResultadoUpdate(c, { applied: { tag: r.tag || "anterior al actualizador" }, new_requirements: [], can_restart: r.can_restart });
+        mostrarResultadoUpdate(c, { applied: { tag: r.tag || "anterior al actualizador" }, new_requirements: [], can_restart: r.can_restart },
+          () => dibujarSeccion(seccionPorId("actualizaciones")));
       } catch (e) {
         confirmacion = null;
         poner(shell.vista, aviso("error", "No se pudo volver", e.message));
