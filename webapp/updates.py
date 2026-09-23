@@ -271,10 +271,64 @@ def disponibles(incluir_prueba: bool = True, abrir=None, *, repo: str | None = N
     Los releases de `repo`, del más nuevo al más viejo. `abrir` se inyecta en
     los tests; por defecto es urllib contra la API de GitHub.
     """
+    return [_release(r) for r in _crudos(abrir, repo, token, 1, 30)
+            if not r.get("draft") and (incluir_prueba or not r.get("prerelease"))]
+
+
+def pagina_de_releases(
+    incluir_prueba: bool = True, abrir=None, *, repo: str | None = None,
+    token: str | None = None, pagina: int = 1, por_pagina: int = 5,
+) -> dict:
+    """
+    Una página de releases, para no traerse treinta y mostrar cinco.
+
+    La lista de un repo con muchas prereleases es larga y nadie la lee entera;
+    peor, cada entrada trae sus notas, así que treinta es un payload grande
+    para una pantalla donde casi siempre se instala el primero.
+
+    `hay_mas` sale de que GitHub haya devuelto la página completa, no de un
+    total: la API pagina por cantidad de releases y acá se filtran los borradores
+    y, si no se piden, las de prueba. O sea que la última página puede quedar
+    más corta de lo pedido, o vacía, y "siguiente" puede caer en una página sin
+    nada. Es el precio de pedir de a cinco en vez de traer todo y contar.
+    """
+    pagina = max(1, int(pagina))
+    por_pagina = max(1, min(int(por_pagina), 30))
+    crudos = _crudos(abrir, repo, token, pagina, por_pagina)
+    return {
+        "releases": [_release(r) for r in crudos
+                     if not r.get("draft") and (incluir_prueba or not r.get("prerelease"))],
+        "pagina": pagina,
+        "por_pagina": por_pagina,
+        "hay_mas": len(crudos) == por_pagina,
+    }
+
+
+def _release(r: dict) -> dict:
+    return {
+        "tag": r.get("tag_name"),
+        "name": r.get("name") or r.get("tag_name"),
+        "prerelease": bool(r.get("prerelease")),
+        "published_at": r.get("published_at"),
+        "body": (r.get("body") or "")[:2000],
+        "url": r.get("html_url"),
+        "tarball_url": r.get("tarball_url"),
+        "assets": [
+            {"name": a.get("name"), "size": a.get("size"), "url": a.get("browser_download_url")}
+            for a in r.get("assets", [])
+        ],
+    }
+
+
+def _crudos(abrir, repo: str | None, token: str | None, pagina: int, por_pagina: int) -> list:
+    """Lo que devuelve GitHub, con los errores ya traducidos a algo legible."""
     abrir = abrir or _abrir_url
     repo = repo or REPO
     try:
-        crudo = abrir(f"https://api.github.com/repos/{repo}/releases?per_page=30", None, token)
+        crudo = abrir(
+            f"https://api.github.com/repos/{repo}/releases?per_page={por_pagina}&page={pagina}",
+            None, token,
+        )
     except urllib.error.HTTPError as exc:
         raise UpdateError(_explicar_http(exc.code, f"listar los releases de {repo}", token)) from None
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
@@ -288,27 +342,7 @@ def disponibles(incluir_prueba: bool = True, abrir=None, *, repo: str | None = N
         raise UpdateError("GitHub devolvió algo que no es JSON.") from None
     if not isinstance(datos, list):
         raise UpdateError("GitHub devolvió una respuesta inesperada.", [str(datos)[:300]])
-
-    salida = []
-    for r in datos:
-        if r.get("draft"):
-            continue
-        if r.get("prerelease") and not incluir_prueba:
-            continue
-        salida.append({
-            "tag": r.get("tag_name"),
-            "name": r.get("name") or r.get("tag_name"),
-            "prerelease": bool(r.get("prerelease")),
-            "published_at": r.get("published_at"),
-            "body": (r.get("body") or "")[:2000],
-            "url": r.get("html_url"),
-            "tarball_url": r.get("tarball_url"),
-            "assets": [
-                {"name": a.get("name"), "size": a.get("size"), "url": a.get("browser_download_url")}
-                for a in r.get("assets", [])
-            ],
-        })
-    return salida
+    return datos
 
 
 def _explicar_http(codigo: int, que: str, token: str | None) -> str:

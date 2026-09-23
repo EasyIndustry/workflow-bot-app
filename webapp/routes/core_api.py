@@ -24,7 +24,7 @@ import importlib.util
 import json
 import re
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import contexto_agente, db_view, librerias, limites, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, emparejamiento, identidad, indicadores, items_secretos, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -162,6 +162,10 @@ def get_overview():
     actores = _instance.users.list(include_disabled=False)
     return {
         "root": str(ROOT),
+        # Cómo se llama este Bot (webapp/identidad.py). Vacío = nunca se puso
+        # uno; `main.js` lo usa para titular la pestaña sin esperar a que se
+        # abra ninguna pantalla.
+        "nombre": identidad.nombre(_instance),
         # `fs_root` es el único límite que decide si un flujo llega o no a un
         # archivo, y era el único que no se veía en ninguna pantalla: se
         # descubría en producción como "PortError: ruta fuera del árbol
@@ -172,6 +176,20 @@ def get_overview():
         # singular y las varias raíces con alias de core#23: una sola raíz
         # viene con el alias vacío. Vacío del todo = todo el disco.
         "fs_roots": {a: str(r) for a, r in (_instance.boot.fs_roots_efectivos or {}).items()} or None,
+        # Lo que el núcleo niega siempre (core#26), venga de donde venga la
+        # raíz: la base y la llave, los plugins y `boot.env`. Es lo que
+        # permite que una raíz contenga la instalación sin entregarla, y hasta
+        # que no se muestre nadie sabe que esa red existe.
+        "fs_negadas": [str(x) for x in _negadas()],
+        # El otro límite de la misma familia: qué ejecutables puede correr un
+        # flujo. Estaba sólo en `boot.env` y se descubría como
+        # "PortError: 'tasklist' no está en la lista de comandos permitidos"
+        # adentro de un run, igual que pasaba con las rutas. `None` = cualquier
+        # programa; la lista vacía = ninguno, que es como nace una instalación.
+        "process_allowlist": (
+            list(_instance.boot.process_allowlist)
+            if _instance.boot.process_allowlist is not None else None
+        ),
         "plugins_dir": str(carpeta) if carpeta else None,
         "plugins": len(plugins),
         "plugins_installed": len(instalados),
@@ -183,6 +201,33 @@ def get_overview():
         "key_exists": _llave_existe(),
         "fresh": not instalados and fuentes == 0 and not flujos,
     }
+
+
+@router.get("/tools/{tool_id}/params-extra")
+def get_params_extra(tool_id: str, request: Request):
+    """
+    Los params extra que un tool acepta *dado lo que el nodo ya tiene cargado*.
+
+    Un tool con `extra_params` dice que acepta más de los declarados, pero no
+    cuáles: depende de lo elegido en el propio nodo —una Action de Connections
+    define sus `{variables}` en la URL y el payload—. Sin esto había que abrir
+    la otra pantalla, anotar los nombres y escribirlos a mano en el `.mmd`.
+
+    Los params actuales del nodo van como query. Devuelve la misma forma que un
+    param del manifest, para que la tarjeta los dibuje con el mismo campo.
+
+    Quien sabe describirlos es el tool (`Tool.describe_extra_params`, core#27),
+    y el núcleo le da un lector de items sin secretos: acá no hay ninguna tabla
+    que nombre un plugin, así que un plugin instalado ofrece lo mismo que el de
+    la app. Con un núcleo anterior a v0.3.1-beta.8 la fachada no existe y la
+    respuesta es vacía, que es exactamente lo que había antes.
+    """
+    if _instance.registry.manifest(tool_id) is None:
+        raise HTTPException(404, f"no existe el tool '{tool_id}'")
+    describir = getattr(_instance, "describe_extra_params", None)
+    if describir is None:
+        return {"params": []}
+    return {"params": describir(tool_id, dict(request.query_params))}
 
 
 @router.get("/tools")
@@ -210,7 +255,7 @@ async def get_doctor():
       guardado" en una instalación con once. Un diagnóstico que miente en lo
       que se puede comprobar de un vistazo no se lee más.
     - **Un falso negativo**: sin `boot` no corría `check_boot`, que es
-      justamente el que dice "fs_root: \server-nuevo no existe". Así que el
+      justamente el que dice "fs_root: \\server-nuevo no existe". Así que el
       valor mal escrito que rompió una instalación de producción no aparecía
       en la única pantalla que estaba para eso.
     """
@@ -258,6 +303,31 @@ def patch_config(body: ConfigBody):
     return {"values": _instance.config.update(body.values)}
 
 
+# ── Identidad ────────────────────────────────────────────────────────────
+
+
+class IdentidadBody(BaseModel):
+    nombre: str = ""
+
+
+@router.get("/identidad")
+def get_identidad():
+    """
+    Cómo se llama este Bot. Sin autenticación propia, como el resto de esta
+    API sobre HTTP plano (ver decisiones.md, "Los secretos viajan en un
+    sobre"): no es un secreto, así que un Bot remoto que ya conoce esta URL
+    —el plugin `bots`, por ejemplo— la puede leer para nombrar la pestaña que
+    abre hacia acá, sin que este Bot tenga instalado ningún plugin.
+    """
+    return {"nombre": identidad.nombre(_instance)}
+
+
+@router.put("/identidad")
+def put_identidad(body: IdentidadBody):
+    """Guarda el nombre. Vacío lo borra: no hay nombre por defecto inventado."""
+    return {"nombre": identidad.guardar_nombre(_instance, body.nombre)}
+
+
 # ── Límites de archivos ─────────────────────────────────────────────────
 
 
@@ -266,9 +336,24 @@ class RaicesBody(BaseModel):
     raices: list[dict]
 
 
+def _negadas() -> list:
+    """
+    Lo que el port `fs` no alcanza nunca. Sale del núcleo si lo expone; si el
+    núcleo es anterior a core#26 devuelve vacío y la pantalla no dice nada,
+    que es lo correcto: ahí esa red no existe.
+    """
+    from backend.core import instance as nucleo
+
+    calcular = getattr(nucleo, "_fs_denied", None)
+    try:
+        return list(calcular(_instance.boot)) if calcular else []
+    except Exception:  # noqa: BLE001 — es informativo; no puede tumbar /overview
+        return []
+
+
 @router.get("/limites")
 def get_limites():
-    """Hasta dónde llega el port `fs` de esta instalación, y con qué alias."""
+    """Hasta dónde llega esta instalación: las raíces del port `fs` y los programas permitidos."""
     return limites.leer(_instance, ROOT)
 
 
@@ -281,6 +366,29 @@ def put_limites_raices(body: RaicesBody):
     """
     try:
         return limites.guardar(_instance, ROOT, body.raices)
+    except limites.LimitesError as exc:
+        raise HTTPException(400, {"message": str(exc), "errors": exc.detalle}) from None
+    except OSError as exc:
+        raise HTTPException(500, {"message": f"No se pudo escribir boot.env: {exc}", "errors": []}) from None
+
+
+class ProgramasBody(BaseModel):
+    modo: str
+    ejecutables: list[str] = []
+
+
+@router.put("/limites/programas")
+def put_limites_programas(body: ProgramasBody):
+    """
+    Cambia `process_allowlist` en `boot.env`.
+
+    El modo viaja aparte de la lista a propósito: "ningún programa" y
+    "cualquiera" son dos estados distintos y los dos se escriben con la lista
+    vacía —la clave presente o ausente—, así que deducirlo del contenido haría
+    que borrar el último nombre bloqueara todo sin decirlo.
+    """
+    try:
+        return limites.guardar_programas(_instance, ROOT, body.modo, body.ejecutables)
     except limites.LimitesError as exc:
         raise HTTPException(400, {"message": str(exc), "errors": exc.detalle}) from None
     except OSError as exc:
@@ -685,13 +793,29 @@ def put_updates_config(body: UpdatesConfigBody):
 
 
 @router.get("/updates/releases")
-def get_releases(prerelease: bool = Query(True), component: str = Query("core")):
+def get_releases(
+    prerelease: bool = Query(True),
+    component: str = Query("core"),
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(5, ge=1, le=30),
+):
+    """
+    Una página de releases del repo del componente.
+
+    De a pocos y no los treinta de antes: cada entrada trae sus notas, y la
+    pantalla casi siempre instala el primero. Lo que decide si hay más lo dice
+    `hay_mas`; ver `updates.pagina_de_releases` para por qué no es un total.
+    """
     comp = _componente(component)
     repo = updates.configuracion(_instance)[comp.id]
     try:
-        return {"releases": updates.disponibles(incluir_prueba=prerelease, repo=repo, token=updates.token_de(_instance)), "repo": repo}
+        pagina_de = updates.pagina_de_releases(
+            incluir_prueba=prerelease, repo=repo, token=updates.token_de(_instance),
+            pagina=pagina, por_pagina=por_pagina,
+        )
     except updates.UpdateError as exc:
         raise HTTPException(502, {"message": str(exc), "errors": exc.detalle}) from None
+    return {**pagina_de, "repo": repo}
 
 
 class UpdateTagBody(BaseModel):
@@ -1166,17 +1290,39 @@ def _store(plugin_name: str, resource_name: str):
     return _instance.resource_store(plugin_name, _resource(plugin_name, resource_name))
 
 
+# La regla de los campos `secret` de un item vive en `webapp/items_secretos.py`,
+# no acá: la comparten esta API y el lado que recibe una migración, y que un
+# item conserve o pierda su secreto según por dónde entró sería la peor clase
+# de diferencia — invisible hasta que alguien pierde un token.
+_sin_secretos = items_secretos.sin_secretos
+_con_los_secretos_guardados = items_secretos.con_los_secretos_guardados
+
+
 @router.get("/resources/{plugin}/{resource}")
 def list_resource(plugin: str, resource: str):
     """Items de una colección que administra un plugin (conexiones, comandos…)."""
     definicion = _resource(plugin, resource)
-    return {"resource": definicion.to_dict(), "items": _store(plugin, resource).list_items()}
+    items = _instance.resource_items_masked(plugin, resource)
+    # `_indicador`: el último resultado de una Action de fila sobre cada item
+    # (webapp/indicadores.py), calculado acá y no guardado en el item del
+    # plugin — ver el docstring de ese módulo. Ausente = nunca se probó.
+    marcas = indicadores.de_coleccion(_instance, plugin, resource)
+    clave = definicion.key_field
+    for item in items:
+        marca = marcas.get(str(item.get(clave)))
+        if marca:
+            item["_indicador"] = marca
+    return {
+        "resource": definicion.to_dict(),
+        "items": items,
+    }
 
 
 @router.get("/resources/{plugin}/{resource}/{key}")
 def get_resource_item(plugin: str, resource: str, key: str):
+    definicion = _resource(plugin, resource)
     try:
-        return _store(plugin, resource).read(key)
+        return _sin_secretos(definicion, _store(plugin, resource).read(key))
     except ResourceError as exc:
         raise HTTPException(404, str(exc)) from None
 
@@ -1188,12 +1334,18 @@ class ResourceItem(BaseModel):
 @router.put("/resources/{plugin}/{resource}/{key}")
 def put_resource_item(plugin: str, resource: str, key: str, body: ResourceItem):
     """Crea o actualiza un item, validado contra el esquema del resource."""
+    definicion = _resource(plugin, resource)
+    store = _store(plugin, resource)
     try:
-        escrito = _store(plugin, resource).write(key, body.item)
+        escrito = store.write(key, _con_los_secretos_guardados(definicion, store, key, body.item))
     except ResourceError as exc:
         raise HTTPException(400, str(exc)) from None
     _regenerar_manual()
-    return escrito
+    # El núcleo devuelve lo escrito en claro a propósito —quien acaba de mandar
+    # un secreto tiene derecho a ver lo que puso—, pero acá puede venir uno que
+    # el que llamó no mandó: el que se conservó. Devolverlo sería la misma fuga
+    # por otra puerta, así que la respuesta se tapa igual que un GET.
+    return _sin_secretos(definicion, escrito)
 
 
 @router.delete("/resources/{plugin}/{resource}/{key}")
@@ -1202,8 +1354,284 @@ def delete_resource_item(plugin: str, resource: str, key: str):
         _store(plugin, resource).delete(key)
     except ResourceError as exc:
         raise HTTPException(404, str(exc)) from None
+    indicadores.borrar(_instance, plugin, resource, key)
     _regenerar_manual()
     return {"ok": True}
+
+
+# ── Comparar contra otro Bot ────────────────────────────────────────────
+
+
+class DiffBody(BaseModel):
+    destino: str
+    destino_nombre: str = ""
+    que: str = "flujos"
+    plugin: str = ""
+    coleccion: str = ""
+    detalle: bool = False
+
+
+@router.post("/diff")
+async def diff(body: DiffBody, request: Request):
+    """
+    Qué difiere entre esta instalación y otro Bot.
+
+    El origen es siempre este Bot y se lee de su propia base; del otro lado se
+    pide por HTTP. Ver `webapp/migracion.py` para por qué tiene que ser así y
+    por qué el diff no toca un secreto.
+
+    Local, como migrar: nada legítimo la llama desde la red. Ver el comentario
+    de `_solo_desde_esta_maquina`.
+
+    `run_in_threadpool` porque adentro hay un GET por flujo contra otra máquina
+    de la red: bloquear el loop dejaría la pantalla entera sin responder mientras
+    el otro Bot tarda o está apagado.
+    """
+    _solo_desde_esta_maquina(request)
+    try:
+        return await run_in_threadpool(
+            migracion.comparar,
+            _instance,
+            destino_url=body.destino.strip(),
+            destino_nombre=body.destino_nombre.strip(),
+            que=body.que,
+            plugin=body.plugin.strip(),
+            coleccion=body.coleccion.strip(),
+            detalle=body.detalle,
+            url_propia=_url_app() or "",
+        )
+    except migracion.MigracionError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+class MigrarBody(BaseModel):
+    destino: str
+    que: str = "flujos"
+    plugin: str = ""
+    coleccion: str = ""
+    claves: list[str] = []
+    # En false por default y no por pudor: un flujo desatendido corre cada vez,
+    # así que incluirlos revierte en cada corrida un secreto que hayan rotado
+    # del otro lado. Lo pide quien está decidiendo, no la automatización.
+    incluir_secretos: bool = False
+
+
+@router.post("/migrar")
+async def migrar(body: MigrarBody, request: Request):
+    """
+    Manda al otro Bot, en un sobre cifrado, lo que se eligió de acá.
+
+    Empuja y no tira: es la única forma de mover un secreto, porque desde #3 no
+    sale por la API de nadie y el único que puede leer los de una instalación es
+    la instalación misma.
+
+    **Sin emparejamiento no se migra.** No hay camino en claro ni con aviso: un
+    fallback dejaría que sea quien ataca el que elige el camino sin cifrar.
+
+    Local: empujar es una acción de quien opera **este** Bot, y nada legítimo la
+    pide desde la red — la pantalla corre acá, y un plugin que la ofrezca corre
+    adentro del propio Bot. Abierta, dejaba que cualquiera de la LAN disparara
+    una migración ajena y, probando direcciones, averiguara con quién está
+    emparejado este Bot por la diferencia entre "no hay emparejamiento" y que
+    la migración ocurriera.
+    """
+    _solo_desde_esta_maquina(request)
+    destino = body.destino.strip()
+    emparejado = emparejamiento.para_url(_instance.boot.data_dir, destino)
+    if emparejado is None:
+        # La dirección sale casi siempre de una colección —"Bots conocidos"—, así
+        # que "no hay emparejamiento" tiene dos causas muy distintas y el mensaje
+        # tiene que nombrar las dos: falta emparejar, o la dirección está mal
+        # escrita allá. Sin eso se busca el problema en el lugar equivocado.
+        #
+        # Y nombra **la pantalla**. Quien lee esto está en la pantalla de un
+        # plugin, y el arreglo está en otra pestaña bajo un nombre que no dice
+        # "migrar": sin la ruta, el mensaje describe un procedimiento que no se
+        # sabe dónde hacer. Este texto es además el único camino por el que el
+        # plugin puede nombrar una pantalla de la app sin conocerla: lo recibe
+        # de acá y lo muestra tal cual.
+        raise HTTPException(
+            400,
+            f"No hay emparejamiento con {destino}. O falta emparejar los dos Bots —en "
+            "Config → Emparejamientos: el destino genera un código y se pega acá, "
+            "sentado en cada máquina—, o esa dirección no es la del Bot con el que se "
+            "emparejó: si la sacaste de una colección, revisala ahí, porque se compara "
+            "tal cual. Sin emparejamiento no se migra: el secreto viajaría en claro "
+            "por la red.")
+    try:
+        return await run_in_threadpool(
+            migracion.migrar,
+            _instance,
+            emparejado=emparejado,
+            destino_url=destino,
+            que=body.que,
+            claves=body.claves,
+            plugin=body.plugin.strip(),
+            coleccion=body.coleccion.strip(),
+            url_propia=_url_app() or "",
+            incluir_secretos=body.incluir_secretos,
+        )
+    except migracion.MigracionError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+def _puerto_del_sobre(valor) -> int | None:
+    """
+    El puerto que dijo el que empujó, validado antes de armar una URL con él.
+
+    Que el sobre esté autenticado dice que del otro lado hay alguien con la
+    clave, **no** que lo de adentro sea sano: lo escribió otra máquina, con su
+    propia versión de la app y sus propios bugs. Sin esto, cualquier cosa que
+    entre por acá —un string, una lista, un número absurdo— se interpola tal
+    cual y queda guardada como la dirección de un par: se muestra en Config →
+    Emparejamientos y se compara en `para_url`, así que una dirección basura se
+    lee después como "falta emparejar".
+
+    `bool` se descarta aparte porque en Python es un `int`, y `True` daría el
+    puerto 1.
+    """
+    if isinstance(valor, bool) or not isinstance(valor, int):
+        return None
+    return valor if 1 <= valor <= 65535 else None
+
+
+def _host_para_url(host: str) -> str:
+    """Un IPv6 va entre corchetes: `::1` suelto arma `http://::1:8000`, que no
+    es una URL y no vuelve a coincidir con nada. La IP la da la conexión, así
+    que acá no hay nada que validar, sólo que escribirla como corresponde."""
+    return f"[{host}]" if ":" in host else host
+
+
+@router.post("/migrar/recibir")
+async def migrar_recibir(sobre: dict, request: Request):
+    """
+    El otro lado: abre el sobre y escribe lo que traía.
+
+    Que el sobre se pueda abrir **es** la autenticación de esta ruta: quien no
+    tiene la clave del emparejamiento no produce uno válido. Es lo único
+    autenticado de esta API por ahora (#4).
+
+    Un sobre que no abre devuelve 403 con un mensaje que no distingue "ese
+    emparejamiento no existe" de "la clave no corresponde": decir cuál de las
+    dos le confirmaría a quien prueba si acertó el id.
+    """
+    data_dir = _instance.boot.data_dir
+    try:
+        fila, contenido = await run_in_threadpool(emparejamiento.abrir, data_dir, sobre)
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(403, str(exc)) from None
+
+    resultados = await run_in_threadpool(migracion.aplicar, _instance, contenido)
+    # La IP sale de la conexión y el puerto del sobre (`origen_puerto`), porque
+    # de la conexión no se puede sacar: el que trae es el efímero del cliente y
+    # no el que ese Bot escucha. Antes se adivinaba 8000, y un Bot en otro
+    # puerto quedaba anotado acá con una dirección que no existe — que cuando la
+    # migración va al revés se ve igual que "falta emparejar". Si el sobre no lo
+    # trae (una app vieja del otro lado) no se anota nada: vacía se ve,
+    # inventada no.
+    quien = request.client.host if request.client else ""
+    puerto = _puerto_del_sobre(contenido.get("origen_puerto"))
+    await run_in_threadpool(
+        emparejamiento.anotar_uso, data_dir, fila["id"],
+        f"http://{_host_para_url(quien)}:{puerto}" if quien and puerto else "")
+    _regenerar_manual()
+    return {
+        "resultados": resultados,
+        "migrados": sum(1 for r in resultados if r["ok"]),
+        "fallados": sum(1 for r in resultados if not r["ok"]),
+    }
+
+
+# ── Emparejar con otro Bot ──────────────────────────────────────────────
+
+# Desde dónde se acepta emparejar. La app escucha en toda la red (`--red`) y no
+# tiene autenticación (#4): si estos endpoints estuvieran abiertos, cualquiera
+# en la LAN pediría un código y quedaría emparejado, y con eso el sobre cifrado
+# dejaría de autenticar a nadie — protegería el secreto de quien escucha, pero
+# no de quien lo pide. Emparejar se hace sentado en la máquina.
+#
+# **Esto acota, no garantiza, y depende de #4.** El port `http` está en
+# `PLUGIN_PORTS` y no restringe destinos, así que un flujo puede pedirle al
+# propio Bot por `127.0.0.1` y pasar por acá — y un flujo lo escribe y lo corre
+# cualquiera de la red mientras #4 siga abierto. Lo cierto es "emparejar no se
+# puede pedir **directamente** por la red", no "emparejar está protegido". Si
+# alguna vez hay un proxy adelante, además, este guardia ve todo como local y se
+# abre en silencio.
+_LOCALES = frozenset({"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"})
+
+
+def _solo_desde_esta_maquina(request: Request) -> None:
+    quien = request.client.host if request.client else ""
+    if quien not in _LOCALES:
+        raise HTTPException(
+            403,
+            "Esto se hace desde el propio Bot, no por la red. Abrí Bot en esa PC y hacelo "
+            "ahí — o, si lo está pidiendo un flujo, apuntalo a la dirección de su "
+            "propio Bot.")
+
+
+@router.get("/emparejamientos")
+def list_emparejamientos(request: Request):
+    """
+    Con quién está emparejado este Bot. La clave no sale nunca.
+
+    Local también: la lista es la topología de la flota —quién habla con quién,
+    con qué nombres y cuándo fue la última vez—, y los ids que publicaría son
+    justo lo que el sobre no quiere confirmar.
+    """
+    _solo_desde_esta_maquina(request)
+    try:
+        return {"items": emparejamiento.listar(_instance.boot.data_dir)}
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+class EmparejamientoNuevo(BaseModel):
+    nombre: str
+
+
+@router.post("/emparejamientos")
+def generar_emparejamiento(body: EmparejamientoNuevo, request: Request):
+    """
+    El lado que va a **recibir**: genera el código para copiar al otro Bot.
+
+    El código se ve una sola vez y no se puede volver a pedir: lo forma la
+    clave, y una clave que se relee por la API es una clave que sale por la API.
+    """
+    _solo_desde_esta_maquina(request)
+    try:
+        return emparejamiento.generar(_instance.boot.data_dir, body.nombre)
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+class EmparejamientoImportado(BaseModel):
+    codigo: str
+    url: str
+    nombre: str = ""
+
+
+@router.post("/emparejamientos/importar")
+def importar_emparejamiento(body: EmparejamientoImportado, request: Request):
+    """El lado que va a **empujar**: guarda el código que le pasaron."""
+    _solo_desde_esta_maquina(request)
+    try:
+        return emparejamiento.importar(
+            _instance.boot.data_dir, body.codigo, body.url, body.nombre)
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.delete("/emparejamientos/{ident}")
+def olvidar_emparejamiento(ident: str, request: Request):
+    """Local también: si no, cualquiera desemparejea a cualquiera, y recuperarse
+    de eso es que dos personas rehagan el emparejamiento en dos máquinas."""
+    _solo_desde_esta_maquina(request)
+    try:
+        emparejamiento.olvidar(_instance.boot.data_dir, ident)
+    except emparejamiento.EmparejamientoError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return {"deleted": ident}
 
 
 # ── Workflows ───────────────────────────────────────────────────────────
@@ -1228,6 +1656,11 @@ class WorkflowBody(BaseModel):
     folder: str = ""
     state: str = "enabled"
     description: str = ""
+    # Para qué fuente está pensado el flujo (núcleo v0.3.1-beta.11, core#31).
+    # Informativa: correr contra otra fuente sigue siendo válido. Es lo que le
+    # permite al editor ofrecer las columnas de la fila antes de la primera
+    # corrida, y a la grilla proponer el flujo para su fuente.
+    source: str = ""
 
 
 @router.put("/workflows/{name}")
@@ -1246,6 +1679,7 @@ def put_workflow(name: str, body: WorkflowBody):
             folder=body.folder,
             state=body.state,
             description=body.description,
+            source=body.source,
         )
     except StoreError as exc:
         raise HTTPException(400, str(exc)) from None
@@ -1522,6 +1956,18 @@ async def run_plugin_action(plugin: str, action: str, body: ActionBody):
     resultado, registro = await run_in_threadpool(
         lambda: _instance.run_action(plugin, action, params=body.params, item=body.item)
     )
+    # `outputs.indicador` (en el ok y en el err) es el check persistente de la
+    # fila (webapp/indicadores.py). Sólo tiene dónde guardarse si la Action
+    # corrió atada a un item de una colección: `item` trae la clave y la
+    # propia Action declarada dice de qué resource.
+    if body.item:
+        declarada = next((a for a in _instance.registry.actions_of(plugin) if a.name == action), None)
+        indicador = (resultado.outputs or {}).get("indicador")
+        if declarada and declarada.resource and isinstance(indicador, dict):
+            indicadores.guardar(
+                _instance, plugin, declarada.resource, body.item,
+                str(indicador.get("estado") or ""), str(indicador.get("texto") or ""),
+            )
     return {
         "result": resultado.to_dict(),
         "log": [{"message": mensaje, "level": nivel} for mensaje, nivel in registro],

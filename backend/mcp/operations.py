@@ -121,18 +121,13 @@ def list_tools(plugins: dict | None = None, root: str | None = None) -> dict:
     return {
         "contract": catalogo["contract"],
         "ports_disponibles": catalogo["ports"],
-        "tools": catalogo["tools"],
+        "tools": [t for t in catalogo["tools"] if not t["native"]],
+        # Los resuelve el executor, no el registry: se declaran en el catálogo
+        # (native=True) y acá se separan para que se lean como control de flujo.
         "nativos": [
-            {
-                "id": "flow.ejecutar",
-                "doc": "Ejecuta otro flujo por nombre. Comparte contexto y traza.",
-                "params": ["flowName"],
-            },
-            {
-                "id": "flow.retry_gate",
-                "doc": "Contador de reintentos por run. Combina con una arista |loop|.",
-                "params": ["retryGateKey", "retryGateMax"],
-            },
+            {"id": t["id"], "doc": t["doc"], "params": [p["name"] for p in t["params"]]}
+            for t in catalogo["tools"]
+            if t["native"]
         ],
     }
 
@@ -161,6 +156,24 @@ def list_resource_items(
     return _cli("resources", plugin, resource, "--json", root=root, plugins=plugins)
 
 
+def describe_extra_params(
+    tool: str, params: dict | None = None, plugins: dict | None = None, root: str | None = None
+) -> dict:
+    """
+    Los params extra que un tool puede ofrecer, dados los que el nodo ya
+    eligió (issue #27) — el caso de `connections.llamar`: elegida una Action,
+    los `{placeholders}` de su url/headers/payload son params concretos con
+    nombre, no algo que haya que adivinar abriendo la pantalla del plugin.
+
+    Vacío (no error) si el tool no describe una forma dinámica -la mayoría
+    no la necesita-, si no existe, o si no acepta params extra.
+    """
+    argv = ["extra-params", tool, "--json"]
+    if params:
+        argv += ["--params", json.dumps(params, ensure_ascii=False)]
+    return _cli(*argv, root=root, plugins=plugins)
+
+
 def list_ports(**_) -> dict:
     """
     Qué puede pedir un plugin en su manifest, y qué le da cada port.
@@ -177,8 +190,10 @@ def list_ports(**_) -> dict:
         p.PROCESS: "run(command: Sequence[str], cwd, timeout, env) -> ProcessResult",
         p.CLOCK: "now(), monotonic(), sleep(seconds, is_cancelled)",
         p.BROWSER: "goto(url), click(selector), leer_texto(selector), screenshot() -> bytes",
-        p.WINDOW: "find_window(title|process) -> WindowInfo, click(window, control), "
-                  "type_text(window, control, text), read_text(window, control=None)",
+        p.WINDOW: "find_window(title|process) -> WindowInfo, "
+                  "click(window, control, button='left'), "
+                  "type_text(window, control, text), read_text(window, control=None), "
+                  "read_state(window, control) -> 'on'/'off'/'indeterminate'/None",
     }
     return {
         "pedibles_por_un_plugin": [
@@ -302,6 +317,7 @@ def save_flow(
     folder: str | None = None,
     state: str | None = None,
     description: str | None = None,
+    source: str | None = None,
     root: str | None = None,
 ) -> dict:
     """
@@ -314,11 +330,11 @@ def save_flow(
     sus tools, ni pide un actor con permisos: sólo escribe la fila en la base
     de la instalación.
 
-    `folder`/`state`/`description` son opcionales y pisan lo que traiga la
-    cabecera `%%` del archivo. Sin ninguno de los dos —ni parámetro ni
-    cabecera—, se conserva el valor que el flujo ya tenía guardado en vez de
-    resetearlo: volver a guardar un flujo existente sin repetir su cabecera
-    completa no le borra la carpeta ni el estado.
+    `folder`/`state`/`description`/`source` son opcionales y pisan lo que
+    traiga la cabecera `%%` del archivo. Sin ninguno de los dos —ni parámetro
+    ni cabecera—, se conserva el valor que el flujo ya tenía guardado en vez
+    de resetearlo: volver a guardar un flujo existente sin repetir su
+    cabecera completa no le borra la carpeta, el estado ni la fuente.
     """
     argv = ["add", flow, "--json"]
     if name:
@@ -329,6 +345,8 @@ def save_flow(
         argv += ["--state", state]
     if description is not None:
         argv += ["--description", description]
+    if source is not None:
+        argv += ["--source", source]
     return _cli(*argv, root=root)
 
 

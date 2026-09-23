@@ -78,6 +78,24 @@
 }
 .seccion__suave { font-weight: 400; color: var(--texto-3); }
 
+/* Las vistas de un mismo panel (components/subvistas.js). Una línea inferior
+   continua con la pestaña activa recortada: se lee como "esto es una parte de
+   lo mismo", que es lo que son, y no como la navegación de al lado. */
+.subvistas {
+  display: flex; gap: 2px; margin: 0 0 16px;
+  border-bottom: 1px solid var(--borde);
+}
+.subvistas__tab {
+  padding: 7px 14px; border: 1px solid transparent; border-bottom: none;
+  margin-bottom: -1px; background: none; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; color: var(--texto-3);
+}
+.subvistas__tab:hover { color: var(--texto); background: var(--fondo-panel); }
+.subvistas__tab--activa {
+  color: var(--texto); font-weight: 600; background: var(--fondo);
+  border-color: var(--borde); border-bottom: 1px solid var(--fondo);
+}
+
 /* ── Campos de formulario ────────────────────────────────────────────── */
 
 .campo { display: flex; gap: 14px; padding: 11px 13px; border-bottom: 1px solid var(--borde-2); }
@@ -107,8 +125,15 @@
 .campo__error { font-size: 11px; color: var(--ambar); margin-top: 5px; }
 .requerido { color: var(--rojo); }
 
+/* `line-height` explícito, no el `normal` del navegador: sin él la caja del
+   input queda justo en la línea de texto de la fuente y el guión bajo —que es
+   una raya de 1px pegada abajo de todo— se recorta. Se veía en los params de
+   una tarjeta: `{id_externo}` se leía `{id externo}`, y un flujo se escribe
+   lleno de nombres con guión bajo. El editor de código nunca lo tuvo porque
+   ya traía `line-height`. El padding baja de 6 a 5 para que el campo mida lo
+   mismo que antes y no se estire toda la app. */
 .entrada {
-  width: 100%; font-size: 12.5px; padding: 6px 8px;
+  width: 100%; font-size: 12.5px; padding: 5px 8px; line-height: 1.45;
   border: 1px solid var(--borde); background: var(--fondo); color: var(--texto);
 }
 .entrada:focus { outline: none; border-color: var(--azul); box-shadow: 0 0 0 1px var(--azul); }
@@ -269,6 +294,10 @@
 /* Opt-in por columna. La grilla de casos trunca a una línea a propósito;
    una tabla de diagnóstico o de rutas necesita envolver o no se lee. */
 .tabla__celda--envuelve { white-space: normal; overflow-wrap: anywhere; }
+/* La copia de la primera fila que una columna `ancho: "contenido"` lleva en la
+   cabecera para medir igual que el cuerpo (tabla.js). Sin alto, sin verse y sin
+   la negrita de la cabecera, que la haría más ancha que las filas. */
+.tabla__fantasma { height: 0; overflow: hidden; visibility: hidden; font-weight: normal; }
 .tabla__fila--alto { align-items: flex-start; }
 .tabla__pie { padding: 7px 0; font-size: 11.5px; color: var(--texto-3); }
 .tabla__vacia { padding: 22px; text-align: center; color: var(--texto-3); font-size: 12.5px; line-height: 1.6; }
@@ -280,6 +309,44 @@
   font-size: 11px; font-family: var(--mono); padding: 3px 8px;
   border: 1px solid var(--borde); background: var(--fondo-panel); color: var(--texto-2);
 }
+
+/* ── Autocompletado de {variables} (components/autocompletar.js) ──────
+   Fijo a la ventana y no adentro del campo: el campo vive en cajas con scroll
+   y overflow oculto, y un hijo absoluto quedaría recortado. */
+.autocompletar {
+  z-index: 60; max-height: 260px; overflow: auto; background: var(--fondo);
+  border: 1px solid var(--borde-fuerte); box-shadow: 0 6px 20px rgba(0,0,0,.16); font-size: 12px;
+}
+.autocompletar__opcion {
+  display: flex; align-items: baseline; gap: 10px; padding: 5px 10px; cursor: pointer;
+  border-bottom: 1px solid var(--borde-4);
+}
+.autocompletar__opcion:last-child { border-bottom: none; }
+.autocompletar__opcion--elegida { background: var(--azul-fondo); }
+.autocompletar__nombre { font-weight: 600; color: var(--texto); white-space: nowrap; }
+.autocompletar__detalle { color: var(--texto-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── {variables} resaltadas en un campo (components/resaltar-variables.js) ──
+   El input va arriba con el texto transparente y el cursor visible; el espejo
+   abajo, con las mismas clases del input, dibuja el mismo texto con cada
+   variable marcada. Los dos en la misma celda de una grilla para medir igual. */
+.resaltado { display: grid; }
+.resaltado > * { grid-area: 1 / 1; min-width: 0; }
+.resaltado__espejo { pointer-events: none; overflow: hidden; white-space: pre; color: var(--texto); }
+.resaltado__campo { position: relative; background: transparent; color: transparent; caret-color: var(--texto); }
+.resaltado__campo::selection { color: transparent; }
+/* Sin `font-weight`: la negrita ensancha la letra y el espejo dejaría de
+   coincidir con el input. El trazo se engorda con la sombra, que no mueve nada. */
+.variable {
+  color: var(--azul-oscuro); background: var(--azul-fondo); border-radius: 2px;
+  text-shadow: 0.35px 0 currentColor;
+}
+/* {NODO.salida}: la relación entera a la vista, el nodo en azul y la salida en
+   negro. Mientras el núcleo no resuelva esa forma (core#30) va en ámbar. */
+.variable--nodo .variable__nodo { color: var(--azul-oscuro); }
+.variable--nodo .variable__nombre { color: var(--texto); }
+.variable--sin-nucleo { background: var(--ambar-fondo); color: var(--ambar); }
+.variable--sin-nucleo .variable__nodo, .variable--sin-nucleo .variable__nombre { color: var(--ambar); }
 
 /* ── Modal ───────────────────────────────────────────────────────────── */
 
@@ -305,6 +372,38 @@
 /* ── Estados de carga ────────────────────────────────────────────────── */
 
 .cargando { padding: 30px; text-align: center; color: var(--texto-3); font-size: 12.5px; }
+
+/* Pantalla completa mientras la app reinicia (actualizar_componente.js). No es
+   un modal porque puede dispararse desde cualquier pestaña — la del bloque de
+   Config → Actualizaciones o la campana del marco— y tapar todo, en vez de
+   pisar `shell.vista`, es lo único que se ve bien sin importar cuál. */
+.reinicio-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--fondo);
+}
+
+/* ── Markdown (components/markdown.js) ──────────────────────────────────
+   Las notas de un release, renderizadas a mano. Tipografía chica a
+   propósito: vive adentro de una fila de tabla o de un panel angosto de la
+   campana, nunca de página completa. */
+.markdown { font-size: 12.5px; line-height: 1.55; color: var(--texto-2); }
+.markdown > *:first-child { margin-top: 0; }
+.markdown > *:last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3,
+.markdown h4, .markdown h5, .markdown h6 {
+  margin: 10px 0 4px; font-size: 12.5px; font-weight: 600; color: var(--texto);
+}
+.markdown p { margin: 6px 0; }
+.markdown ul, .markdown ol { margin: 6px 0; padding-left: 20px; }
+.markdown li { margin: 2px 0; }
+.markdown hr { border: 0; border-top: 1px solid var(--borde); margin: 10px 0; }
+.markdown code {
+  font-family: var(--mono); font-size: 11.5px;
+  background: var(--fondo-panel); border: 1px solid var(--borde); padding: 1px 4px;
+}
+.markdown a { color: var(--azul); }
+.markdown__vacio { color: var(--texto-4); }
 
 /* ── Grilla de casos: las columnas del bot, fijas ─────────────────────── */
 
@@ -408,8 +507,11 @@
    que queda debajo de las columnas fijas del bot se recorta limpio, en vez de
    asomar por encima y parecer un error de dibujo. */
 .tabla__fila--filtros .tabla__celda { padding: 4px 5px; }
+/* El filtro de una columna es su propia regla, no una variante de `.entrada`,
+   así que le pasaba lo mismo con el guión bajo. Queda de 24px, igual que el
+   selector chico que tiene al lado. */
 .entrada--filtro {
-  width: 100%; padding: 3px 6px; font-size: 11px;
+  width: 100%; padding: 3px 6px; font-size: 11px; line-height: 1.45;
   border: 1px solid var(--borde); background: var(--fondo);
 }
 .entrada--filtro:focus { outline: none; border-color: var(--azul); }

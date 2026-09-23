@@ -13,21 +13,43 @@
  */
 
 import { h, poner, icono, ICONOS } from "../dom.js";
+import { api } from "../api.js";
 import { crearCampo } from "../components/campo.js";
+import { autocompletar } from "../components/autocompletar.js";
+import { resaltarVariables } from "../components/resaltar-variables.js";
 
 /**
  * @param {object} grafo      el grafo mutable que edita la vista
  * @param {object} catalogo   GET /tools
  * @param {object} opts       {alCambiar, seleccionado, alSeleccionar}
  */
-export function pilaDeTarjetas(grafo, catalogo, { alCambiar, seleccionado, alSeleccionar, alUbicar } = {}) {
+export function pilaDeTarjetas(grafo, catalogo, { alCambiar, seleccionado, alSeleccionar, alUbicar, columnasDeLaFila } = {}) {
   const orden = ordenTopologico(grafo);
   const porId = new Map((catalogo.tools || []).map((t) => [t.id, t]));
 
+  // Abrir una tarjeta cuelga el cuerpo sobre la caja que ya está en pantalla,
+  // sin redibujar. Cuando el click terminaba en `dibujar()`, la vista se rehacía
+  // entera y con ella el div que scrollea, que nace en el tope: abrir una
+  // tarjeta de abajo de una pila scrolleada la mandaba fuera de la vista (#2).
+  // Es el mismo camino que ya se había elegido para el filtro — tocar las
+  // tarjetas que están, no reconstruirlas.
+  const cajas = orden.map((id, i) => tarjeta(id, grafo, porId, catalogo, {
+    columnasDeLaFila,
+    alCambiar, abierta: seleccionado === id, alSeleccionar, alUbicar, indice: i + 1,
+    alAlternar: (quien) => {
+      const caja = cajas.find((c) => c.dataset.nodo === quien);
+      const abriendo = !caja.estaAbierta();
+      // Una sola abierta a la vez, como antes: la pila con todo desplegado no
+      // se puede recorrer.
+      for (const c of cajas) c.abrir(abriendo && c === caja);
+      // El estado sigue viviendo en la vista, para que sobreviva a un redibujo
+      // de verdad — cambiar de tool, agregar o quitar un nodo.
+      if (alSeleccionar) alSeleccionar(abriendo ? quien : null);
+    },
+  }));
+
   return h("div", {}, [
-    ...orden.map((id, i) => tarjeta(id, grafo, porId, catalogo, {
-      alCambiar, abierta: seleccionado === id, alSeleccionar, alUbicar, indice: i + 1,
-    })),
+    ...cajas,
     h("div", { style: { marginTop: "12px", display: "flex", gap: "7px" } }, [
       h("button", { class: "btn", text: "+ Acción",
                     onClick: () => agregar(grafo, "action", alCambiar, alSeleccionar) }),
@@ -75,14 +97,14 @@ export const TIPO_ROTULO = { start: "inicio", action: "acción", decision: "deci
  * abre el diagrama (`workflows-node-panel.js`) sin duplicar el selector de
  * tool, los params ni la edición de aristas.
  */
-export function contenidoDeNodo(id, grafo, catalogo, alCambiar) {
+export function contenidoDeNodo(id, grafo, catalogo, alCambiar, columnasDeLaFila) {
   const nodo = grafo.nodes[id];
   const porId = new Map((catalogo.tools || []).map((t) => [t.id, t]));
   const manifest = nodo.type === "action" ? porId.get(nodo.fn) : null;
-  return contenido(id, grafo, manifest, catalogo, alCambiar);
+  return contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila);
 }
 
-function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar, alUbicar, indice }) {
+function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar, alAlternar, alUbicar, indice, columnasDeLaFila }) {
   const nodo = grafo.nodes[id];
   const manifest = nodo.type === "action" ? porId.get(nodo.fn) : null;
   const desconocido = nodo.type === "action" && !manifest;
@@ -92,7 +114,7 @@ function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar
       display: "flex", alignItems: "center", gap: "9px", padding: "9px 12px",
       cursor: "pointer", background: abierta ? "var(--fondo-cabecera)" : "var(--fondo)",
     },
-    onClick: () => alSeleccionar(abierta ? null : id),
+    onClick: () => alAlternar(id),
   }, [
     h("span", {
       style: {
@@ -129,12 +151,25 @@ function tarjeta(id, grafo, porId, catalogo, { alCambiar, abierta, alSeleccionar
       : null,
   ]);
 
-  const cuerpo = abierta ? contenido(id, grafo, manifest, catalogo, alCambiar) : null;
-
   // `data-nodo`: el filtro de la pila (workflows.js) esconde tarjetas por id
   // sin reconstruirlas — reconstruir haría perder el foco del campo de filtro.
-  return h("div", { class: "tarjeta", style: { marginBottom: "7px" }, dataset: { nodo: id } },
-    [cabecera, cuerpo].filter(Boolean));
+  const caja = h("div", { class: "tarjeta", style: { marginBottom: "7px" }, dataset: { nodo: id } },
+    [cabecera]);
+
+  // `abrir`/`estaAbierta` colgados del elemento, como `dibujarGrafo` con
+  // `actualizarSeleccion`: la pila tiene que poder cerrar la otra tarjeta sin
+  // pasar por la vista, que es lo que hacía perder el scroll.
+  caja.estaAbierta = () => caja.children.length > 1;
+  caja.abrir = (si) => {
+    if (si === caja.estaAbierta()) return;
+    // El cuerpo se arma recién al abrir, como antes: son cuarenta tarjetas y
+    // cada cuerpo pregunta sus params al catálogo.
+    if (si) caja.appendChild(contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila));
+    else caja.removeChild(caja.lastChild);
+    cabecera.style.background = si ? "var(--fondo-cabecera)" : "var(--fondo)";
+  };
+  if (abierta) caja.abrir(true);
+  return caja;
 }
 
 /**
@@ -148,9 +183,17 @@ export function textoBuscable(id, nodo) {
     .filter(Boolean).map((v) => String(v).toLowerCase()).join(" ");
 }
 
-function contenido(id, grafo, manifest, catalogo, alCambiar) {
+/**
+ * `columnasDeLaFila` es opcional: una función que promete `{fuente, columnas:
+ * [{nombre, ejemplo}]}` o null. La da la vista, que sabe qué flujo es y con
+ * qué fuente corrió; la tarjeta sólo la ofrece en el autocompletado y el helper.
+ */
+function contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila = null) {
   const nodo = grafo.nodes[id];
   const partes = [];
+  // El bloque de params extra, si el tool acepta: necesita la tarjeta ya
+  // armada para escuchar los cambios de los params de arriba.
+  let extra = null;
 
   if (nodo.type === "start") {
     partes.push(nota("El nodo de arranque. No hace nada: marca por dónde empieza el recorrido."));
@@ -165,9 +208,18 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
     (valor) => { nodo.display = valor; alCambiar({ redibujar: false }); }));
 
   if (nodo.type === "decision") {
-    partes.push(campoTexto("Variable", nodo.variable || "",
-      "El valor que se compara en las condiciones de las aristas que salen de acá.",
-      (valor) => { nodo.variable = valor; alCambiar({ redibujar: false }); }));
+    // La variable se escribe pelada, sin llaves: el núcleo la lee por nombre
+    // (`decision_value`: primero la fila, después las salidas de los nodos
+    // anteriores) y no la interpola. La lista se abre al entrar al campo.
+    const campoVariable = campoTexto("Variable", nodo.variable || "",
+      "Sin llaves. Se busca primero en la fila y después en las salidas de los nodos anteriores; "
+      + "las condiciones de las aristas comparan contra su valor.",
+      (valor) => { nodo.variable = valor; alCambiar({ redibujar: false }); });
+    autocompletar(campoVariable.querySelector("input"),
+      () => opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila), { sinLlaves: true });
+    partes.push(campoVariable);
+    partes.push(subtitulo("Variables que puede comparar", "de la fila y de los nodos anteriores"));
+    partes.push(variablesDeDecision(id, grafo, catalogo, columnasDeLaFila));
     partes.push(...aristas(id, grafo, alCambiar));
     return h("div", { style: { borderTop: "1px solid var(--borde)" } }, partes);
   }
@@ -212,10 +264,20 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
     ]),
   ]));
 
+  // Lo que este nodo puede interpolar, para el autocompletado de cada campo. Se
+  // calcula al abrir la lista y no acá, así refleja el grafo del momento. El
+  // resaltado además sabe qué nombres son nodos, para dibujar `{NODO.salida}`
+  // como la relación que es.
+  const variables = () => opcionesDeVariables(id, grafo, catalogo, columnasDeLaFila);
+  variables.esNodo = (nombre) => Object.prototype.hasOwnProperty.call(grafo.nodes, nombre);
+
   if (manifest) {
     partes.push(subtitulo("Parámetros", "salen del manifest del tool"));
+    // De qué plugin es el tool: lo dice el catálogo, y hace falta para que un
+    // param que declara su colección pueda ofrecerla.
+    const plugin = (catalogo.plugins || []).find((p) => (p.tools || []).includes(manifest.id));
     for (const p of manifest.params || []) {
-      partes.push(paramDelCatalogo(nodo, p, alCambiar));
+      partes.push(paramDelCatalogo(nodo, p, alCambiar, plugin && plugin.name, variables));
     }
     if (!(manifest.params || []).length) {
       partes.push(nota("Este tool no declara parámetros."));
@@ -223,17 +285,16 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
     if (manifest.extra_params) {
       partes.push(nota(manifest.extra_params_doc
         || "Acepta parámetros extra además de los declarados."));
-    }
-
-    // Params que están en el nodo y el tool no declara. El diagnóstico los
-    // reporta como ignorados; acá se pueden ver y borrar.
-    const declarados = new Set((manifest.params || []).flatMap((p) => [p.name, ...(p.aliases || [])]));
-    const sobrantes = Object.keys(nodo.params || {}).filter((k) => !declarados.has(k));
-    if (sobrantes.length) {
-      partes.push(subtitulo("Parámetros no declarados",
-        manifest.extra_params ? "los acepta este tool" : "el tool los ignora al ejecutar"));
-      for (const clave of sobrantes) {
-        partes.push(paramLibre(nodo, clave, alCambiar, manifest.extra_params));
+      // Cuáles son depende de lo elegido en el propio nodo, así que se
+      // preguntan y se dibujan aparte; ese bloque también se hace cargo de los
+      // sobrantes, para no dibujar dos veces el mismo param.
+      extra = bloqueParamsExtra(nodo, manifest, alCambiar, plugin && plugin.name, variables);
+      partes.push(extra.elemento);
+    } else {
+      // Params que están en el nodo y el tool no declara. El diagnóstico los
+      // reporta como ignorados; acá se pueden ver y borrar.
+      for (const parte of sobrantesDelNodo(nodo, manifest, [], alCambiar, variables)) {
+        partes.push(parte);
       }
     }
 
@@ -247,10 +308,13 @@ function contenido(id, grafo, manifest, catalogo, alCambiar) {
   }
 
   partes.push(subtitulo("Variables que puede usar", "de la fila y de los nodos anteriores"));
-  partes.push(variablesDisponibles(id, grafo, catalogo));
+  partes.push(variablesDisponibles(id, grafo, catalogo, columnasDeLaFila));
   partes.push(...aristas(id, grafo, alCambiar));
 
-  return h("div", { style: { borderTop: "1px solid var(--borde)" } }, partes);
+  const caja = h("div", { style: { borderTop: "1px solid var(--borde)" } }, partes);
+  if (extra) extra.escuchar(caja);
+  escucharDependencias(caja);
+  return caja;
 }
 
 // ── Piezas ──────────────────────────────────────────────────────────────
@@ -285,7 +349,7 @@ function campoTexto(rotulo, valor, ayuda, alEscribir) {
  * asistente de fuentes — pero **todo se guarda como texto**: el DSL no tiene
  * tipos, y el valor puede ser `{una.interpolación}` en lugar de un número.
  */
-function paramDelCatalogo(nodo, p, alCambiar) {
+function paramDelCatalogo(nodo, p, alCambiar, plugin, variables) {
   const actual = (nodo.params || {})[p.name]
     ?? (p.aliases || []).map((a) => (nodo.params || {})[a]).find((v) => v !== undefined);
 
@@ -295,6 +359,17 @@ function paramDelCatalogo(nodo, p, alCambiar) {
     // input numérico no lo dejaría escribir.
     type: p.type === "json" || p.type === "bool" || p.type === "enum" ? p.type : "str",
     label: p.name, required: p.required, choices: p.choices, default: p.default,
+    placeholder: p.placeholder,
+    // El param dice de dónde salen sus valores y el campo lo ofrece como
+    // buscador: la tarjeta no sabe cuál es, la trae del manifest. Si la lista
+    // depende de otro param (`core:resources:{plugin}`, core#32), se lee del
+    // nodo al momento de pedirla, y `escucharDependencias` la recarga cuando
+    // ese otro param cambia.
+    options_from: plugin ? p.options_from : "",
+    opciones: plugin && p.options_from
+      ? () => api.opcionesDeParam(plugin, p.options_from, nodo.params || {})
+      : null,
+    depende_de: api.dependenciaDeOpciones(p.options_from),
     doc: [p.doc, p.config_key ? `Si se deja vacío, sale de la configuración (${p.config_key}).` : ""]
       .filter(Boolean).join(" "),
   }, actual);
@@ -315,14 +390,140 @@ function paramDelCatalogo(nodo, p, alCambiar) {
   campo.elemento.querySelectorAll("input, textarea, select").forEach((el) => {
     el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", escribir);
   });
+  conVariables(campo.elemento, variables);
+  // La tarjeta no arma un formulario: cada param es un campo suelto. Así que
+  // el que depende de otro se marca, y `escucharDependencias` lo recarga.
+  if (campo.recargarOpciones && campo.esquema.depende_de) {
+    campo.elemento.dataset.dependeDe = campo.esquema.depende_de;
+    campo.elemento.recargarOpciones = () => campo.recargarOpciones(nodo.params || {});
+    if ((nodo.params || {})[campo.esquema.depende_de]) campo.elemento.recargarOpciones();
+  }
   return campo.elemento;
 }
 
-function paramLibre(nodo, clave, alCambiar, aceptado) {
+/**
+ * Recarga las listas que dependen de otro param cuando algo de la tarjeta
+ * cambia. Los params escriben en `nodo.params` en su propio listener, que corre
+ * antes de que el evento suba hasta acá, así que la lista se pide con el valor
+ * nuevo. Se recargan todas las dependientes y no sólo la del param tocado: son
+ * una o dos por tarjeta y la lista sale de un catálogo guardado.
+ */
+function escucharDependencias(raiz) {
+  let timer = null;
+  const alTocar = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      raiz.querySelectorAll("[data-depende-de]").forEach((el) => el.recargarOpciones && el.recargarOpciones());
+    }, 250);
+  };
+  raiz.addEventListener("input", alTocar);
+  raiz.addEventListener("change", alTocar);
+}
+
+/**
+ * Los campos de texto de un param saben de variables: tipear `{` abre la lista
+ * (también en el textarea del JSON), y las `{variables}` escritas se ven
+ * marcadas dentro del campo (sólo en los de una línea). Un campo con
+ * `<datalist>` —el que ofrece los items de una colección— no abre la lista:
+ * el navegador ya le pone su propio desplegable y serían dos encimados.
+ */
+function conVariables(raiz, variables) {
+  raiz.querySelectorAll('input[type="text"]').forEach((el) => resaltarVariables(el, opcionesDeResaltado(variables)));
+  if (!variables) return;
+  raiz.querySelectorAll('input[type="text"]:not([list]), textarea').forEach((el) => autocompletar(el, variables));
+}
+
+/**
+ * Los params extra que el tool acepta, según lo que el nodo ya tiene elegido.
+ *
+ * El manifest dice `extra_params: true` —"acepto más de los declarados"— pero
+ * no cuáles: dependen del propio nodo. Una Action de Connections define sus
+ * `{variables}` en la URL y el payload, así que hasta no elegirla no hay lista;
+ * antes de esto había que abrir la otra pantalla, anotar los nombres y
+ * escribirlos a mano en el .mmd. Se le preguntan al backend y se dibujan con el
+ * mismo campo que los declarados.
+ *
+ * Esta tarjeta sigue sin conocer un tool por nombre: le pregunta a cualquiera
+ * que acepte extras y dibuja lo que venga, que para casi todos es nada.
+ */
+function bloqueParamsExtra(nodo, manifest, alCambiar, plugin, variables) {
+  const caja = h("div", {});
+  let pedido = 0;
+  let ultima = null;
+  let descubiertos = [];
+
+  // Lo que puede cambiar la lista es el valor de los params declarados; no hace
+  // falta volver a preguntar mientras se escribe en uno de los descubiertos.
+  const huella = () => JSON.stringify((manifest.params || []).map((p) => (nodo.params || {})[p.name] ?? ""));
+
+  function pintar() {
+    poner(caja,
+      descubiertos.length ? subtitulo("Parámetros de lo elegido", "los declara la conexión") : null,
+      ...descubiertos.map((p) => paramDelCatalogo(nodo, p, alCambiar, plugin, variables)),
+      ...sobrantesDelNodo(nodo, manifest, descubiertos.map((p) => p.name), alCambiar, variables));
+  }
+
+  async function refrescar() {
+    const actual = huella();
+    if (actual === ultima) return;
+    ultima = actual;
+    const mio = ++pedido;
+    let extras = [];
+    try {
+      extras = await api.paramsExtra(manifest.id, nodo.params || {});
+    } catch {
+      // Que no se pueda describir no puede romper la edición del flujo: la
+      // tarjeta sigue andando como antes, con los sobrantes a mano.
+      extras = [];
+    }
+    if (mio !== pedido) return;  // llegó tarde: ya hay una respuesta más nueva
+    const declarados = new Set((manifest.params || []).flatMap((p) => [p.name, ...(p.aliases || [])]));
+    descubiertos = extras.filter((p) => !declarados.has(p.name));
+    pintar();
+  }
+
+  pintar();
+  refrescar();
+
+  return {
+    elemento: caja,
+    /** Escucha los params de arriba; cambiar la conexión cambia la lista entera. */
+    escuchar(raiz) {
+      let timer = null;
+      const alTocar = () => {
+        clearTimeout(timer);
+        timer = setTimeout(refrescar, 250);
+      };
+      raiz.addEventListener("input", alTocar);
+      raiz.addEventListener("change", alTocar);
+    },
+  };
+}
+
+/**
+ * Params que están en el nodo y no los cubre nadie: ni el manifest ni lo que se
+ * descubrió. El diagnóstico los reporta como ignorados; acá se ven y se borran.
+ */
+function sobrantesDelNodo(nodo, manifest, descubiertos, alCambiar, variables) {
+  const cubiertos = new Set([
+    ...(manifest.params || []).flatMap((p) => [p.name, ...(p.aliases || [])]),
+    ...descubiertos,
+  ]);
+  const sobrantes = Object.keys(nodo.params || {}).filter((k) => !cubiertos.has(k));
+  if (!sobrantes.length) return [];
+  return [
+    subtitulo("Parámetros no declarados",
+      manifest.extra_params ? "los acepta este tool" : "el tool los ignora al ejecutar"),
+    ...sobrantes.map((clave) => paramLibre(nodo, clave, alCambiar, manifest.extra_params, variables)),
+  ];
+}
+
+function paramLibre(nodo, clave, alCambiar, aceptado, variables) {
   const entrada = h("input", { class: "entrada entrada--mono", type: "text",
                                value: nodo.params[clave] ?? "",
                                onInput: (e) => { nodo.params[clave] = e.target.value; alCambiar({ redibujar: false }); } });
-  return h("div", { class: "campo" + (aceptado ? "" : " campo--falta") }, [
+  if (variables) autocompletar(entrada, variables);
+  const elemento = h("div", { class: "campo" + (aceptado ? "" : " campo--falta") }, [
     h("div", { class: "campo__etiqueta" }, [
       h("div", { class: "campo__nombre mono", style: { fontSize: "11.5px" }, text: clave }),
     ]),
@@ -336,13 +537,32 @@ function paramLibre(nodo, clave, alCambiar, aceptado) {
       aceptado ? null : h("div", { class: "campo__error", text: "El tool no declara este parámetro: al ejecutar se ignora." }),
     ]),
   ]);
+  resaltarVariables(entrada, opcionesDeResaltado(variables));
+  return elemento;
+}
+
+// El núcleo resuelve `{NODO.salida}` desde v0.3.1-beta.10 (core#30). Si una
+// instalación corre un núcleo anterior con esta web app, la referencia queda
+// sin valor al correr; el dry run lo señala.
+const NODO_CALIFICADO_SOPORTADO = true;
+
+function opcionesDeResaltado(variables) {
+  return { esNodo: (variables && variables.esNodo) || (() => false), nodoSoportado: NODO_CALIFICADO_SOPORTADO };
 }
 
 /**
- * Lo que este nodo puede interpolar: campos de la fila más salidas de los nodos
- * aguas arriba. Se calcula del grafo, no de una lista escrita a mano.
+ * Las salidas que dejan los nodos aguas arriba de `id`, agrupadas por nombre.
+ *
+ * Se calcula del grafo, no de una lista escrita a mano. Agrupadas porque el
+ * núcleo mezcla las salidas en un único diccionario por nombre: si dos nodos
+ * anteriores dejan `ruta`, `{ruta}` vale la del último que corrió, y quien
+ * escribe la tarjeta tiene que saberlo. Elegir el nodo (`{NODO.ruta}`) es
+ * core#30; hasta que llegue, lo único honesto es mostrar quiénes la dejan.
+ *
+ * @returns {Array<{nombre: string, de: string[], nodos: string[]}>}  `de` son los nombres
+ *   visibles (o ids) de los nodos y `nodos` sus ids, en el mismo orden
  */
-function variablesDisponibles(id, grafo, catalogo) {
+function salidasAguasArriba(id, grafo, catalogo) {
   const porId = new Map((catalogo.tools || []).map((t) => [t.id, t]));
   const entrantes = new Map();
   for (const a of grafo.edges || []) {
@@ -359,26 +579,175 @@ function variablesDisponibles(id, grafo, catalogo) {
     pila.push(...(entrantes.get(actual) || []));
   }
 
-  const salidas = [];
+  const porNombre = new Map();
   for (const nid of arriba) {
     const nodo = grafo.nodes[nid];
     if (!nodo || nodo.type !== "action") continue;
     const manifest = porId.get(nodo.fn);
     for (const o of (manifest && manifest.outputs) || []) {
-      salidas.push({ nombre: o.name, de: nodo.display || nid });
+      if (!porNombre.has(o.name)) porNombre.set(o.name, { nombre: o.name, de: [], nodos: [] });
+      porNombre.get(o.name).de.push(nodo.display || nid);
+      porNombre.get(o.name).nodos.push(nid);
     }
+  }
+  return [...porNombre.values()];
+}
+
+/** "la deja Mover PDF", o "la dejan Mover PDF y Mover DXF · así, la del último que corra". */
+function quienLaDeja(salida) {
+  if (salida.de.length === 1) return `la deja ${salida.de[0]}`;
+  const lista = salida.de.slice(0, -1).join(", ") + " y " + salida.de[salida.de.length - 1];
+  return `la dejan ${lista} · así, la del último que corra`;
+}
+
+/**
+ * Las opciones de una salida: la plana, y una por nodo cuando la dejan varios
+ * (`{MOVER_PDF.ruta}` — "la ruta de Mover PDF"), que es la forma de elegir cuál
+ * (núcleo v0.3.1-beta.10, core#30). Con un solo nodo, la plana alcanza y la
+ * calificada sólo agregaría ruido a la lista.
+ */
+function opcionesDeSalida(salida) {
+  const opciones = [{ nombre: salida.nombre, detalle: quienLaDeja(salida) }];
+  if (salida.nodos.length > 1) {
+    salida.nodos.forEach((nid, i) => opciones.push({
+      nombre: `${nid}.${salida.nombre}`,
+      detalle: `la ${salida.nombre} de ${salida.de[i]}`,
+    }));
+  }
+  return opciones;
+}
+
+// Los nombres de Config cambian poco y la lista se abre con cada tecla: se
+// piden una vez por rato, no por tecla.
+let _envCache = { cuando: 0, promesa: null };
+function nombresDeEnv() {
+  const ahora = Date.now();
+  if (!_envCache.promesa || ahora - _envCache.cuando > 30_000) {
+    _envCache = {
+      cuando: ahora,
+      promesa: api.env().then((r) => (r.items || []).map((i) => ({
+        nombre: `env.${i.name}`,
+        detalle: i.secret ? "secreto de Config" : "variable de Config",
+      }))).catch(() => []),
+    };
+  }
+  return _envCache.promesa;
+}
+
+/**
+ * Las opciones del autocompletado de un campo de este nodo: las columnas de la
+ * fila si se conocen, las salidas de arriba con quién las deja, y los nombres
+ * de Config. Las columnas van primero porque son las que más se usan.
+ */
+async function opcionesDeVariables(id, grafo, catalogo, columnasDeLaFila) {
+  const fila = columnasDeLaFila ? await Promise.resolve(columnasDeLaFila()).catch(() => null) : null;
+  const columnas = fila ? fila.columnas.map((c) => ({
+    nombre: c.nombre,
+    detalle: `columna de la fila · ${fila.fuente}` + (c.ejemplo ? ` · ej. ${c.ejemplo}` : ""),
+  })) : [];
+  const salidas = salidasAguasArriba(id, grafo, catalogo).flatMap(opcionesDeSalida);
+  return [...columnas, ...salidas, ...(await nombresDeEnv())];
+}
+
+/**
+ * Lo que una decisión puede comparar. Es menos que lo que un param puede
+ * interpolar, y a propósito: `decision_value` lee la fila y después `vars` por
+ * nombre pelado, así que no entran las variables de Config ni `{NODO.salida}`
+ * (con dos nodos que dejan la misma salida, vale la del último que corrió, y
+ * acá no hay forma de elegir).
+ */
+async function opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila) {
+  const fila = columnasDeLaFila ? await Promise.resolve(columnasDeLaFila()).catch(() => null) : null;
+  const columnas = fila ? fila.columnas.map((c) => ({
+    nombre: c.nombre,
+    detalle: `columna de la fila · ${fila.fuente}` + (c.ejemplo ? ` · ej. ${c.ejemplo}` : ""),
+  })) : [];
+  const salidas = salidasAguasArriba(id, grafo, catalogo).map((s) => ({ nombre: s.nombre, detalle: quienLaDeja(s) }));
+  return [...columnas, ...salidas];
+}
+
+/** El helper de la decisión: las mismas opciones que la lista, como fichas sin llaves. */
+function variablesDeDecision(id, grafo, catalogo, columnasDeLaFila) {
+  const fichas = h("div", { class: "fichas" }, [
+    h("span", { class: "ficha", title: "Cualquier columna de la fila de la fuente" }, ["columna de la fila"]),
+  ]);
+  const nota = h("div", { class: "campo__ayuda", text:
+    "Se escribe el nombre solo, sin llaves. Las variables de Config no valen acá." });
+  Promise.resolve(opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila)).then((opciones) => {
+    if (!opciones.length) return;
+    poner(fichas, ...opciones.map((o) => h("span", { class: "ficha", title: o.detalle || "" }, [o.nombre])));
+  }).catch(() => {});
+  return h("div", { style: { padding: "0 13px 11px" } }, [fichas, nota]);
+}
+
+/**
+ * Lo que este nodo puede interpolar: campos de la fila más salidas de los nodos
+ * aguas arriba. La misma lista que ofrece el autocompletado al tipear `{`.
+ */
+function variablesDisponibles(id, grafo, catalogo, columnasDeLaFila = null) {
+  const salidas = salidasAguasArriba(id, grafo, catalogo);
+
+  // Dos nodos del mismo tool dejan todas sus salidas repetidas: una nota por
+  // salida eran cinco párrafos iguales, y se acumulaban cuanto más abajo
+  // estaba la tarjeta. Se agrupan por el juego de nodos que las deja.
+  const repetidas = new Map();
+  for (const s of salidas.filter((s) => s.de.length > 1)) {
+    const clave = s.nodos.join("|");
+    if (!repetidas.has(clave)) repetidas.set(clave, { de: s.de, nodos: s.nodos, nombres: [] });
+    repetidas.get(clave).nombres.push(s.nombre);
+  }
+
+  // Las columnas de la fila llegan después, de una página de la fuente con la
+  // que este flujo corrió por última vez: se dibuja la ficha genérica y se
+  // reemplaza cuando llegan. Un flujo que nunca corrió se queda con la genérica
+  // y lo dice, para que no parezca que la fuente no tiene columnas.
+  const fichaFila = h("span", { class: "ficha", title: "Cualquier columna de la fila de la fuente" }, ["{columna de la fila}"]);
+  const notaFila = h("div", { class: "campo__ayuda" });
+  if (columnasDeLaFila) {
+    Promise.resolve(columnasDeLaFila()).then((fila) => {
+      if (fila && fila.columnas.length) {
+        fichaFila.replaceWith(...fila.columnas.map((c) =>
+          h("span", { class: "ficha", title: `columna de la fila · ${fila.fuente}` + (c.ejemplo ? ` · ej. ${c.ejemplo}` : "") },
+            [`{${c.nombre}}`])));
+        notaFila.textContent = fila.declarada
+          ? `Columnas de "${fila.fuente}", la fuente declarada en Propiedades.`
+          : `Columnas de "${fila.fuente}", la última fuente con la que corrió este flujo. Se fija en Propiedades → Fuente.`;
+      } else if (fila && fila.existe === false) {
+        notaFila.style.color = "var(--ambar)";
+        notaFila.textContent = `La fuente "${fila.fuente}" no existe en esta instalación: sin columnas para ofrecer. `
+          + "Se cambia en Propiedades → Fuente.";
+      } else if (!fila) {
+        notaFila.textContent = "Las columnas de la fila se ofrecen con la fuente de Propiedades, o después de la primera corrida contra una.";
+      }
+    }).catch(() => {});
   }
 
   return h("div", { style: { padding: "0 13px 11px" } }, [
     h("div", { class: "fichas" }, [
-      h("span", { class: "ficha", title: "Cualquier columna de la fila de la fuente" }, ["{columna de la fila}"]),
+      fichaFila,
       h("span", { class: "ficha", title: "Variables y secretos de Config" }, ["{env.CLAVE}"]),
-      ...salidas.map((s) => h("span", { class: "ficha", title: `La deja "${s.de}"` }, [`{${s.nombre}}`])),
+      ...salidas.map((s) => h("span", { class: "ficha", title: quienLaDeja(s) }, [
+        `{${s.nombre}}`,
+        s.de.length > 1 ? h("span", { style: { color: "var(--ambar)" }, text: ` ×${s.de.length}` }) : null,
+      ])),
     ]),
-    salidas.length
-      ? null
-      : h("div", { class: "campo__ayuda", text:
-          "Ningún nodo anterior deja salidas. Las que aparecen son las que siempre están." }),
+    notaFila,
+    h("div", { class: "campo__ayuda", text: salidas.length
+      ? "Tipeá { en cualquier parámetro para elegirlas de una lista, con quién deja cada una."
+      : "Ningún nodo anterior deja salidas. Las que aparecen son las que siempre están." }),
+    // El id del nodo (`N3`) es lo que el núcleo resuelve, y casi nunca es lo
+    // que se ve en el diagrama: al lado va el nombre visible, para saber cuál es.
+    ...[...repetidas.values()].map((g) => {
+      const quienes = g.de.slice(0, -1).join(", ") + " y " + g.de[g.de.length - 1];
+      const cuales = g.nombres.length === 1
+        ? `{${g.nombres[0]}}`
+        : `${g.nombres.length} salidas (${g.nombres.join(", ")})`;
+      const ej = g.nombres[0];
+      return h("div", { class: "campo__ayuda", style: { color: "var(--ambar)" }, text:
+        `${quienes} dejan ${g.nombres.length === 1 ? "" : "las mismas "}${cuales}: con el nombre solo, vale la del último que corra. `
+        + "Para elegir, se antepone el nodo: "
+        + g.nodos.map((n, i) => `{${n}.${ej}}` + (g.de[i] !== n ? ` es la de ${g.de[i]}` : "")).join(", ") + "." });
+    }),
   ]);
 }
 

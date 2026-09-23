@@ -248,6 +248,37 @@ def test_fs_roots_del_boot_llegan_al_adapter_por_defecto(tmp_path):
         inst.close()
 
 
+def test_fs_root_que_contiene_la_instalacion_no_expone_su_carpeta(tmp_path):
+    """
+    Issue #26: el caso que motivó el fix. `fs_root` es todo el disco -acá,
+    `tmp_path`- con la instalación adentro; el flujo llega a todo menos a su
+    propia carpeta (`data/`, `plugins/`, `boot.env`), sin que nadie tenga que
+    declarar esa protección aparte.
+    """
+    from backend.adapters.storage_sqlite import IN_MEMORY, SqliteStorageAdapter
+    from backend.core import boot as bootstrap
+    from backend.core.ports import PortError
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    (tmp_path / "otros-archivos").mkdir()
+    (tmp_path / "otros-archivos" / "trabajo.txt").write_text("ok", encoding="utf-8")
+
+    cfg = bootstrap.BootConfig(root=tmp_path, fs_root=str(tmp_path), plugins_dir=plugins_dir)
+    inst = Instance(tmp_path, storage=SqliteStorageAdapter(IN_MEMORY), boot=cfg)
+    try:
+        fs = inst.adapters["fs"]
+        assert fs.read_text("otros-archivos/trabajo.txt") == "ok"
+        with pytest.raises(PortError, match="fuera del alcance de un flujo"):
+            fs.read_text("plugins/algo.py")
+        with pytest.raises(PortError, match="fuera del alcance de un flujo"):
+            fs.read_text("data/bot.db")
+        with pytest.raises(PortError, match="fuera del alcance de un flujo"):
+            fs.read_text("boot.env")
+    finally:
+        inst.close()
+
+
 def test_la_instancia_arma_registro_ports_y_stores(instance):
     """
     Una instalación sin ningún plugin instalado es válida y funcional: quedan
@@ -255,7 +286,7 @@ def test_la_instancia_arma_registro_ports_y_stores(instance):
     """
     assert instance.registry.errors == []
     assert set(instance.registry.tool_ids) == {"core.log", "core.set_status", "core.wait"}
-    assert set(instance.registry.adapters) == {"http", "fs", "process", "clock", "browser", "window"}
+    assert set(instance.registry.adapters) == {"http", "fs", "process", "clock", "browser", "window", "geometry"}
 
 
 def test_los_adapters_inyectados_son_los_que_llegan_al_tool(demo_instance, adapters):
@@ -309,6 +340,58 @@ def test_diagnose_cruza_el_flujo_con_lo_instalado(instance):
     assert any("core.lgo" in d.message for d in diagnosticos)
     # Y sugiere el nombre bueno, que es lo que convierte el error en un arreglo.
     assert any("core.log" in d.message for d in diagnosticos)
+
+
+def test_check_graph_acepta_nodo_qualificado_a_un_nodo_anterior(demo_instance):
+    """
+    Issue #30: `{PRIMERO.destino}` referencia el id de un nodo anterior que
+    declara ese output -- no tiene que disparar ningún diagnóstico.
+    """
+    demo_instance.workflows.save_mmd(
+        "calificado",
+        'flowchart TD\n'
+        '    B(inicio)\n'
+        '    PRIMERO["demo.mover | origen=/a, destino=/b"]\n'
+        '    L["core.log | message={PRIMERO.destino}"]\n'
+        '    B --> PRIMERO\n'
+        '    PRIMERO --> L\n',
+    )
+    _, diagnosticos = demo_instance.diagnose("calificado")
+    assert diagnosticos == []
+
+
+def test_check_graph_marca_un_nodo_qualificado_que_no_corre_antes(demo_instance):
+    """Issue #30: `{TERCERO.x}` desde un nodo que corre antes que TERCERO."""
+    demo_instance.workflows.save_mmd(
+        "fuera_de_orden",
+        'flowchart TD\n'
+        '    B(inicio)\n'
+        '    SEGUNDO["core.log | message={TERCERO.destino}"]\n'
+        '    TERCERO["demo.mover | origen=/a, destino=/b"]\n'
+        '    B --> SEGUNDO\n'
+        '    SEGUNDO --> TERCERO\n',
+    )
+    _, diagnosticos = demo_instance.diagnose("fuera_de_orden")
+    assert any(
+        "TERCERO" in d.message and "no corre antes" in d.message for d in diagnosticos
+    )
+
+
+def test_check_graph_avisa_de_una_salida_que_el_nodo_no_declara(demo_instance):
+    """Issue #30: `{PRIMERO.algo_que_no_existe}` -- warning, no error."""
+    demo_instance.workflows.save_mmd(
+        "salida_mala",
+        'flowchart TD\n'
+        '    B(inicio)\n'
+        '    PRIMERO["demo.mover | origen=/a, destino=/b"]\n'
+        '    L["core.log | message={PRIMERO.algo_que_no_existe}"]\n'
+        '    B --> PRIMERO\n'
+        '    PRIMERO --> L\n',
+    )
+    _, diagnosticos = demo_instance.diagnose("salida_mala")
+    (d,) = diagnosticos
+    assert d.severity.value == "warning"
+    assert "algo_que_no_existe" in d.message
 
 
 def test_missing_config_solo_de_los_plugins_del_flujo(demo_instance):
@@ -1027,3 +1110,134 @@ def test_describe_installation_muestra_dependencias_declaradas_y_si_faltan(insta
     assert {"spec": "pytest", "package": "pytest", "present": True} in conv["requires"]
     assert any(r["package"] == "no-existe-esta-lib" and not r["present"] for r in conv["requires"])
     assert "convertidor.no-existe-esta-lib" in foto["resumen"]
+
+
+# ── describe_extra_params (issue #27) ────────────────────────────────────
+
+
+def _plugin_con_conexiones(describe_extra_params=None):
+    """
+    Un plugin mínimo con un Resource "connections" y un tool
+    `conector.llamar` con `extra_params=True`, opcionalmente con un
+    describer -- el caso exacto del issue (`connections.llamar`).
+    """
+    from backend.core.contract import (
+        FunctionTool,
+        Param,
+        ParamType,
+        Plugin,
+        PluginManifest,
+        Resource,
+        ToolManifest,
+        ToolResult,
+    )
+
+    manifest = PluginManifest(
+        name="conector",
+        label="Conector",
+        resources=(Resource(name="connections", label="Conexiones"),),
+    )
+    tool = FunctionTool(
+        manifest=ToolManifest(
+            id="conector.llamar",
+            label="Llamar",
+            category="X",
+            params=(Param("connection", ParamType.STR, required=True, options_from="connections"),),
+            extra_params=True,
+        ),
+        fn=lambda ctx: ToolResult.ok(),
+        describe_extra_params=describe_extra_params,
+    )
+    return Plugin(manifest=manifest, tools=[tool])
+
+
+def test_describe_extra_params_usa_lo_que_el_nodo_ya_eligio(instance):
+    """
+    El caso del issue: elegida una conexión, el tool describe qué
+    `{placeholders}` tiene sentido ofrecer -- acá, los que trae guardados el
+    item de esa conexión.
+    """
+    def describir(node_params, leer_item):
+        from backend.core.contract import Param
+
+        item = leer_item("connections", node_params.get("connection", ""))
+        if item is None:
+            return ()
+        return tuple(Param(campo, doc="de la conexión") for campo in item.get("placeholders", []))
+
+    instance.registry._add_plugin("conector", "test", _plugin_con_conexiones(describir))
+    instance.write_resource_item(
+        "conector", "connections", "Buscar cliente", {"name": "Buscar cliente", "placeholders": ["id_externo", "pais"]}
+    )
+
+    extras = instance.describe_extra_params("conector.llamar", {"connection": "Buscar cliente"})
+
+    assert [p["name"] for p in extras] == ["id_externo", "pais"]
+
+
+def test_describe_extra_params_nunca_ve_un_secreto(instance):
+    """Issue #27, punto 3: el lector que recibe el describer usa items enmascarados."""
+    from backend.core.contract import Field, ParamType, Plugin, PluginManifest, Resource
+
+    visto = {}
+
+    def describir(node_params, leer_item):
+        nonlocal visto
+        visto = leer_item("connections", node_params.get("connection", ""))
+        return ()
+
+    manifest = PluginManifest(
+        name="conector",
+        label="Conector",
+        resources=(
+            Resource(
+                name="connections",
+                label="Conexiones",
+                fields=(Field("token", ParamType.STR, secret=True),),
+            ),
+        ),
+    )
+    plugin = _plugin_con_conexiones(describir)
+    instance.registry._add_plugin("conector", "test", Plugin(manifest=manifest, tools=plugin.tools))
+    instance.write_resource_item("conector", "connections", "c1", {"name": "c1", "token": "shhh"})
+
+    instance.describe_extra_params("conector.llamar", {"connection": "c1"})
+
+    assert visto["token"] is None  # nunca "shhh"
+
+
+def test_describe_extra_params_vacio_sin_describer(instance):
+    """La mayoría de los tools no lo necesita: sin describer, la lista es vacía, no un error."""
+    instance.registry._add_plugin("conector", "test", _plugin_con_conexiones(describe_extra_params=None))
+    assert instance.describe_extra_params("conector.llamar", {}) == []
+
+
+def test_describe_extra_params_vacio_si_extra_params_es_false(instance):
+    """Describir extras de un tool que los descarta no tendría a dónde ir."""
+    from backend.core.contract import FunctionTool, Param, Plugin, PluginManifest, ToolManifest, ToolResult
+
+    def describir(node_params, leer_item):
+        return (Param("x"),)
+
+    manifest = PluginManifest(name="p", label="P")
+    tool = FunctionTool(
+        manifest=ToolManifest(id="p.hacer", label="h", category="X", extra_params=False),
+        fn=lambda ctx: ToolResult.ok(),
+        describe_extra_params=describir,
+    )
+    instance.registry._add_plugin("p", "test", Plugin(manifest=manifest, tools=[tool]))
+
+    assert instance.describe_extra_params("p.hacer", {}) == []
+
+
+def test_describe_extra_params_de_un_tool_inexistente_es_vacio(instance):
+    assert instance.describe_extra_params("no.existe", {}) == []
+
+
+def test_describe_extra_params_traga_una_excepcion_del_describer(instance):
+    """Corre mientras se edita un flujo, no en un run: un describer roto no tumba la pantalla."""
+    def describir(node_params, leer_item):
+        raise RuntimeError("boom")
+
+    instance.registry._add_plugin("conector", "test", _plugin_con_conexiones(describir))
+    assert instance.describe_extra_params("conector.llamar", {"connection": "x"}) == []

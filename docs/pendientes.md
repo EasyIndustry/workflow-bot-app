@@ -4,12 +4,34 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
 `estado-del-proyecto.md`.
 
 ## Depende del núcleo
+- **core#26**: que el port `fs` pueda negar subárboles adentro de una raíz,
+  armados por el núcleo con lo que sabe de su instalación (su raíz, `data/`,
+  `plugins/`). Sin eso, una raíz que contenga la instalación entrega la base,
+  la llave, el código de los plugins y —peor— el propio `boot.env`, así que la
+  app la rechaza y usar una unidad entera obliga a enumerar carpeta por
+  carpeta. Cuando exista: sacar ese rechazo de `webapp/limites.py` y mostrar
+  en Inicio qué queda negado.
+- **Una fuente declarada que no existe** (core#31): el núcleo no la señala en
+  `check_flow`; la app la marca en ámbar en la cabecera del flujo y en el
+  helper de la tarjeta. Si hace falta que un agente por MCP lo vea, es un
+  issue nuevo en el núcleo.
+- **Plug ins → Acciones no pasa por `params-extra`**: los params que un tool
+  descubre en runtime (`describe_extra_params`) sólo se dibujan en el editor de
+  flujos. Los de `bots` ya no lo necesitan (core#32 los declara), así que hoy
+  no hay caso que lo pida.
 - Nada abierto que frene a la webapp: core#15 (`on_step`), #16 (root y
   plugins por defecto en el MCP) y #17 (tools de orientación) llegaron en
   v0.3.1-beta.1. Los issues quedan abiertos hasta verificarlos en la QA y
   cerrarlos desde allá.
 
 ## Webapp
+- **Resaltado de `{variables}` en el JSON de un payload**: hoy sólo en los
+  campos de una línea; el textarea envuelve líneas y el espejo tendría que
+  copiar ese envolvimiento (`components/resaltar-variables.js`).
+- **numpy en el runtime del `.exe`**: el núcleo v0.3.1-beta.10 lo declara como
+  dependencia (core#19) pero carga con un adapter nulo si falta; el runtime no
+  lo trae. Cuando un plugin lo necesite de verdad, sumarlo al build
+  (`installer/packaging/build_win.sh`) y publicar `runtime-release.json`.
 - **Librerías de plugins, lo que falta**: la pantalla Librerías no muestra
   las huérfanas (instaladas por un plugin ya desinstalado); un botón para
   subir wheels desde el navegador en vez de copiarlas a `wheels/`. El
@@ -26,8 +48,9 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
   Windows (los dos son TUI; `pywinpty` está para eso).
 - La receta MCP asume código y datos en la misma máquina; un agente remoto
   usa la API HTTP (ver README del plugin `bots`).
-- Config → General: puerto, retención de runs, arranque con Windows.
-  Diseñada, sin backend.
+- Config → General: el nombre de la instalación ya tiene backend
+  (`webapp/identidad.py`, 23/09); puerto, retención de runs y arranque con
+  Windows siguen diseñados y sin escribir.
 - Sin autenticación: la app es de red local. Exponerla afuera pide un
   proxy.
 
@@ -55,4 +78,13 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
 - `bots`: falta el reclamo atómico para Bots colaborativos con la misma
   lista; es un campo en la fuente de datos (una Action de `connections`),
   no un tool más.
+- `bots`: abrir una pestaña nueva hacia otro Bot conocido y dejar un check
+  persistente de "Probar conexión" por fila (23/09) — ver estado-del-proyecto
+  del mismo día. Del lado de la app ya está todo: `outputs.abrir_url` en
+  cualquier Action de fila abre la pestaña (`plugins.js`), `outputs.indicador`
+  se guarda y se dibuja como check (`webapp/indicadores.py`), y `?bot=` en la
+  URL titula la pestaña cuando el Bot remoto no se nombró a sí mismo
+  (`main.js`). Nada de esto depende de que `bots` esté instalado. Lo que
+  falta es sólo del lado del plugin: que sus Actions "probar" y "abrir"
+  devuelvan esas dos claves.
 - Sincronía manual entre el catálogo privado y el índice público.

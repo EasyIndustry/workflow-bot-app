@@ -21,6 +21,8 @@ import { h, poner } from "../dom.js";
  * qué desalinearse contra sí mismo.
  *
  * @param {Array} columnas  [{clave, label, ancho, mono, peso, envuelve, filtro, render}]
+ *   `ancho` es un largo CSS fijo, nada (la columna reparte el sobrante con las
+ *   demás) o `"contenido"`: la columna mide lo que dibuja, para una botonera.
  * @param {Array} filas     objetos
  * `conFiltros` agrega una segunda fila de cabecera con el `filtro` de cada
  * columna. Va pegada a la cabecera y no en una barra aparte para que el input
@@ -37,9 +39,11 @@ export function tabla(columnas, filas, {
   const pegadas = fijas ? columnas.slice(-fijas) : [];
 
   const celda = (col, contenido, extra = {}) => {
-    const estilo = col.ancho
-      ? { flex: `0 0 ${col.ancho}`, width: col.ancho }
-      : { flex: "1", minWidth: "0" };
+    const estilo = col.ancho === "contenido"
+      ? { flex: "0 0 auto" }
+      : col.ancho
+        ? { flex: `0 0 ${col.ancho}`, width: col.ancho }
+        : { flex: "1", minWidth: "0" };
     if (col.mono) estilo.fontFamily = "var(--mono)";
     if (col.peso) estilo.fontWeight = col.peso;
     const clases = "tabla__celda" + (col.envuelve ? " tabla__celda--envuelve" : "");
@@ -54,10 +58,22 @@ export function tabla(columnas, filas, {
   const fila = (variante, celdasLibres, celdasFijas) =>
     [...celdasLibres, ...grupoFijo(variante, celdasFijas)];
 
+  // Una columna con `ancho: "contenido"` mide lo que ocupa lo que dibuja: una
+  // botonera, que depende de cuántas acciones declaró un plugin y de qué tan
+  // largos son sus rótulos. Un ancho fijo se quedaba corto y la celda recortaba
+  // los botones. Como cada fila es una caja flex aparte, la cabecera no tiene
+  // de dónde copiar ese ancho: lleva adentro, sin alto y sin verse, lo mismo
+  // que dibuja la primera fila, así las columnas de al lado alinean.
+  const rotulo = (col) => {
+    const texto = col.label ?? col.clave;
+    if (col.ancho !== "contenido" || !filas.length || !col.render) return texto;
+    return h("div", {}, [texto, h("div", { class: "tabla__fantasma" }, [col.render(filas[0])])]);
+  };
+
   const cabecera = h("div", { class: "tabla__fila tabla__fila--cabecera" }, fila(
     "tabla__grupo-fijo--cabecera",
-    libres.map((col) => celda({ ...col, mono: false, peso: null }, col.label ?? col.clave)),
-    pegadas.map((col) => celda({ ...col, mono: false, peso: null }, col.label ?? col.clave)),
+    libres.map((col) => celda({ ...col, mono: false, peso: null }, rotulo(col))),
+    pegadas.map((col) => celda({ ...col, mono: false, peso: null }, rotulo(col))),
   ));
 
   const filaFiltros = conFiltros

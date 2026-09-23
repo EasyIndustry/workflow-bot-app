@@ -62,9 +62,79 @@ async function pedir(ruta, { metodo = "GET", cuerpo, form } = {}) {
 
 const codificar = (s) => encodeURIComponent(s);
 
+// El catálogo de `GET /tools`, guardado un rato: las opciones que provee el
+// núcleo (`options_from="core:..."`) lo consultan por cada campo y cada tecla
+// en el campo del que dependen, y el catálogo no cambia mientras se escribe.
+let _catalogo = null;
+const VIGENCIA_CATALOGO = 30_000;
+async function catalogoReciente() {
+  if (!_catalogo || Date.now() - _catalogo.cuando > VIGENCIA_CATALOGO) {
+    const promesa = pedir("/tools");
+    _catalogo = { cuando: Date.now(), promesa };
+    promesa.catch(() => { _catalogo = null; });
+  }
+  return _catalogo.promesa;
+}
+
 export const api = {
   // Catálogo y salud
   tools: () => pedir("/tools"),
+
+  // Las claves de una colección de un plugin: lo que ofrece como lista un
+  // param que declara `options_from`. Sólo las claves, nunca los items — un
+  // Resource puede tener campos secretos. Cuál es la clave lo dice el propio
+  // resource (`key_field`), así que esto no sabe de ningún plugin.
+  clavesDeColeccion: async (plugin, coleccion) => {
+    const r = await pedir(`/resources/${codificar(plugin)}/${codificar(coleccion)}`);
+    const clave = (r.resource && r.resource.key_field) || "name";
+    return (r.items || []).map((i) => i[clave]).filter(Boolean);
+  },
+
+  // Las opciones de un param que declara `options_from`. Una colección del
+  // propio plugin (core#27): sus claves. Una fuente del núcleo, con el
+  // namespace `core:` (núcleo v0.3.1-beta.11, core#32): `core:plugins` son los
+  // plugins instalados y `core:resources:{plugin}` las colecciones del plugin
+  // que valga ese param en `valores` — por eso recibe lo que el formulario
+  // tiene cargado, y quien lo dibuja vuelve a pedir cuando ese campo cambia.
+  // Todo sale del catálogo de `GET /tools`; el núcleo no tiene un endpoint
+  // para esto porque la lista es una ayuda, no una validación: el valor puede
+  // ser una `{variable}` que recién se resuelve al correr.
+  //
+  // Un namespace que no se reconoce rechaza en vez de devolver vacío: el
+  // núcleo valida la forma de `core:...` al cargar pero no el nombre, así que
+  // `core:pluggins` pasa y se vería como un buscador mudo.
+  opcionesDeParam: async (plugin, optionsFrom, valores = {}) => {
+    if (!String(optionsFrom).startsWith("core:")) return api.clavesDeColeccion(plugin, optionsFrom);
+    const [espacio, argumento = ""] = optionsFrom.slice("core:".length).split(":");
+    const elegido = argumento.replace(/^\{(\w+)\}$/, (_, p) => String(valores[p] ?? ""));
+    const catalogo = await catalogoReciente();
+    const instalados = (catalogo.plugins || []).filter((p) => p.source !== "builtin");
+    if (espacio === "plugins") return instalados.map((p) => p.name);
+    if (espacio === "resources") {
+      const dueño = instalados.find((p) => p.name === elegido);
+      return dueño ? (dueño.resources || []).map((r) => r.name) : [];
+    }
+    throw new Error(`options_from "${optionsFrom}": el núcleo no ofrece "${espacio}"`);
+  },
+
+  // De qué otro param dependen las opciones (`core:resources:{plugin}` →
+  // "plugin"), o null. Un solo placeholder, un solo nombre: es la sintaxis que
+  // el núcleo valida al cargar el plugin.
+  dependenciaDeOpciones: (optionsFrom) => {
+    const m = /^core:[\w-]+:\{(\w+)\}$/.exec(optionsFrom || "");
+    return m ? m[1] : null;
+  },
+
+  // Los params extra que acepta un tool según lo que el nodo ya tenga cargado
+  // — una Action de Connections define sus {variables} en la URL y el payload,
+  // así que hasta que no está elegida no se sabe cuáles son. Vienen con la
+  // misma forma que un param del manifest. El tool que no tenga cómo
+  // describirlos devuelve la lista vacía.
+  paramsExtra: async (toolId, params) => {
+    const q = new URLSearchParams(params || {}).toString();
+    const r = await pedir(`/tools/${codificar(toolId)}/params-extra` + (q ? `?${q}` : ""));
+    return r.params || [];
+  },
   doctor: () => pedir("/doctor"),
   // Qué tiene la instalación, en una mirada; y si está recién hecha.
   resumen: () => pedir("/overview"),
@@ -72,6 +142,11 @@ export const api = {
   // Configuración de la instancia
   config: () => pedir("/config"),
   guardarConfig: (values) => pedir("/config", { metodo: "PATCH", cuerpo: { values } }),
+
+  // Cómo se llama este Bot (webapp/identidad.py). `resumen()` ya lo trae, así
+  // que esto es sólo para la pantalla de Config que lo edita.
+  identidad: () => pedir("/identidad"),
+  guardarIdentidad: (nombre) => pedir("/identidad", { metodo: "PUT", cuerpo: { nombre } }),
 
   // Variables y secretos. No hay un `get` de un secreto: el almacén es
   // write-only, así que el valor no existe del lado del navegador.
@@ -119,8 +194,11 @@ export const api = {
   // webapp/updates.py. `componente` es "core" o "webapp".
   actualizaciones: () => pedir("/updates"),
   configurarActualizaciones: (repos) => pedir("/updates/config", { metodo: "PUT", cuerpo: repos }),
-  releases: (componente, conPrueba = true) =>
-    pedir(`/updates/releases?component=${componente}&prerelease=${conPrueba ? "true" : "false"}`),
+  // De a pocos: cada release trae sus notas, y la pantalla casi siempre
+  // instala el primero. `hay_mas` dice si ofrecer "siguiente".
+  releases: (componente, conPrueba = true, pagina = 1, porPagina = 5) =>
+    pedir(`/updates/releases?component=${componente}&prerelease=${conPrueba ? "true" : "false"}`
+          + `&pagina=${pagina}&por_pagina=${porPagina}`),
   instalarRelease: (componente, tag) =>
     pedir("/updates/install/tag", { metodo: "POST", cuerpo: { tag, component: componente } }),
   instalarReleaseArchivo: (componente, archivo, tag = "") => {
@@ -136,6 +214,28 @@ export const api = {
 
   limites: () => pedir("/limites"),
   guardarRaices: (raices) => pedir("/limites/raices", { metodo: "PUT", cuerpo: { raices } }),
+  // El modo viaja aparte de la lista: "ningún programa" y "cualquiera" se
+  // escriben los dos con la lista vacía, así que deducirlo del contenido haría
+  // que borrar el último nombre bloqueara todo sin decirlo.
+  guardarProgramas: (modo, ejecutables) =>
+    pedir("/limites/programas", { metodo: "PUT", cuerpo: { modo, ejecutables } }),
+
+  // Emparejamientos: la clave compartida con la que viaja una migración, una
+  // por Bot del otro lado (webapp/emparejamiento.py). La clave no sale nunca,
+  // ni para mostrarla; `generar` devuelve el código una sola vez.
+  //
+  // Los cuatro contestan sólo a un pedido que sale de la propia máquina, así
+  // que un 403 acá significa "estás operando el Bot desde otra PC" y no que
+  // algo salió mal. Quien los llama tiene que distinguirlo.
+  emparejamientos: () => pedir("/emparejamientos"),
+  generarEmparejamiento: (nombre) =>
+    pedir("/emparejamientos", { metodo: "POST", cuerpo: { nombre } }),
+  // `url` se compara tal cual contra la dirección que pide la migración: no se
+  // normaliza más allá de la barra final, así que es lo que más falla.
+  importarEmparejamiento: (codigo, url, nombre = "") =>
+    pedir("/emparejamientos/importar", { metodo: "POST", cuerpo: { codigo, url, nombre } }),
+  olvidarEmparejamiento: (id) =>
+    pedir(`/emparejamientos/${codificar(id)}`, { metodo: "DELETE" }),
 
   // Actores: quién ejecuta y qué puede. Identidad y política, no autenticación.
   // Sin `borrar`: la baja es lógica (enabled=false), porque los runs apuntan al
@@ -164,10 +264,16 @@ export const api = {
     pedir(`/resources/${codificar(plugin)}/${codificar(resource)}/${codificar(clave)}`,
           { metodo: "DELETE" }),
 
-  // Acciones sueltas de un plugin ("probar", "previsualizar"): no son parte de
-  // ningún run, las dispara una persona desde la pantalla del plugin.
-  ejecutarAccion: (plugin, action, params = {}) =>
-    pedir(`/actions/${codificar(plugin)}/${codificar(action)}`, { metodo: "POST", cuerpo: { params } }),
+  // Acciones de un plugin ("probar", "previsualizar", "comparar"): no son parte
+  // de ningún run, las dispara una persona desde la pantalla del plugin.
+  //
+  // `item` es la clave de un item ya guardado, para una Action declarada sobre
+  // una colección: el núcleo arma los params desde ese item y lo que venga en
+  // `params` pisa campo a campo. Corre sobre lo guardado, que es lo que la
+  // distingue del "Probar" del formulario, que corre sobre lo que hay escrito.
+  ejecutarAccion: (plugin, action, params = {}, item = null) =>
+    pedir(`/actions/${codificar(plugin)}/${codificar(action)}`,
+          { metodo: "POST", cuerpo: { params, item } }),
 
   // Fuentes de datos: viven en el resource `sources` del plugin `connections`
   // (webapp/connections/plugin.py) — no hay un endpoint propio de "fuentes".

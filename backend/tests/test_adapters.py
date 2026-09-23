@@ -23,6 +23,7 @@ from backend.adapters.browser_playwright import PlaywrightBrowserAdapter
 from backend.adapters.clock_system import SystemClockAdapter
 from backend.adapters.crypto_fernet import FernetCryptoAdapter
 from backend.adapters.fs_local import LocalFsAdapter
+from backend.adapters.geometry_null import NullGeometryAdapter
 from backend.adapters.http_urllib import UrllibHttpAdapter
 from backend.adapters.process_subprocess import SubprocessAdapter
 from backend.adapters.storage_sqlite import IN_MEMORY, SqliteStorageAdapter
@@ -157,6 +158,37 @@ def test_fs_listar_y_recorrer(tmp_path):
     assert "hondo.txt" in todos
 
 
+def test_fs_walk_con_max_depth_no_baja_mas_del_limite(tmp_path):
+    """
+    Issue #33: sobre un share grande, bajar el árbol entero para pedir sólo
+    los hijos directos paga minutos de stat que después se descartan.
+    `max_depth=1` tiene que devolver exactamente eso -- nombres de acá abajo,
+    nada más hondo -- sin tocar lo que hay adentro de "sub".
+    """
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "hondo.txt").write_text("x")
+    (tmp_path / "arriba.txt").write_text("x")
+    fs = LocalFsAdapter()
+
+    directos = {e.name for e in fs.walk(str(tmp_path), max_depth=1)}
+    assert directos == {"sub", "arriba.txt"}
+
+    sin_limite = {e.name for e in fs.walk(str(tmp_path))}
+    assert "hondo.txt" in sin_limite  # sin max_depth, sigue siendo el árbol entero
+
+
+def test_fs_walk_max_depth_dos_llega_un_nivel_mas(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "hondo.txt").write_text("x")
+    (tmp_path / "sub" / "mas_hondo").mkdir()
+    (tmp_path / "sub" / "mas_hondo" / "muy_hondo.txt").write_text("x")
+    fs = LocalFsAdapter()
+
+    nivel_dos = {e.name for e in fs.walk(str(tmp_path), max_depth=2)}
+    assert nivel_dos == {"sub", "hondo.txt", "mas_hondo"}
+    assert "muy_hondo.txt" not in nivel_dos
+
+
 def test_fs_un_error_del_sistema_lleva_la_ruta_adentro(tmp_path):
     """
     Un FileNotFoundError pelado no dice *cuál* archivo, que es lo único que se
@@ -270,6 +302,72 @@ def test_fs_una_sola_raiz_via_roots_se_comporta_como_root(tmp_path):
     assert (encierro / "adentro.txt").read_text() == "ok"
     with pytest.raises(PortError, match="fuera del árbol"):
         fs.read_text("/etc/passwd")
+
+
+# ── denied: subárboles que nunca se alcanzan (issue #26) ─────────────────
+
+
+def test_fs_denied_gana_sobre_una_raiz_que_lo_contiene(tmp_path):
+    """
+    El caso del issue: `fs_root=D:\\` con la instalación adentro. La raíz es
+    todo el disco (acá, `tmp_path`), pero la carpeta de la instalación queda
+    afuera del alcance de un flujo.
+    """
+    instalacion = tmp_path / "User" / "Bot"
+    data = instalacion / "data"
+    data.mkdir(parents=True)
+    (data / "bot.db").write_text("secreto", encoding="utf-8")
+    (tmp_path / "afuera.txt").write_text("ok", encoding="utf-8")
+
+    fs = LocalFsAdapter(root=tmp_path, denied=[data])
+
+    assert fs.read_text("afuera.txt") == "ok"
+    with pytest.raises(PortError, match="fuera del alcance de un flujo"):
+        fs.read_text(str(data / "bot.db"))
+
+
+def test_fs_denied_no_se_confunde_con_fuera_del_arbol():
+    """El mensaje se distingue a propósito: agregar una raíz no arregla esto."""
+    fs = LocalFsAdapter(root="/permitido", denied=["/permitido/data"])
+    try:
+        fs._p("/permitido/data/bot.db")
+        raise AssertionError("debió rechazar la ruta negada")
+    except PortError as exc:
+        assert "fuera del alcance de un flujo" in str(exc)
+        assert "fuera del árbol permitido" not in str(exc)
+
+
+def test_fs_denied_gana_con_cualquier_alias(tmp_path):
+    """Ninguna raíz declarada, tenga alias o no, puede alcanzar lo negado."""
+    plugins = tmp_path / "plugins"
+    origen = tmp_path / "casos"
+    plugins.mkdir()
+    origen.mkdir()
+    fs = LocalFsAdapter(roots={"casa": tmp_path, "origen": origen}, denied=[plugins])
+
+    with pytest.raises(PortError, match="fuera del alcance de un flujo"):
+        fs.read_text(str(plugins / "x.py"))          # absoluta, sin alias
+    with pytest.raises(PortError, match="fuera del alcance de un flujo"):
+        fs.read_text("casa:plugins/x.py")             # relativa, con alias
+
+
+def test_fs_denied_gana_incluso_sin_ninguna_raiz_declarada(tmp_path):
+    """`fs_root` vacío es "todo el disco" -- lo negado sigue sin alcanzarse."""
+    secreta = tmp_path / "secreta"
+    secreta.mkdir()
+    fs = LocalFsAdapter(denied=[secreta])
+
+    with pytest.raises(PortError, match="fuera del alcance de un flujo"):
+        fs.read_text(str(secreta / "x"))
+
+
+def test_sin_denied_no_cambia_nada(tmp_path):
+    """Sin declarar nada negado, el comportamiento es exactamente el de siempre."""
+    permitido = tmp_path / "permitido"
+    permitido.mkdir()
+    fs = LocalFsAdapter(root=permitido)
+    fs.write_text("x.txt", "ok")
+    assert (permitido / "x.txt").read_text() == "ok"
 
 
 def test_fs_renombrar_no_acepta_separadores(tmp_path):
@@ -649,6 +747,79 @@ def test_window_pywinauto_click_cae_a_simular_el_mouse_si_invoke_falla():
     assert control.clicked is True
 
 
+# ── Issue #25: click con botón, y read_state ─────────────────────────────
+
+
+class _FakeControlConBoton:
+    def __init__(self):
+        self.clicked_con = None
+
+    def invoke(self):
+        raise AssertionError("un click distinto de left no debería pasar por Invoke")
+
+    def click_input(self, button="left"):
+        self.clicked_con = button
+
+
+def test_window_pywinauto_click_derecho_no_pasa_por_invoke_y_usa_el_mouse():
+    """
+    Issue #25: un click derecho no tiene patrón de UIA equivalente a Invoke
+    -- un menú contextual es un evento de mouse --, así que sale directo por
+    `click_input(button="right")`, sin intentar Invoke primero.
+    """
+    adapter = PywinautoWindowAdapter()
+    control = _FakeControlConBoton()
+    adapter._ventanas["1"] = _FakeVentanaPywinauto(control)
+
+    adapter.click(WindowInfo(handle="1", title="x"), "Export", button="right")
+
+    assert control.clicked_con == "right"
+
+
+class _FakeControlToggle:
+    def __init__(self, estado: int):
+        self._estado = estado
+
+    def get_toggle_state(self):
+        return self._estado
+
+
+class _FakeControlSeleccionable:
+    def __init__(self, seleccionado: bool):
+        self._seleccionado = seleccionado
+
+    def is_selected(self):
+        return self._seleccionado
+
+
+class _FakeControlSinEstado:
+    pass
+
+
+@pytest.mark.parametrize("crudo,esperado", [(0, "off"), (1, "on"), (2, "indeterminate")])
+def test_window_pywinauto_read_state_de_un_checkbox(crudo, esperado):
+    adapter = PywinautoWindowAdapter()
+    adapter._ventanas["1"] = _FakeVentanaPywinauto(_FakeControlToggle(crudo))
+
+    assert adapter.read_state(WindowInfo(handle="1", title="x"), "Lip Flat") == esperado
+
+
+@pytest.mark.parametrize("seleccionado,esperado", [(True, "on"), (False, "off")])
+def test_window_pywinauto_read_state_de_un_radio(seleccionado, esperado):
+    adapter = PywinautoWindowAdapter()
+    adapter._ventanas["1"] = _FakeVentanaPywinauto(_FakeControlSeleccionable(seleccionado))
+
+    assert adapter.read_state(WindowInfo(handle="1", title="x"), "Metric") == esperado
+
+
+def test_window_pywinauto_read_state_de_un_control_sin_estado_es_none():
+    """Un botón o una etiqueta no tienen estado: `None`, no `PortError`."""
+    adapter = PywinautoWindowAdapter()
+    adapter._ventanas["1"] = _FakeVentanaPywinauto(_FakeControlSinEstado())
+
+    assert adapter.read_state(WindowInfo(handle="1", title="x"), "Aceptar") is None
+
+
 def test_window_pywinauto_sugiere_proceso_elevado_cuando_no_se_encuentra(monkeypatch):
     """
     Issue #13: un proceso corriendo como administrador no lo puede abrir un
@@ -754,6 +925,80 @@ def test_window_pywinauto_explica_un_selector_ambiguo_en_vez_de_repetir_el_error
     assert '"Edit:Carpeta:"' in mensaje
 
 
+def test_window_atspi_click_derecho_no_soportado():
+    """
+    Issue #25: AT-SPI dispara la acción por defecto del control, no un evento
+    de mouse -- no hay un "right click" que pedirle, ni siquiera cayendo a
+    simular el mouse como hace el adapter de Windows.
+    """
+    adapter = AtspiWindowAdapter()
+    with pytest.raises(PortError, match="right click"):
+        adapter.click(WindowInfo(handle="1", title="x"), "Guardar", button="right")
+
+
+class _FakeEstadoSet:
+    def __init__(self, estados: frozenset):
+        self._estados = estados
+
+    def contains(self, estado):
+        return estado in self._estados
+
+
+class _FakeAccesibleConEstado:
+    def __init__(self, role: str, estados: frozenset = frozenset()):
+        self._role = role
+        self._estados = estados
+
+    def getRoleName(self):
+        return self._role
+
+    def getState(self):
+        return _FakeEstadoSet(self._estados)
+
+
+class _FakePyatspiModulo:
+    STATE_CHECKED = "checked"
+    STATE_INDETERMINATE = "indeterminate"
+
+
+def _adapter_atspi_con_control(monkeypatch, control):
+    """Un `AtspiWindowAdapter` que resuelve cualquier `read_state` a `control`, sin tocar pyatspi de verdad."""
+    adapter = AtspiWindowAdapter()
+    adapter._ventanas["1"] = object()
+    monkeypatch.setattr(adapter, "_registry", lambda: _FakePyatspiModulo)
+    monkeypatch.setattr(adapter, "_buscar_control", lambda ventana, sel: control)
+    return adapter
+
+
+def test_window_atspi_read_state_checkbox_tildado(monkeypatch):
+    control = _FakeAccesibleConEstado("check box", frozenset({"checked"}))
+    adapter = _adapter_atspi_con_control(monkeypatch, control)
+
+    assert adapter.read_state(WindowInfo(handle="1", title="x"), "Lip Flat") == "on"
+
+
+def test_window_atspi_read_state_checkbox_destildado(monkeypatch):
+    control = _FakeAccesibleConEstado("check box", frozenset())
+    adapter = _adapter_atspi_con_control(monkeypatch, control)
+
+    assert adapter.read_state(WindowInfo(handle="1", title="x"), "Lip Flat") == "off"
+
+
+def test_window_atspi_read_state_indeterminado(monkeypatch):
+    control = _FakeAccesibleConEstado("check box", frozenset({"indeterminate"}))
+    adapter = _adapter_atspi_con_control(monkeypatch, control)
+
+    assert adapter.read_state(WindowInfo(handle="1", title="x"), "Lip Flat") == "indeterminate"
+
+
+def test_window_atspi_read_state_de_un_control_sin_estado_es_none(monkeypatch):
+    """Un botón no tiene el rol de nada "con estado": `None`, no `PortError`."""
+    control = _FakeAccesibleConEstado("push button")
+    adapter = _adapter_atspi_con_control(monkeypatch, control)
+
+    assert adapter.read_state(WindowInfo(handle="1", title="x"), "Aceptar") is None
+
+
 def test_window_atspi_mapea_el_tipo_al_rol_de_accesibilidad():
     """El mismo selector, traducido al vocabulario del árbol de accesibilidad."""
     from backend.adapters.window_atspi import _selector
@@ -780,3 +1025,21 @@ def test_window_unsupported_en_un_sistema_operativo_sin_adapter():
         adapter.type_text(ventana, "campo", "texto")
     with pytest.raises(PortError, match="Darwin"):
         adapter.read_text(ventana)
+    with pytest.raises(PortError, match="Darwin"):
+        adapter.read_state(ventana, "checkbox")
+
+
+# ── Geometría (issue #19) ─────────────────────────────────────────────
+
+
+def test_geometry_null_no_tiene_ningun_computo_real_detras():
+    """
+    El de reserva que trae el core, no un mock: `available` es False siempre,
+    porque el núcleo deliberadamente no bundlea ningún adapter de geometría
+    de fábrica (issue #19). Usarlo de verdad falla explícito.
+    """
+    adapter = NullGeometryAdapter()
+
+    assert adapter.available is False
+    with pytest.raises(PortError, match="geometría"):
+        adapter.nearest_on_surface(b"stl-falso", [(0.0, 0.0, 0.0)])

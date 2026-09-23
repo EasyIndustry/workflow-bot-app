@@ -8,12 +8,60 @@
  * declaró en el lugar equivocado.
  */
 
-import { h } from "../dom.js";
+import { h, poner } from "../dom.js";
 import { crearEditorDeCodigo } from "./editor-codigo.js";
+
+// Para que cada `<datalist>` tenga su id sin que nadie lo invente a mano.
+let _seqOpciones = 0;
 
 /** Los siete tipos de `ParamType`. Cualquier otro cae en texto. */
 function control(esq, valor, alCambiar) {
-  const comun = { class: "entrada", onInput: alCambiar };
+  // `placeholder` es el ejemplo del valor que el manifest declara para mostrar
+  // adentro del campo vacío (core#29): explica cómo se escribe, no qué es —eso
+  // es `doc`, que va abajo—. Hasta que el núcleo lo publique llega vacío y no
+  // se dibuja nada, que es lo mismo que hoy.
+  const comun = { class: "entrada", onInput: alCambiar, placeholder: esq.placeholder || "" };
+
+  // Un param que declara de qué colección salen sus valores (`options_from`,
+  // core#27): texto con buscador, **no** un `<select>`. La lista es una ayuda
+  // para no tener que acordarse del nombre exacto, no una lista cerrada — el
+  // valor puede ser una `{variable}` que recién se resuelve al correr, y por
+  // eso el núcleo declara `options_from` como informativo y no lo valida.
+  // Quién sabe traer los valores es quien arma el campo; sin eso, texto pelado.
+  //
+  // `esq.opciones(valores)` recibe lo que el formulario tiene cargado, porque
+  // la lista puede depender de otro campo (`core:resources:{plugin}`, core#32):
+  // el campo expone `recargarOpciones` y quien lo arma la llama cuando ese otro
+  // campo cambia (`crearFormulario` lo hace solo a partir de `esq.depende_de`).
+  if (esq.options_from && esq.opciones) {
+    const lista = h("datalist", { id: `opciones-${++_seqOpciones}` });
+    const entrada = h("input", {
+      ...comun, type: "text", list: lista.id, value: valor ?? esq.default ?? "",
+      placeholder: `escribí, o elegí de ${esq.options_from}`,
+    });
+    let pedido = 0;
+    const recargar = (valores = {}) => {
+      const mio = ++pedido;
+      return Promise.resolve(esq.opciones(valores))
+        .then((opciones) => {
+          if (mio !== pedido) return;  // llegó tarde: ya hay una lista más nueva
+          poner(lista, ...(opciones || []).map((v) => h("option", { value: v })));
+          entrada.placeholder = `escribí, o elegí de ${esq.options_from}`;
+        })
+        // Que no se pueda traer la lista no puede dejar el campo sin usar: sigue
+        // siendo un texto, que es lo que era antes de esto. Pero lo dice, porque
+        // un buscador vacío parece una fuente sin valores y no un error.
+        .catch((e) => {
+          if (mio !== pedido) return;
+          poner(lista);
+          entrada.placeholder = `escribí; la lista no se pudo traer (${e.message})`;
+        });
+    };
+    recargar();
+    const caja = h("div", {}, [entrada, lista]);
+    caja.recargarOpciones = recargar;
+    return caja;
+  }
 
   if (esq.type === "enum" && (esq.choices || []).length) {
     const sel = h("select", { class: "selector", onChange: alCambiar },
@@ -55,7 +103,8 @@ function control(esq, valor, alCambiar) {
   }
 
   if (esq.multiline) {
-    return h("textarea", { class: "entrada entrada--area", onInput: alCambiar, value: valor ?? esq.default ?? "" });
+    return h("textarea", { class: "entrada entrada--area", onInput: alCambiar, value: valor ?? esq.default ?? "",
+                           placeholder: esq.placeholder || "" });
   }
 
   const claseExtra = esq.type === "path" ? " entrada--mono" : "";
@@ -121,7 +170,11 @@ export function crearCampo(esq, valor, { falta = false, alCambiar = () => {} } =
     return crudo;
   }
 
-  return { clave, elemento, leer, esquema: esq };
+  return {
+    clave, elemento, leer, esquema: esq,
+    /** Vuelve a pedir la lista del buscador, con los valores del formulario. Null si no tiene. */
+    recargarOpciones: ctl.recargarOpciones || null,
+  };
 }
 
 /**
@@ -133,6 +186,36 @@ export function crearFormulario(esquemas, valores = {}, { faltantes = [] } = {})
     const clave = esq.key || esq.name;
     return crearCampo(esq, valores[clave], { falta: faltantes.includes(clave) });
   });
+
+  /** Lo cargado hasta ahora, sin lanzar: un JSON a medio escribir se saltea. */
+  const cargado = () => {
+    const salida = {};
+    for (const campo of campos) {
+      try { salida[campo.clave] = campo.leer(); } catch { /* a medio escribir */ }
+    }
+    return salida;
+  };
+
+  // Un campo cuya lista depende de otro (`esq.depende_de`, core#32) la vuelve
+  // a pedir cuando ese otro cambia, con lo que el formulario tiene cargado.
+  // Se escucha en el elemento del campo del que depende y no en cada tecla del
+  // formulario entero: la lista sólo cambia con ese valor.
+  for (const campo of campos) {
+    const de = campo.esquema.depende_de;
+    if (!de || !campo.recargarOpciones) continue;
+    const origen = campos.find((c) => c.clave === de);
+    if (!origen) continue;
+    let timer = null;
+    const alTocar = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => campo.recargarOpciones(cargado()), 250);
+    };
+    origen.elemento.addEventListener("input", alTocar);
+    origen.elemento.addEventListener("change", alTocar);
+    // Con un valor inicial ya cargado, la lista arranca filtrada por él.
+    if (valores[de] !== undefined && valores[de] !== "") campo.recargarOpciones(cargado());
+  }
+
   return {
     elemento: h("div", {}, campos.map((c) => c.elemento)),
     campos,

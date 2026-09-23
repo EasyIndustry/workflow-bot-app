@@ -50,6 +50,7 @@ Los ports con adapter incluido:
 | `window` | según el sistema operativo | `pywinauto` (Windows) / AT-SPI (Linux) |
 | `storage` | `SqliteStorageAdapter` | `sqlite3` |
 | `crypto` | `FernetCryptoAdapter` | `cryptography` |
+| `geometry` | `NullGeometryAdapter` (`available=False`) | — |
 
 `browser` maneja un navegador real (navegar, clickear, leer lo que la pantalla
 ya muestra) pero **no** sabe de sesiones: perfil persistente y login son
@@ -59,16 +60,36 @@ entre corridas inyecta su propio `PlaywrightBrowserAdapter(user_data_dir=...)`
 vía `Instance(root, adapters={...})`.
 
 `window` maneja una ventana nativa de escritorio (encontrarla, clickear,
-tipear, leer un control) y se declara una sola vez: `build_default_adapters()`
-enruta al adapter del sistema operativo donde corre la instalación —
-`pywinauto` en Windows, AT-SPI en Linux— así el plugin no sabe, ni le importa,
-cuál de los dos hay detrás. En un sistema sin adapter propio, `available` es
-False y usarlo levanta un error explícito en vez de fallar a ciegas.
+tipear, leer un control o su estado tildado/destildado) y se declara una sola
+vez: `build_default_adapters()` enruta al adapter del sistema operativo donde
+corre la instalación — `pywinauto` en Windows, AT-SPI en Linux— así el plugin
+no sabe, ni le importa, cuál de los dos hay detrás. En un sistema sin adapter
+propio, `available` es False y usarlo levanta un error explícito en vez de
+fallar a ciegas.
+
+`click` acepta `button` (`"left"` por defecto): un click distinto del
+principal no siempre tiene un patrón de accesibilidad propio —un menú
+contextual es un evento de mouse, no una acción del control—, así que en
+Windows cae a simular el mouse (con la misma exposición a `SetCursorPos` que
+el click de siempre evita) y en Linux directamente no está disponible, porque
+AT-SPI no tiene noción de qué botón. `read_state` es aparte de `read_text`
+porque en UI Automation son cosas distintas: el estado de un checkbox vive en
+`TogglePattern`, no en su nombre accesible.
 
 `storage` y `crypto` son del núcleo: un plugin no los puede pedir. Uno con
 acceso al almacenamiento elegiría dónde persisten sus datos —exactamente lo que
 `Resource` existe para impedir— y uno con acceso al cifrado podría leer secretos
 que no le corresponden.
+
+`geometry` (issue #19) es "vacío" a propósito: el núcleo declara la forma
+(`nearest_on_surface`, punto más cercano en una superficie) pero nunca
+bundlea un adapter real detrás —ningún `trimesh` ni ninguna otra librería
+"curada" de geometría—. `build_default_adapters()` bindea siempre
+`NullGeometryAdapter`, con `available=False`, para que un plugin que pida
+este port pueda cargar igual (un port sin ningún adapter atado no carga) y
+falle explícito recién si un tool intenta usarlo de verdad. Una instalación
+que necesite cómputo geométrico escribe o instala su propio adapter y lo
+inyecta con `Instance(root, adapters={**build_default_adapters(), "geometry": ...})`.
 
 ## Escribir un plugin
 
@@ -133,6 +154,51 @@ Trae contrato, ports atados, tools con sus params y outputs tipados, y por cada
 plugin: settings, colecciones con su esquema, acciones y qué ports usa. No hay
 que mantener ninguna lista propia — ese fue el error de la versión anterior, con
 el catálogo escrito a mano en tres archivos distintos.
+
+Un `Param` puede declarar `options_from`: el nombre de un `Resource` del
+mismo plugin cuyos items son sus valores típicos (`Param("connection",
+options_from="connections")`, para un tool que opera sobre una conexión
+guardada). Es sólo un hint para quien dibuje el campo —un buscador contra
+`GET /resources/{plugin}/{resource}` en vez de un texto pelado—, no una
+restricción: a diferencia de `choices`, no se valida contra él al resolver
+params, porque un `{variable}` tiene que poder seguir resolviendo a cualquier
+valor. Un `options_from` que no nombra un `Resource` que el plugin declara
+se reporta al cargar, igual que un alias en conflicto: no impide que el tool
+ande, pero un typo no debería verse recién como un buscador vacío.
+
+`options_from` también acepta el namespace `core:` (issue #32), para un param
+que nombra algo del lado del núcleo en vez de una colección del propio
+plugin —el caso de `bots.migrar`/`bots.comparar`, cuyos params `plugin` y
+`coleccion` nombran una colección de *otro* plugin y no tienen `Resource`
+propio al que apuntar—: `options_from="core:plugins"` para los plugins
+instalados, o `options_from="core:resources:{plugin}"` para las colecciones
+del plugin que valga el param `plugin` en ese momento. El placeholder es
+siempre uno solo, nombrando un solo param de la misma declaración, sin
+expresiones ni anidado; `registry` valida esa sintaxis y ese nombre al
+cargar, con el mismo criterio que el resto de `options_from` — pero no ve los
+params que un tool agrega en runtime vía `describe_extra_params`, que nunca
+pasan por acá.
+
+Un `Param` también puede declarar `placeholder` (issue #29): un ejemplo del
+valor, para dibujar adentro del campo vacío (`Param("ruta", placeholder=
+r"D:\casos\AP962\stl")`). Convive con `doc` —`doc` explica qué es el param,
+`placeholder` muestra cómo se escribe— y, como `options_from`, es puramente
+informativo: no se valida contra él, no reemplaza a `default`, y viaja
+tal cual en el `to_dict()` que ve el catálogo.
+
+Un tool con `extra_params=True` puede además describir esos extras según lo
+que el nodo ya eligió (issue #27): `FunctionTool.describe_extra_params`, un
+callable opcional `(params_del_nodo, leer_item) -> tuple[Param, ...]`.
+`connections.llamar` acepta `{variable}` de más porque son las de la Action
+elegida —`{id_externo}`, `{pais}`—; con esto, elegida la conexión, el tool le
+dice a quien edita el flujo exactamente cuáles son, en vez de que la única
+forma de saberlo sea abrir la pantalla del plugin y copiarlas a mano.
+`leer_item` (mismo shape que `ctx.resource`) sólo ve items con los campos
+`secret` tapados —nunca en claro, ni siquiera acá— y corre mientras se edita
+el flujo, no en un run: una excepción del lado del plugin vuelve vacío, no
+tumba nada. `Instance.describe_extra_params(tool_id, node_params)` es la
+fachada; CLI (`extra-params`) y MCP (`describe_extra_params`) son capas
+delgadas encima.
 
 `Instance` es la fachada: `run()`, `diagnose()`, `run_action()`, `case_log()`,
 `run_detail()`, más los stores. Un servidor HTTP encima de esto es una capa
@@ -232,8 +298,19 @@ vez, por ejemplo—, `fs_roots` declara varias con alias
 la raíz por defecto, y el resto se alcanzan con `alias:resto`
 (`origen:MODELOS/pieza.stl`) o con la ruta absoluta si cae bajo alguna de las
 declaradas. Gana sobre `fs_root` singular si los dos están presentes; cada
-raíz se valida y se solapa con `plugins_dir` igual que `fs_root` —la regla
-vale para todas, no sólo la primera.
+raíz se valida igual que `fs_root` —la regla vale para todas, no sólo la
+primera.
+
+**Una raíz puede contener la instalación entera** (`fs_root=D:\` con la
+instalación en `D:\User\Bot`), y eso no expone `data/`, `plugins/` ni
+`boot.env`: `LocalFsAdapter` los niega siempre, sin importar qué raíz se
+declare ni con qué alias se llegue (issue #26). Antes, la única forma de
+proteger esa carpeta era prohibir toda raíz que la contuviera —`validar()`
+lo trataba como fatal—, así que el acotamiento era todo o nada: o la
+instalación vivía en un rincón aparte, o alguien terminaba vaciando `fs_root`
+—"todo el disco"— para poder trabajar. La lista de negadas la arma
+`_default_adapters` sola, de lo que el núcleo ya sabe de sí mismo: no es una
+clave de `boot.env` que alguien tenga que acordarse de poner.
 
 El archivo se lee respetando el BOM que traiga —UTF-8, UTF-16 o UTF-32—, y una
 codificación que no se pueda adivinar se lee igual en vez de tumbar el arranque.

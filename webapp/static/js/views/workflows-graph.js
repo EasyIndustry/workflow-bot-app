@@ -1270,7 +1270,13 @@ function nodo(id, datos, pos, { alClic, estado, paso, seleccionado, puertos, too
     // Marca para que el paneo (`hacerPaneable`) sepa que un gesto que arranca
     // acá es un clic sobre el nodo, no el fondo del canvas, y lo deje pasar
     // sin capturar el puntero. `data-nodo-id` es lo que busca el arrastre
-    // para saber sobre qué nodo se soltó el cable.
+    // para saber sobre qué nodo se soltó el cable, y la forma de llegar a un
+    // nodo puntual desde afuera.
+    //
+    // `data-nodo` es otra cosa: acá es una marca y vale siempre "1". El mismo
+    // atributo en la pila de tarjetas sí lleva el id (`workflows-cards.js`,
+    // para que el filtro esconda sin reconstruir), así que un
+    // `[data-nodo="N2"]` encuentra la tarjeta y nunca el nodo del diagrama.
     "data-nodo": alClic ? "1" : null,
     "data-nodo-id": id,
   }, [

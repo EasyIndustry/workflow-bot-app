@@ -4,6 +4,533 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-09-23
+
+- **El lienzo estilo n8n (`lienzo-n8n`, del 17/09) se puso al día con main
+  en la rama `lienzo-n8n-main`**, para publicarlo como release opcional sin
+  meterlo en main. El nodo abierto en el lienzo ahora recibe
+  `columnasDeLaFila` (lo que main le daba a la tarjeta flotante, que la rama
+  reemplazó), y volver al flujo conserva el dry run pero nunca hereda
+  `dryCorriendo`. Sigue con los hallazgos de la revisión sin arreglar: el
+  lienzo no se redibuja cuando el editor del nodo cambia aristas, un doble
+  clic en "+" deja un listener de Escape colgado en `document`, y los
+  controles de zoom y Registro cuentan como clic en el fondo.
+
+- **El aviso de salidas repetidas en una tarjeta va de a una línea por
+  grupo de nodos, no por salida.** Dos nodos del mismo tool dejan todas sus
+  salidas repetidas, y la tarjeta mostraba un párrafo ámbar por cada una
+  (cinco casi iguales con Verificar log y Agregar QR), que se acumulaban
+  cuanto más abajo estaba el nodo. Ahora se agrupan por el juego de nodos
+  que las deja y se da un solo ejemplo de `{NODO.salida}`
+  (`views/workflows-cards.js`). Verificado por CDP con un grafo de dos pares.
+
+- **Campana de notificaciones de releases, y el changelog se puede leer
+  entero sin ir a GitHub.** Dos pedidos sueltos:
+  - Un botón en `.pestanas` (no adentro de ninguna vista, como el de Avisos
+    de una fuente pero de la app entera) que avisa si hay un release nuevo
+    del núcleo o de la web app y deja instalarlo ahí mismo
+    (`components/notificaciones.js`). Se consulta una vez al abrir la app,
+    no hace polling — decisión tomada a propósito, no una limitación. Sigue
+    la misma preferencia "incluir releases de prueba" que ya tenía Config →
+    Actualizaciones, ahora compartida por `localStorage`
+    (`static/js/preferencias.js`) para que activarla en un lado valga en
+    los dos.
+  - La tabla de releases de Config → Actualizaciones mostraba las notas
+    enteras, en texto plano, recortadas a 72px. Ahora muestra sólo la
+    primera línea y un click en la fila expande y renderiza el Markdown de
+    verdad (`components/markdown.js`, escrito a mano — sin build no hay
+    forma de traer una librería, y las notas de un release no necesitan
+    mucho más que encabezados, listas, negrita y links).
+
+  De paso, refactor: `instalarRelease`/`mostrarResultadoUpdate`/
+  `reiniciarApp` vivían adentro de `views/config.js`, atados a `shell.vista`
+  — la campana los necesitaba igual, pero puede estar disparándose desde
+  cualquier pestaña, no sólo desde Config. Se movieron a
+  `static/js/actualizar_componente.js`, con su propio overlay para
+  "reiniciando" en vez de escribir sobre `shell.vista`. De paso se corrigió
+  un bug real que tenía desde siempre: el modal de confirmación decía
+  "Eliminar" en rojo para una acción que instala, no borra nada.
+
+  Dos bugs encontrados en la revisión posterior a escribir el feature (no
+  al escribirlo): el botón "Instalar" del panel de la campana cerraba el
+  panel *antes* de llamar a `instalarRelease`, así que el nodo del botón que
+  esa función iba a deshabilitar quedaba desprendido del DOM y "Validando…"
+  no se veía en ningún lado — se corrigió el orden, el panel se cierra recién cuando la
+  instalación termina. Y la fila expandida de Config → Actualizaciones
+  colapsaba con cualquier click adentro de las notas —un link, seleccionar
+  texto—, porque el click se propagaba al `alClic` de la fila entera; ahora el
+  contenido de las notas corta esa propagación (con el costo de que
+  clickear el texto ya no expande por sí solo, hay que clickear otro punto
+  de la fila).
+
+  Un aviso para la próxima vez que se pruebe esto por CDP: confirmar el
+  modal de "Actualizar" de verdad contra el propio checkout de desarrollo
+  reemplaza `webapp/` con el release descargado — pasó una vez haciendo
+  esta verificación, y lo salvó `webapp.anterior/`, que el propio
+  mecanismo de actualización deja al lado por las dudas. Se prueba el
+  camino hasta el modal de confirmación y ahí se cancela.
+
+  Verificado por CDP: badge y contenido del panel reflejan lo que
+  `GET /updates/releases` devuelve de cada componente por separado (un
+  componente con 403/502 no tapa el aviso del otro, gracias a
+  `Promise.allSettled` en vez de `Promise.all`); la preferencia de prueba
+  sobrevive a un reload real; expandir/colapsar y el `stopPropagation` del
+  botón Instalar contra el toggle de la fila.
+
+- **Lo que le faltaba a `bots` del lado de la app: abrir pestaña, check
+  persistente, y el respaldo de título.** El agente de plugins dejó un doc
+  (no puede abrir issues en este repo) pidiendo tres cosas para su plugin
+  `bots`; se negoció qué forma tenían que tener sin romper que ninguna
+  pantalla conozca un plugin por nombre y que `backend/` no se edita
+  (ver docs/pendientes.md → Plugins (catálogo)):
+  - `outputs.abrir_url` en el resultado de cualquier Action de fila abre una
+    pestaña nueva (`plugins.js`, `botonDeFila`). La ventana se abre en el
+    mismo click —antes del `await` de la Action— para no chocar con el popup
+    blocker, y **sin** `noopener` al abrirla: con `noopener` puesto ahí
+    `window.open` devuelve `null` y no queda cómo redirigirla después, así
+    que se abría una pestaña en blanco huérfana y una segunda con la URL de
+    verdad. El corte de la referencia hacia esta pestaña (lo que `noopener`
+    daría) se hace después, con `ventana.opener = null` antes de asignarle
+    `location`.
+  - `outputs.indicador` (`{estado, texto}`, en el ok y en el err) es el check
+    de la fila. El doc proponía guardarlo en `plugin_items` —la tabla de
+    `backend/`, o directo en la fila del plugin dueño de la colección—; los
+    dos tocan algo que no corresponde (esquema del núcleo, o un campo `_`
+    que `TableStore.write` descarta igual). Se guarda en su propia colección
+    (`webapp/indicadores.py`, `resource_store("webapp", ...)`, igual
+    mecanismo que `identidad.py`), y `GET /resources/<plugin>/<resource>` lo
+    suma a cada item como `_indicador`, calculado ahí y no guardado en la
+    fila del plugin.
+  - El `?bot=` de la URL con la que se abrió la pestaña es el respaldo del
+    título cuando el Bot remoto todavía no se puso nombre (`main.js`,
+    prioridad `/identidad` → `?bot=` → "Bot").
+
+  El plugin `botsMiNombre` que pedía el doc no se hizo: ya estaba resuelto
+  por `/identidad` de forma genérica, que es lo que el propio doc pedía como
+  mejor opción. Verificado por CDP contra un plugin de prueba
+  (`webapp/tests/plugin_con_accion_de_fila.py`): "Abrir en pestaña" abre una
+  sola pestaña (no dos) que navega a la URL real y titula con `?bot=`;
+  "Probar" deja el check verde/rojo visible sin recargar. Tests:
+  `webapp/tests/test_indicadores.py`.
+
+- **Cómo se llama este Bot, para titular la pestaña (`webapp/identidad.py`,
+  `GET`/`PUT /identidad`, Config → General).** Con varios Bots abiertos en
+  pestañas del mismo navegador —cada uno por su IP— todas decían "Bot" y no
+  se distinguían sin mirar la URL. El nombre se guarda por instalación en
+  `resource_store("webapp", ...)`, el mismo mecanismo que ya usa
+  `webapp/updates.py` para el repo de cada componente: no depende de ningún
+  plugin instalado. `/overview` lo trae junto con el resto, y `main.js` lo
+  usa como `document.title` en cuanto arranca, sea la pestaña propia o la
+  que otra máquina abrió con la IP de ésta — el Bot titula su propia
+  pestaña, así que no hace falta que quien la abre sepa el nombre de
+  antemano. Queda preparado para que el plugin `bots` del catálogo (conecta
+  varios Bots por IP) lo lea con un `GET` simple, sin instalarse nada de
+  este lado — pendiente coordinar con ese plugin qué usa exactamente al
+  abrir una pestaña nueva. Verificado por CDP: el título cambia al guardar
+  el nombre y las tres vistas tocadas (`config`, `plugins`, `inicio`)
+  importan sin error; `webapp/tests/test_identidad.py` verde.
+
+- **Núcleo v0.3.1-beta.12 vendorizado: core#33.** `FsPort.walk(max_depth)`
+  para listar los hijos directos de una carpeta sin statear ni recursar todo
+  el árbol: bajar a una subcarpeta de un share con 50k entradas costaba 80 s.
+  Es un cambio del port, lo aprovechan los plugins (`archivos`); la web app no
+  llama a `walk` y no cambia nada. `backend/tests/test_adapters.py` verde en
+  Windows (73). Sale en v0.5.0-beta.8.
+
+## 2026-09-22
+
+- **La tarjeta de decisión también ofrece las variables.** El campo Variable
+  abre la lista al entrar (sin tipear `{`, porque la variable de una decisión
+  se escribe pelada: `decision_value` la lee por nombre) con las columnas de la
+  fila y las salidas de los nodos anteriores, y un helper "Variables que puede
+  comparar" con las mismas fichas. No entran las variables de Config ni
+  `{NODO.salida}`, porque el núcleo no las resuelve ahí (`autocompletar` con
+  `sinLlaves`, `opcionesDeDecision` en `views/workflows-cards.js`). Verificado
+  por CDP: al enfocar aparecen las seis columnas más `response`, `status` y
+  `result` "la deja Llamar A"; `sta` filtra a `state` y `status`; Enter deja el
+  nombre sin llaves. Y con una corrida real: `N1` (connections.llamar) →
+  `D1{Estado § status}` → rama `|200|` tomada, así que una decisión compara
+  también contra la salida interna de un nodo anterior, no sólo contra la
+  fila. `D1{Estado § N1.status}` falla con "Sin rama para N1.status = None":
+  la forma calificada no vale en una decisión, y el helper lo dice.
+- **Cambiar de pestaña vuelve a donde se estaba.** La pestaña iba a la raíz de
+  la vista (`#/sources`) y la vista elegía la primera fuente: se perdían los
+  filtros de la grilla y el flujo que se estaba editando. Ahora el router
+  recuerda la última ruta completa de cada vista (sessionStorage, por pestaña
+  del navegador) y la barra vuelve por ahí; la grilla ya redibujaba de memoria
+  la misma fuente, así que los filtros quedan. El editor de flujos no relee
+  del servidor un flujo con cambios sin guardar, y si no los tiene lo relee
+  pero conserva cómo se lo miraba (Nodos/Texto, nodo elegido, dry run
+  desplegado). Verificado por CDP: filtro "sin" de la columna Estado y nombre
+  visible editado sobreviven a Sources → Workflows → Sources.
+- **Núcleo v0.3.1-beta.11 vendorizado: core#31 y core#32, y la app los usa.**
+  - *Un flujo declara su fuente* (`%% source:`, `Workflow.source`, columna
+    nueva en `workflows`). En la app: selector "Fuente" en Propiedades y en
+    Nuevo flujo, chip `fuente: X` en la cabecera (ámbar si esa fuente no existe
+    en la instalación: el flujo corre igual, pero sin columnas que ofrecer), y
+    el `PUT /workflows/{name}` lleva `source`. Las columnas de la fila salen
+    de la fuente declarada y, si no hay, de la última corrida como antes. En la
+    grilla de una fuente, el desplegable de flujo agrupa primero los pensados
+    para ella y, si es uno solo y la fuente no tiene flujo por defecto, lo
+    propone. Verificado en el server de desarrollo: helper "Columnas de
+    flujos-propios, la fuente declarada en Propiedades" con las seis columnas,
+    grilla con "Para esta fuente: prueba-columnas" preseleccionado.
+  - *Opciones del núcleo y dependientes* (`options_from="core:plugins"`,
+    `"core:resources:{plugin}"`). `api.opcionesDeParam` resuelve las dos
+    contra el catálogo de `GET /tools` (sin los `builtin`), `campo.js` expone
+    `recargarOpciones` y `crearFormulario` recarga la lista del campo que
+    declara `depende_de` cuando el otro cambia; la tarjeta del flujo hace lo
+    mismo escuchando la tarjeta entera. Un namespace que el núcleo no valida
+    (`core:pluggins` pasa el chequeo de carga) se ve en el placeholder del
+    campo en vez de como un buscador mudo. Verificado con el componente real:
+    `plugin=connections` → `sources, actions`; `conocimiento` → `notas`.
+  - El helper de salidas repetidas ahora dice `{N3.log_file} (Verificar log)`:
+    el id es lo que resuelve el núcleo y casi nunca coincide con el nombre visible.
+  - Suite de la webapp: 412 verdes, con `test_workflow_source.py` nuevo.
+
+- **El autocompletado ofrece las columnas de la fila, con un valor de ejemplo.**
+  Un flujo no declara su fuente (core#31, abierto hoy), así que la app la
+  infiere de la última corrida: `Run.source` dice contra qué fuente corrió y una
+  página de esa fuente —la misma vista previa de Connections que usa la grilla—
+  da las columnas. Aparecen primero en la lista al tipear `{` ("columna de la
+  fila · flujos-propios · ej. PRUEBAS") y como fichas en el helper, con el
+  nombre de la fuente; un flujo que nunca corrió se queda con la ficha genérica
+  y lo dice. Se guarda un minuto por flujo. Cuando el núcleo traiga `%% source`,
+  la declaración manda sobre la inferencia y "Correr" la propone por defecto.
+  Verificado por CDP con una fuente apuntada a la propia API del Bot.
+- **La página se abre aunque el navegador tenga guardado el Bot viejo.** En la
+  PC de producción, Chrome y Edge mostraban `127.0.0.1:8000` en blanco: el
+  servidor entregaba la página nueva (`GET / 200`) y el navegador ejecutaba la
+  del Bot viejo que tenía guardada para esa dirección, pidiendo `state.js`,
+  `bots-red.js` y `/api/ks/...`, que ya no existen. En modo invitado entraba.
+  La página sale ahora con `Clear-Site-Data: "cache", "storage"` la primera vez
+  que un navegador la pide (cookie de marca `bot_limpio`), que borra la caché
+  y los service workers de ese origen; una sola vez porque también borra el
+  localStorage propio. Los navegadores la respetan en `127.0.0.1` y
+  `localhost`, que es donde pasa. Con tests del criterio; el efecto real se ve
+  en esa PC al recargar.
+- **Núcleo v0.3.1-beta.10 vendorizado: core#30, #29 y #19.** `{NODO.salida}`
+  elige entre dos nodos que dejan la misma salida (`merge_outputs` agrupa
+  además bajo el id del nodo; la plana sigue igual y gana si colisiona con un
+  id), `check_flow` valida que el nodo exista y corra antes, `Param.placeholder`
+  llega en el catálogo, y un port `geometry` con adapter nulo cuando no hay
+  numpy. La app hace lo que había quedado esperando: el autocompletado ofrece
+  `{LLAMAR_A.response}` y `{LLAMAR_B.response}` además de `{response}` cuando
+  la salida la dejan dos nodos ("la response de Llamar A"), el helper dice cómo
+  elegir en vez de que no se puede, y la marca en dos tonos pasa de ámbar a
+  azul (`NODO_CALIFICADO_SOPORTADO`). Verificado contra el repo: `check_flow`
+  acepta `{LLAMAR_A.response}` y rechaza `{AVISAR.response}` con "referencia a
+  AVISAR, que no corre antes en el flujo"; la lista muestra las diez opciones.
+  Los tests del núcleo que fallan en Windows (`test_boot`, uno de `doctor`,
+  uno de `instance`) ya fallaban con beta.9 en `backend.anterior/`.
+  Producción (192.168.3.26) ya corre beta.10 actualizado desde la pantalla.
+- **Las `{variables}` se ven marcadas dentro del campo mientras se escribe.**
+  Un espejo detrás del input (`components/resaltar-variables.js`): el input
+  queda arriba con el texto transparente y el cursor visible, y debajo una caja
+  con las mismas clases dibuja el mismo texto con cada `{ruta}` marcada. Así
+  `C:\salida\{carpeta}\{env.CLIENTE}.pdf` se lee de un vistazo y lo guardado
+  sigue siendo texto plano con sus llaves. No es negrita de verdad: la negrita
+  ensancha la letra y el espejo dejaría de coincidir con el input; el peso se
+  hace con `text-shadow`. Una variable calificada por nodo, `{LLAMAR_A.response}`,
+  muestra la relación entera —nodo en azul oscuro, salida en negro— cuando el
+  primer tramo es un nodo del flujo; como el núcleo todavía no resuelve esa
+  forma (core#30), va en ámbar con el aviso, y pasa a azul cambiando
+  `NODO_CALIFICADO_SOPORTADO` en `views/workflows-cards.js` cuando llegue.
+  Sólo en los campos de una línea; el JSON del payload queda para después.
+  Verificado por CDP: espejo e input miden lo mismo, misma fuente y padding,
+  y escribir una variable nueva la marca al instante.
+- **Un param con `placeholder` en el manifest se dibuja con su ejemplo adentro
+  del campo** (core#29, todavía sin implementar en el núcleo: el vendorizado
+  v0.3.1-beta.9 no lo tiene). La app lo lee de la entrada del catálogo en
+  `components/campo.js` y en la tarjeta del nodo; si no viene, el campo queda
+  como hoy. Los dos placeholders fijos que ya existían —el buscador de una
+  colección y el secreto configurado— siguen mandando sobre él.
+- **Las variables de una tarjeta se eligen de una lista al tipear `{`.** Había
+  que acordarse de memoria el nombre exacto de cada salida: el helper las
+  listaba, pero abajo de todo y sin decir cuál vale cuando dos nodos anteriores
+  dejan la misma. Ahora cualquier campo de parámetro (los declarados, los
+  descubiertos de una conexión, los no declarados, el JSON de un payload) abre
+  al tipear `{` un desplegable con las salidas de los nodos de arriba y los
+  nombres de Config, y cada opción dice de dónde sale: "la deja Mover PDF", o
+  "la dejan Llamar B y Llamar A · vale la del último que corra". Flechas, Enter
+  o Tab para insertar `{nombre}` entero, Esc para cerrar; se filtra mientras se
+  escribe. Es un componente propio (`components/autocompletar.js`), no un
+  `<datalist>`, porque ése completa el valor entero del campo y acá hay que
+  completar en el medio de `C:\salida\{intentos}.pdf`. Lo guardado sigue
+  siendo texto plano con sus llaves. El helper marca en ámbar las salidas
+  repetidas. Lo que no se puede todavía es elegir de qué nodo (`{NODO.ruta}`):
+  el núcleo mezcla las salidas por nombre y la del último que corre gana; es
+  core#30, y la lista ya está preparada para ofrecerlo cuando llegue. Tampoco
+  se ofrecen las columnas de la fila: un flujo corre contra cualquier fuente.
+  Verificado por CDP con un flujo de dos `connections.llamar` seguidos.
+- **El formulario de Acciones ofrece el buscador que el param declara.** Un
+  `Param` con `options_from` nombra una colección del mismo plugin cuyos items
+  son sus valores típicos, y el editor de flujos ya lo dibujaba como texto con
+  buscador desde core#27 — pero en Plug ins no, así que la misma Action que en
+  un nodo ofrecía la lista, disparada a mano, era un texto pelado y había que
+  acordarse del nombre exacto. `campo.js` ya sabía hacerlo; lo que faltaba era
+  que quien arma el formulario le dijera cómo traer los valores, igual que en
+  `workflows-cards.js`. Sigue siendo texto y no un `<select>`: el valor puede
+  ser una `{variable}` que recién se resuelve al correr, y por eso el núcleo lo
+  declara informativo. Sólo `Param` lo tiene —ni `Setting` ni `Field`—, así que
+  los formularios de settings y de un item no cambian: la pantalla no promete
+  lo que el contrato no da. Verificado por CDP contra una instalación con un
+  plugin de prueba que lo declara: el campo queda input + datalist con las
+  claves de la colección, el param sin `options_from` sigue pelado, y una
+  `{variable}` se puede escribir igual. Pedido por la sesión del plugin `bots`:
+  es lo que le va a dar el desplegable de direcciones a `bots.migrar`, cuyo
+  param `destino` ya declara `options_from`.
+- **Emparejar dos Bots se puede hacer desde la app.** Los cuatro endpoints
+  estaban desde el 20/09 y ningún JS los llamaba: la única forma de emparejar
+  era un `Invoke-RestMethod` a mano en las dos máquinas, y quien intentaba
+  migrar chocaba con "No hay emparejamiento con…" sin nada a mano para
+  resolverlo. Config → Emparejamientos lista con quién habla este Bot, genera
+  el código (el lado que recibe), pega uno (el que empuja) y olvida. El código
+  se muestra una sola vez, con el aviso de que va entero: cortarlo en el punto
+  es el error más común y del otro lado se lee como "ese código no es válido".
+  Pegar avisa que la dirección se compara **tal cual** contra el destino que
+  pida la migración, que es lo que hace fallar casi todos los intentos; y si el
+  código pisa un emparejamiento que ya estaba, la pantalla lo dice en ámbar y
+  nombra al que se perdió, porque rehacerlo cuesta dos máquinas. Los cuatro
+  pedidos son loopback-only, así que operando el Bot desde otra PC la pantalla
+  explica el 403 en vez de mostrarlo — incluido el caso que más desconcierta:
+  abrirlo por la IP de su propia máquina tampoco alcanza. Verificado por CDP
+  contra la app: el recorrido entero, el código cortado, el reemplazo, y el 403
+  real entrando por `192.168.9.78`. Pedido por la sesión del plugin `bots`.
+  De paso, el error de `POST /migrar` ahora **nombra la pantalla**: decía qué
+  hacer pero no dónde, porque cuando se escribió no existía dónde. Quien lo lee
+  está en la pantalla de un plugin y el arreglo vive en otra pestaña, bajo un
+  nombre que no dice "migrar"; y ese texto es además el único camino por el que
+  el plugin puede nombrar una pantalla de la app sin conocerla.
+- **El puerto del que empuja viaja adentro del sobre.** Al recibir una
+  migración, el destino anotaba al otro Bot como `http://<su ip>:8000`, con el
+  puerto escrito a mano: si ese Bot escuchaba en otro, quedaba anotada una
+  dirección que no existe, y recién se veía cuando la migración iba al revés
+  —`para_url` no encontraba nada y el error decía "no hay emparejamiento", que
+  manda a rehacer el emparejamiento en vez de a mirar el puerto—. Ahora la IP
+  sale de la conexión y el puerto del sobre (`origen_puerto`), así que llega
+  autenticado por la clave; si del otro lado hay una app vieja que no lo manda,
+  la dirección queda vacía en vez de inventada, porque vacía se ve. Con tests.
+  Encontrado por la sesión del plugin `bots`. Y el puerto se **valida** antes de
+  armar la dirección: que el sobre abra dice que del otro lado hay alguien con
+  la clave, no que lo de adentro sea sano —lo escribió otra máquina, con su
+  versión de la app—, así que un string o un número absurdo se interpolaba tal
+  cual y quedaba guardado como la dirección de un par, que es lo que después se
+  muestra y se compara. De paso, un IPv6 va entre corchetes: `::1` suelto arma
+  `http://::1:8010`, que no es una URL y termina igual que el puerto adivinado.
+  Encontrado en revisión, en paralelo, por esta sesión y por la del release.
+- **La bandeja encuentra la dirección de red en una PC sin internet, y dice si
+  copió.** `direccion_red` preguntaba a la tabla de rutas por dónde saldría un
+  paquete hacia `10.x`; en una red `192.168.x` sin puerta de enlace no hay por
+  dónde, y el menú decía "Sin red" en una máquina que estaba en la red: la
+  única dirección a la vista quedaba el `127.0.0.1` de "Abrir Bot", y era la
+  que se copiaba. Ahora prueba un destino por rango privado y, si ninguno
+  tiene ruta, cae a las IPs de los adaptadores prefiriendo las de oficina.
+  Copiar va por la API de Windows (sin la ventana negra de `clip.exe` ni
+  depender del PATH; `clip` queda de rescate con las salidas redirigidas) y
+  siempre avisa con un globo qué copió, o que no pudo y cuál es la dirección:
+  antes un fallo era silencioso y el portapapeles quedaba con lo anterior.
+  Reportado desde una PC nueva con Windows 11 al copiar para otras máquinas.
+- **`core_api.py` ya no imprime un `SyntaxWarning` al arrancar.** Un `\s` en
+  un docstring (`\server-nuevo`) que Python 3.12 marca en cada inicio; era
+  la primera línea del registro y parecía un error.
+- **Con el 8000 ocupado, Bot arranca en el siguiente puerto libre.** Antes,
+  otro programa en el 8000 daba un cartel pidiendo cerrarlo o elegir puerto a
+  mano; y **otro Bot** ahí —otra instalación de la misma PC, el repo de
+  desarrollo— abría la pantalla de ese otro como si fuera el propio, con sus
+  datos, y después no se sabía cuál cerrar. Ahora el lanzador compara la raíz
+  del que contesta con la propia: sólo el Bot de esta misma carpeta cuenta
+  como "ya abierto"; otro Bot es otro programa y se busca puerto (hasta 50
+  arriba, `_decidir_puerto` en `webapp/__main__.py`). Con `--port` explícito
+  se respeta y ocupado sigue siendo error: el wizard ya eligió uno libre y el
+  reinicio tiene que volver adonde está el navegador. Verificado en esta
+  máquina con la QA en el 8000: el Bot del repo avisó "ocupado por otro Bot
+  (D:\User\Bot)" y levantó en el 8001 con su propia raíz. Una revisión
+  adversarial antes del release encontró dos cosas y se corrigieron: lo que
+  ocupa el puerto y no dice quién es (HTTP que tarda o contesta 5xx, que puede
+  ser este mismo Bot levantando) ya no se toma por "otro programa" —se insiste
+  ocho segundos y, si sigue así, se avisa y no se arranca un segundo Bot sobre
+  el mismo `data/`—; y la espera de ocho segundos a que el puerto se libere
+  quedó sólo con `--port`, que es el reinicio: el doble clic decide al instante.
+- **La botonera de una colección ya no sale recortada.** En Plug ins → Bots
+  conocidos, "Probar", "Comparar contenido", "Editar" y el tacho no entraban
+  en la columna de acciones, que tenía 210px fijos y ocultaba el resto. Cuántos
+  botones hay y qué dicen lo decide el plugin con sus Actions sobre la
+  colección, así que ningún número fijo sirve: la tabla (`components/tabla.js`)
+  acepta `ancho: "contenido"` y la columna mide lo que dibuja; la cabecera
+  lleva adentro, sin alto y sin verse, una copia de la primera fila para medir
+  igual y que las columnas de al lado alineen. De paso, la clave de la
+  colección salía dos veces ("Nombre | Nombre") porque también está entre los
+  campos; se la saca de los tres que se muestran. Verificado por CDP contra una
+  copia de los datos de la QA: cabecera y filas miden lo mismo y ningún botón
+  queda afuera de su celda. El tope de 900px de `.columna` sigue: no era la
+  causa.
+
+## 2026-09-21
+
+- **Núcleo v0.3.1-beta.9** (core#28): el catálogo declara `flow.ejecutar` y
+  `flow.retry_gate`. Los resuelve el executor y no son tools invocables —eso no
+  cambió—, pero ahora tienen manifest y salen por `registry.catalog()` marcados
+  `native`. La app no cambió una línea: el selector del editor nunca filtró,
+  armaba la lista con lo que viniera en `GET /tools`, así que aparecen solos con
+  su categoría y sus params. Lo que además arregla, y no estaba en el pedido: un
+  flujo que ya usaba `flow.retry_gate` se dibujaba con el cartel rojo de "no
+  instalado" —la tarjeta marca así a un nodo cuyo `fn` no está en el catálogo—,
+  y era falso. Verificado contra una instalación: los dos en el picker, la
+  tarjeta limpia y el flujo "sin problemas".
+- **Una Action declarada sobre una colección ahora tiene su botón en la fila.**
+  El contrato del núcleo dice desde siempre que el botón de una `Action` con
+  `resource` va en la fila del ABM, y la fila sólo tenía Editar y Eliminar: una
+  Action así existía en el manifest y no se podía disparar desde ningún lado.
+  Corre sobre el item **guardado** —el núcleo lo recibe por su clave—, que es
+  lo que la distingue del "Probar" del formulario, y su resultado abre un modal
+  que dibuja la vista declarada. Si esa vista ofrece una acción de seguimiento,
+  reemplaza el contenido del mismo modal en vez de abrir otro encima.
+  Encontrado probando el conjunto contra el plugin `bots` real en dos Bots: su
+  `comparar` cuelga de la colección y no tenía botón en ninguna parte.
+- **Una Action de plugin puede traer su propia pantalla de resultado**
+  (`outputs.vista`). Hasta acá un plugin podía declarar settings y colecciones y
+  la pantalla se dibujaba sola, pero cuando hacía falta algo más —comparar
+  contra otro Bot y elegir qué mandar— sólo quedaba escribirle una pantalla a
+  medida en la app. Ahora el resultado de una Action puede declarar una tabla
+  con columnas, filas, casillas de selección y una acción de seguimiento que
+  recibe lo tildado más el contexto que haga falta fijar (`seleccion.params`).
+  Va en el **resultado** y no en el manifest porque las columnas de una
+  comparación dependen de lo que se comparó: no se pueden declarar antes de
+  correrla. No hizo falta tocar el núcleo — `ToolResult.outputs` ya es libre—,
+  así que cualquier plugin lo usa sin esperar un release del núcleo. Ninguna
+  pantalla conoce un plugin por nombre: el plugin declara y la app dibuja, y
+  todo sale como texto porque `h()` no usa `innerHTML`.
+  De paso, **una Action suelta ahora tiene dónde vivir**: hasta ahora sólo
+  aparecía como el botón "Probar" adentro del formulario de una colección, así
+  que una que no fuera "probar esto antes de guardar" existía en el manifest y
+  en ninguna pantalla. Y `dangerous`, que estaba declarado y no hacía nada,
+  ahora pide confirmación — por los dos caminos, el botón propio y el de una
+  selección.
+- **Emparejar sólo se puede desde la propia máquina.** Los endpoints de
+  emparejamiento salieron abiertos como el resto de la API, y devolvían el
+  código en la respuesta: cualquiera en la red pedía uno y quedaba emparejado.
+  El sobre seguía cifrando, pero no autenticaba a nadie — que era justamente lo
+  que aportaba, y lo que su propio docstring afirmaba. Ahora generar, importar,
+  listar y olvidar sólo contestan a `127.0.0.1`; recibir un sobre queda abierto,
+  porque ahí la credencial es la clave. Listar también es local: publicaba los
+  ids y la topología de la flota. Encontrado en revisión, verificado contra un
+  Bot con `--red` pidiéndole por su IP de LAN. De paso: `importar` avisa cuando
+  pisa un emparejamiento que ya estaba, las escrituras del archivo van bajo
+  candado —`anotar_uso` corre en cada sobre y dos migraciones a la vez perdían
+  una fila— y abrir un sobre hace el mismo trabajo exista o no el id, para no
+  dejar por tiempo el oráculo que se había cerrado por mensaje.
+- **Migrar contenido a otro Bot, en un sobre cifrado.** `POST /diff` dice qué
+  difiere contra otro Bot —flujos, items de una colección, o `env`— y
+  `POST /migrar` le empuja lo elegido. Empuja y no tira porque desde #3 un
+  secreto no sale por la API de nadie: el único que puede leer los de una
+  instalación es la instalación misma. Un campo secreto por eso **nunca** puede
+  dar "igual" en el diff: da `indeterminado`, que no es un caso raro sino la
+  respuesta permanente. Lo que viaja va adentro de un sobre cifrado con una
+  clave **por conexión**, distinta de la llave local de cada Bot —que cifra en
+  reposo y no sale de la máquina—; la genera el destino y se copia una vez al
+  origen. **Sin emparejamiento no se migra**, y no hay caída a texto plano: un
+  fallback con aviso dejaría que sea quien ataca el que elige el camino sin
+  cifrar, presentándose como un destino viejo. Que el sobre abra es la
+  autenticación del endpoint que recibe, y es lo único autenticado de esta API
+  (ver #4 para lo que no lo está). El `ttl` de Fernet acota el replay pero **no
+  lo cierra**: está anotado como pendiente en `docs/decisiones.md`, no como
+  resuelto. Si al destino le falta el plugin de una colección, el diff lo dice
+  (`destino_sin_coleccion`) en vez de romperse — es el Bot nuevo de la flota, al
+  que justamente se le va a copiar todo. Verificado entre dos instalaciones
+  levantadas de verdad: migrar sin emparejar se niega, el secreto no aparece en
+  el sobre ni en la respuesta ni en el `GET /env` del destino, y el 403 del
+  sobre que no abre dice **lo mismo** para una clave equivocada que para un id
+  inexistente — salió distinto en la primera versión y se vio recién ahí.
+- **Los campos `secret` de una colección ya no salen por la API** (#3).
+  `GET /resources/{plugin}/{resource}` y `.../{key}` los devolvían descifrados:
+  eran el único de los cuatro caminos de lectura que no los tapaba, contra lo
+  que dicen el docstring de `resource_items_masked` ("lo que puede salir por el
+  servidor MCP o cualquier otra API") y la regla del repo. La asimetría más
+  fuerte era contra `db_view.py`, que tapa las filas de `plugin_items` — la
+  misma tabla que esta ruta servía en claro. Sin autenticación y con el acceso
+  directo arrancando en `--red`, era legible desde cualquier máquina de la LAN.
+  Estaba **latente**: ningún plugin declara un campo `secret` todavía, ni los
+  del catálogo ni el `connections` de la app, así que no se filtró nada; lo
+  abría el primero que guardara un token en una colección en vez de en `env`.
+  Listar usa ahora `resource_items_masked` del núcleo y leer uno tapa con el
+  mismo criterio. El PUT conserva un secreto que llega en `None` —si no, la
+  pantalla, que ahora lee `None`, lo borraría al guardar— y `""` sigue
+  vaciándolo a propósito; su respuesta también va tapada, porque puede traer
+  uno que quien llamó no mandó. Los tests fallan contra el código anterior, que
+  es lo que los hace valer. Encontrado desde el repo de plugins evaluando una
+  migración entre Bots.
+
+## 2026-09-20
+
+- **Config: dos o tres vistas adentro de cada panel** (`components/subvistas.js`).
+  Varias secciones eran dos pantallas apiladas y había que barrer con el scroll
+  para llegar a la mitad de abajo. La vista elegida va en la URL
+  (`#/config/limites/programas`), así un enlace lleva a donde uno quiere y
+  recargar no devuelve a la primera. Quedaron: **Alcance** (Archivos |
+  Programas), **Configurar entorno** (Secretos | Variables de entorno) y
+  **Actualizaciones** (Repos | Núcleo | Web app).
+- **Los programas que un flujo puede correr se configuran desde la pantalla.**
+  `process_allowlist` sólo se podía tocar editando `boot.env` en cada máquina,
+  y el error que ve quien opera es un `PortError` adentro de un run, que parece
+  del flujo. Va con los tres estados explícitos —ningún programa / sólo éstos /
+  cualquiera— porque en el archivo los dos primeros se escriben casi igual (la
+  clave presente y vacía, o ausente) y significan lo contrario; una instalación
+  nace en "ninguno". Inicio → "Hasta dónde llega" suma la fila. Se agregó
+  `PUT /limites/programas` y `GET /limites` ahora distingue lo vigente de lo
+  escrito: entre guardar y reiniciar son distintos, y sin decirlo la pantalla se
+  redibujaba con el valor viejo y guardar parecía no haber hecho nada.
+- **Los releases se piden de a cinco, con paginador**, en vez de treinta por
+  componente al abrir la pantalla: cada entrada trae sus notas y casi siempre se
+  instala la primera (`GET /updates/releases?pagina=&por_pagina=`). Sin total de
+  páginas a propósito: GitHub pagina por cantidad de releases y acá se filtran
+  borradores y prereleases, así que un total sería inventado.
+- **Config → General**: se fue. Estaba dibujada sin backend desde el traspaso.
+- **"Volver a chequear" de Diagnóstico redibujaba Alcance**: buscaba la sección
+  por índice (`SECCIONES[2]`) y el botón parecía no hacer nada. Ahora por id.
+- **Abrir una tarjeta ya no mueve la pila** (#2). El click en la cabecera
+  terminaba en `dibujar()`, que rehace la vista entera — y con ella el div que
+  scrollea, que nace en el tope. Con la pila scrolleada, abrir una tarjeta de
+  abajo la mandaba fuera de la vista: medido en una instalación con un flujo de
+  21 nodos, la tarjeta pasaba de estar a 526px a estar a 1158px, 429px por
+  debajo del borde del panel. Ahora abrir y cerrar cuelga o saca el cuerpo
+  sobre la tarjeta que ya está en pantalla, sin redibujar nada —el mismo camino
+  que ya se había elegido para el filtro de la pila—, y `a.abierta` se sigue
+  anotando para que un redibujo de verdad la vuelva a abrir. Aparte, el panel
+  de tarjetas recuerda su `scrollTop` y lo vuelve a poner después de dibujar,
+  que es lo que hacía falta para lo que sí redibuja: elegir un tool, agregar un
+  nodo, quitar uno. Verificado en el navegador por CDP: abrir, cerrar, abrir
+  otra, cambiar de tool con la pila en el fondo, el filtro, y el panel flotante
+  del diagrama con su "Abrir en Tarjetas".
+- **Núcleo v0.3.1-beta.8** (core#27): un `Param` puede declarar de qué
+  colección salen sus valores (`options_from`) y un tool puede describir sus
+  params extra según lo que el nodo ya eligió (`Tool.describe_extra_params`,
+  optativo). `options_from` es informativo a propósito: si validara como
+  `choices`, `connection={variable}` dejaría de ser un valor válido y se
+  rompería interpolar el nombre desde el contexto del run. El lector de items
+  que el núcleo le da al describer no ve los campos `secret`.
+- **Elegir la conexión de una lista, sin salir del flujo.** El param
+  `connection` declara su colección y la tarjeta lo dibuja como texto con
+  buscador (`<datalist>`), no como un `<select>`: la lista es una ayuda para
+  no acordarse del nombre exacto, y el campo sigue aceptando una `{variable}`.
+  Antes había que volver a Plug ins a ver cómo se llamaba la Action.
+- **La tarjeta de un nodo ofrece los params extra de lo que tiene elegido.** Un
+  tool con `extra_params` dice que acepta más params que los declarados, pero
+  no cuáles: los de `connections.llamar` son las `{variables}` que la Action
+  elegida tenga en la URL, los headers y el payload. Había que abrir
+  Connections, anotar los nombres y escribirlos a mano en el `.mmd`. Ahora la
+  tarjeta pregunta `GET /tools/<tool>/params-extra` con lo que el nodo ya
+  tiene y los dibuja con el mismo campo que los declarados; un tool que no
+  sepa describirlos contesta vacío. La tarjeta sigue sin conocer un tool por
+  nombre: quién lee la Action es el plugin (`webapp/connections/plugin.py`),
+  y desde el núcleo v0.3.1-beta.8 lo puede hacer cualquier plugin
+  instalado, no sólo el de la app.
+  Un campo con un literal —`"texto": ""`— no aparece, porque un param del nodo
+  no lo pisaría: sólo se sustituye lo que tiene `{llaves}`. Verificado en el
+  navegador contra una instalación, con la Action y el flujo creados por API.
+- **Plugins en línea no listaba nada** (v0.4.2-beta.11): se usaba un elemento
+  que nunca se creaba y el error cortaba el dibujo de todas las filas.
+
 ## 2026-09-17
 
 - **El diagrama propio se ve como n8n y el dry run se corre desde ahí.**
@@ -77,6 +604,31 @@ desarrollo o la PC de un cliente), no sólo con tests.
   flujos de ejemplo, dry run simulado y un cuadro para pegar un `.mmd` con
   un parser **aproximado** traducido del núcleo (sólo para esa página; la
   app sigue parseando en el backend).
+- **Núcleo v0.3.1-beta.7** (core#26): el port `fs` niega la carpeta de la
+  instalación —`data/`, `plugins/` y `boot.env`— venga de donde venga la raíz,
+  y la lista la arma el núcleo solo. Con eso una raíz puede contener la
+  instalación sin entregarla, así que la app dejó de rechazarlas: usar una
+  unidad entera ya no obliga a enumerar carpeta por carpeta. Inicio muestra
+  las negadas junto a las raíces. Verificado contra la instalación real con
+  `D:\` como raíz: `D:\Proyectos` y el workspace se alcanzan, y la base, la
+  llave, `boot.env` y los plugins dan `PortError`. El solapamiento
+  `plugins_dir`/`fs_root` dejó de ser fatal, que era lo que dejaba una
+  instalación sin arrancar.
+- **La raíz por defecto sale de lo que la instalación tiene configurado**, no
+  de la regla `<root>/workspace`: asumirla dejó la pantalla sin poder guardar
+  nada en una instalación cuya raíz resolvió a la carpeta del programa — la
+  única fila que no se podía editar era también la que impedía guardar. Sin
+  ninguna raíz declarada no hay fija, y la primera que se agregue pasa a
+  serlo. Aparte, `pasos.instalar(registrar=False)`: crear una instalación de
+  prueba ya no pisa cuál abre "Abrir Bot", que fue cómo se llegó a ese estado.
+  (Se hizo, se perdió y se rehízo: una actualización aplicada sobre el repo a
+  las 20:18 pisó lo que no estaba commiteado, así que la v0.4.2-beta.8 salió
+  sin este arreglo pese a anunciarlo en sus notas.)
+- **La raíz por defecto no se edita.** La pantalla la muestra fija —de sólo
+  lectura, sin tacho— y lo que se agrega va debajo, con su alias. El servidor
+  la impone aunque le manden otra cosa. Poder pisarla era la mitad de cómo una
+  instalación quedó sin arrancar: es la que resuelve toda ruta relativa de todo
+  flujo, así que cambiarla rompe en silencio todo lo escrito hasta ahí.
 - **Alcance de archivos: sólo rutas completas.** Una instalación nueva en
   `D:\User\Bot` quedó sin arrancar con `fs_roots=principal=D:,…,C=C:`.
   `D:` sin la barra es "la carpeta actual de esa unidad": pasó la validación
@@ -84,8 +636,7 @@ desarrollo o la PC de un cliente), no sólo con tests.
   la raíz de la instalación —con `plugins/` adentro— y el núcleo se negó
   (core#22, como corresponde). La pantalla rechaza ahora cualquier ruta no
   absoluta, cada caso con su motivo: unidad sin barra, relativa, UNC sin
-  share. La unidad entera con la barra ya se rechazaba porque contiene
-  `data/`. Se restauró el `boot.env` de esa instalación (respaldo
+  share. Se restauró el `boot.env` de esa instalación (respaldo
   `boot.env.roto-2026-09-17`).
 - **Detener un run desde la grilla, y una fila no corre dos veces.** Se vio a
   distancia: una fila ejecutada desde otra PC se veía arrancar en la original
@@ -149,9 +700,8 @@ desarrollo o la PC de un cliente), no sólo con tests.
   así que editarlo a mano pasó a poder dejar la instalación sin levantar. El
   backend valida contra el disco antes de escribir y rechaza lo que no
   arrancaría: una carpeta inexistente, un UNC sin el nombre del recurso
-  compartido, un alias repetido, y cualquier raíz que contenga `data/` o
-  `plugins/` —esto último el núcleo no lo puede chequear solo, porque `data/`
-  no es un valor declarado cuando se usa el default—. Deja `boot.env.anterior`
+  compartido y un alias repetido. (El rechazo de una raíz que contuviera
+  `data/` o `plugins/` salió con core#26: eso lo niega el núcleo.) Deja `boot.env.anterior`
   al lado y ofrece reiniciar. Con varias raíces, la primera se guarda con
   nombre aunque no se lo hayan puesto: el alias vacío se escribe
   `fs_roots==ruta` y un núcleo anterior a v0.3.1-beta.4 descarta ese par al

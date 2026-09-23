@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -127,14 +127,47 @@ if STATIC_DIR.is_dir():
     app.mount("/static", RevalidatingStatic(directory=str(STATIC_DIR)), name="static")
 
 
+# La marca de que este navegador ya pasó por la limpieza de abajo. Es una
+# cookie y no localStorage porque la limpieza borra el storage y no las cookies.
+COOKIE_LIMPIO = "bot_limpio"
+
+
+def limpieza_para(cookies: dict) -> dict:
+    """
+    Cabeceras para la primera visita de un navegador a esta dirección.
+
+    En una PC que corrió el Bot viejo en la misma dirección (`127.0.0.1:8000`),
+    Chrome y Edge tenían guardada su página: la servían ellos —con un service
+    worker o desde la caché— aunque el servidor mandara la nueva, y la app se
+    veía en blanco pidiendo `state.js`, `bots-red.js` y demás archivos que ya no
+    existen. En modo invitado entraba, que es la prueba de que era lo guardado.
+    Ni recargar alcanzaba; había que ir a DevTools → Clear site data.
+
+    `Clear-Site-Data` le pide eso mismo al navegador: "cache" es lo guardado por
+    HTTP y "storage" incluye los service workers, que son lo que sirve la página
+    vieja. Sólo la primera vez, con la cookie de marca, porque "storage" también
+    borra el localStorage propio (el ancho de la terminal, el panel plegado) y
+    no hay por qué perderlo en cada carga. Los navegadores la respetan en
+    `127.0.0.1` y `localhost` —donde pasa esto— y la ignoran por HTTP en una IP
+    de red, donde no hace falta ni daño.
+    """
+    if cookies.get(COOKIE_LIMPIO) == "1":
+        return {}
+    return {"Clear-Site-Data": '"cache", "storage"'}
+
+
 @app.get("/")
-def index():
+def index(request: Request):
     """La app, o las instrucciones para levantarla si todavía no hay front."""
     indice = STATIC_DIR / "index.html"
     if indice.is_file():
         # Igual que los estáticos: este archivo es el que nombra el grafo de
         # módulos, así que servir una versión vieja rompe la app entera.
-        return FileResponse(str(indice), headers={"Cache-Control": "no-cache"})
+        limpieza = limpieza_para(request.cookies)
+        respuesta = FileResponse(str(indice), headers={"Cache-Control": "no-cache", **limpieza})
+        if limpieza:
+            respuesta.set_cookie(COOKIE_LIMPIO, "1", max_age=10 * 365 * 24 * 3600, samesite="lax")
+        return respuesta
     return {
         "estado": "API levantada, sin front todavía",
         "api": "/api/core",

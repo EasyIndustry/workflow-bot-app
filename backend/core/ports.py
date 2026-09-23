@@ -154,8 +154,20 @@ class FsPort(Protocol):
         """Contenido directo de una carpeta, ordenado por nombre."""
         ...
 
-    def walk(self, path: str) -> Iterator[FileInfo]:
-        """Todas las entradas bajo una carpeta, recursivo."""
+    def walk(self, path: str, max_depth: int | None = None) -> Iterator[FileInfo]:
+        """
+        Todas las entradas bajo una carpeta, recursivo.
+
+        Una carpeta se emite sin statear (`size`/`modified_at` en su default);
+        un archivo sí se statea -- es el costo real de un `walk` sin límite.
+
+        `max_depth` (issue #33) recorta cuántos niveles bajo `path` recorre:
+        `1` son sólo sus hijos directos, sin bajar más. Sin él (default,
+        `None`) es el árbol entero, como siempre. Sirve para "necesito los
+        nombres de acá abajo, nada más": sobre un share con decenas de miles
+        de entradas por nivel, `walk` sin este límite paga minutos en stats
+        que después se descartan.
+        """
         ...
 
     # Escritura
@@ -398,8 +410,22 @@ class WindowPort(Protocol):
         """
         ...
 
-    def click(self, window: WindowInfo, control: str, *, timeout: float | None = None) -> None:
-        """Clickea el control identificado por `control` dentro de la ventana. `PortError` si no aparece a tiempo."""
+    def click(
+        self,
+        window: WindowInfo,
+        control: str,
+        *,
+        button: str = "left",
+        timeout: float | None = None,
+    ) -> None:
+        """
+        Clickea el control identificado por `control` dentro de la ventana.
+        `PortError` si no aparece a tiempo, o si el adapter no puede hacer
+        click con `button` en esta plataforma (issue #25): un click distinto
+        del principal no siempre tiene un patrón de accesibilidad equivalente
+        a Invoke, y ahí depende de simular el mouse -- lo que #13 evitó para
+        el click de siempre-- o directamente no está disponible.
+        """
         ...
 
     def type_text(
@@ -412,6 +438,23 @@ class WindowPort(Protocol):
         self, window: WindowInfo, control: str | None = None, *, timeout: float | None = None
     ) -> str:
         """El texto de `control`, o de la ventana entera si no se da `control`."""
+        ...
+
+    def read_state(
+        self, window: WindowInfo, control: str, *, timeout: float | None = None
+    ) -> str | None:
+        """
+        `"on"` / `"off"` / `"indeterminate"` para un control con estado
+        (checkbox, radio, toggle) -- issue #25. `None` si el control no tiene
+        estado (un botón, una etiqueta): distinto de `PortError`, porque
+        preguntarle a un control que no es un toggle no es un fallo, es una
+        pregunta sin respuesta.
+
+        Existe aparte de `read_text` porque en UI Automation son cosas
+        distintas: el estado de un checkbox vive en `TogglePattern`, no en su
+        `Name` -- `read_text` seguiría devolviendo la etiqueta ("Lip Flat"),
+        tildado o no.
+        """
         ...
 
     @property
@@ -462,6 +505,64 @@ class CryptoPort(Protocol):
         Existe para poder decir "falta instalar la dependencia de cifrado"
         **antes** de que alguien intente guardar un secreto, en vez de fallar
         recién al guardarlo.
+        """
+        ...
+
+
+# ── Geometría ───────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class NearestOnSurfaceResult:
+    """
+    Resultado de proyectar puntos sobre una superficie.
+
+    `points` y `distances` van paralelos a los puntos de entrada: el i-ésimo
+    punto proyectado y su distancia corresponden al i-ésimo punto pedido.
+    """
+
+    points: tuple[tuple[float, float, float], ...]
+    distances: tuple[float, ...]
+
+
+@runtime_checkable
+class GeometryPort(Protocol):
+    """
+    Cómputo geométrico sobre mallas (issue #19).
+
+    A propósito "vacío": el núcleo declara la forma y nunca bundlea un
+    adapter real detrás (ningún `trimesh`, ni ninguna otra librería "curada"
+    de geometría). Cada instalación que necesite geometría de verdad escribe
+    o instala su propio adapter — un fork curado, no algo de fábrica —, igual
+    que decide su propia `BrowserPort` con sesión persistente. Lo que el core
+    sí bindea siempre es un adapter nulo (`available=False`): el registry no
+    carga un plugin que pide un port sin ningún adapter atado, así que sin
+    esto el plugin ni siquiera podría cargar para devolver un error claro.
+
+    Un tool que use este port tiene que chequear `available` primero y
+    devolver un `ToolResult.err` explícito si no hay adapter real, en vez de
+    dejar que un `ImportError` de una librería de geometría viva adentro del
+    plugin.
+    """
+
+    def nearest_on_surface(
+        self, mesh_bytes: bytes, points: list[tuple[float, float, float]]
+    ) -> NearestOnSurfaceResult:
+        """
+        El punto más cercano en la superficie de `mesh_bytes` (un STL) para
+        cada punto de `points`, con su distancia. `PortError` si la malla no
+        se puede leer.
+        """
+        ...
+
+    @property
+    def available(self) -> bool:
+        """
+        Si hay un adapter de geometría real detrás en esta instalación.
+
+        Mismo criterio que `CryptoPort.available`: existe para que un tool
+        pueda decir "no hay adapter de geometría configurado" antes de
+        intentar nada, en vez de fallar a mitad de un cómputo.
         """
         ...
 
@@ -534,6 +635,7 @@ BROWSER = "browser"
 WINDOW = "window"
 STORAGE = "storage"
 CRYPTO = "crypto"
+GEOMETRY = "geometry"
 
 PORTS: dict[str, type] = {
     HTTP: HttpPort,
@@ -544,13 +646,14 @@ PORTS: dict[str, type] = {
     WINDOW: WindowPort,
     STORAGE: StoragePort,
     CRYPTO: CryptoPort,
+    GEOMETRY: GeometryPort,
 }
 
 # Ports que un plugin puede pedir. `storage` y `crypto` no están: los dos son
 # del núcleo. Un plugin con acceso al almacenamiento elegiría dónde persisten
 # sus datos —exactamente lo que `Resource` existe para impedir— y uno con
 # acceso al cifrado podría leer secretos que no le corresponden.
-PLUGIN_PORTS = frozenset({HTTP, FS, PROCESS, CLOCK, BROWSER, WINDOW})
+PLUGIN_PORTS = frozenset({HTTP, FS, PROCESS, CLOCK, BROWSER, WINDOW, GEOMETRY})
 
 
 __all__ = [
@@ -558,6 +661,7 @@ __all__ = [
     "CLOCK",
     "CRYPTO",
     "FS",
+    "GEOMETRY",
     "HTTP",
     "PLUGIN_PORTS",
     "PORTS",
@@ -569,8 +673,10 @@ __all__ = [
     "CryptoPort",
     "FileInfo",
     "FsPort",
+    "GeometryPort",
     "HttpPort",
     "HttpResponse",
+    "NearestOnSurfaceResult",
     "PortError",
     "ProcessPort",
     "ProcessResult",

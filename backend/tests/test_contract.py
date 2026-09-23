@@ -565,7 +565,7 @@ def test_el_catalogo_publica_que_ports_usa_cada_plugin():
     catalogo = _registry().catalog()
     plugin = catalogo["plugins"][0]
     assert set(plugin["ports"]) == {"http", "fs", "process", "clock"}
-    assert set(catalogo["ports"]) == {"http", "fs", "process", "clock", "browser", "window"}
+    assert set(catalogo["ports"]) == {"http", "fs", "process", "clock", "browser", "window", "geometry"}
 
 
 # ── Dependencias de cómputo puro (issue #20) ─────────────────────────────
@@ -817,6 +817,237 @@ def test_alias_en_conflicto_se_reporta():
     reg._add_plugin("dos", "test", [_tool("dos.hacer")])
 
     assert any("alias en conflicto" in e.error for e in reg.errors)
+
+
+# ── options_from: de qué colección salen los valores de un param ─────
+
+
+def test_options_from_viaja_en_el_to_dict():
+    param = Param("connection", options_from="connections")
+    assert param.to_dict()["options_from"] == "connections"
+
+
+def test_options_from_por_defecto_es_vacio():
+    """Compatibilidad: ningún plugin ni test existente declara esto, y no cambia nada si no lo usa."""
+    assert Param("x").to_dict()["options_from"] == ""
+
+
+def test_options_from_no_se_valida_al_resolver_params():
+    """
+    A diferencia de `choices`, no es una restricción del núcleo: un
+    `{variable}` sin resolver, o cualquier texto, tiene que poder pasar --
+    quien lo restringe (si quiere) es la UI que dibuja el buscador.
+    """
+    manifest = ToolManifest(
+        id="t.x",
+        label="x",
+        category="X",
+        params=(Param("connection", options_from="connections"),),
+    )
+    resolved = manifest.resolve_params({"connection": "cualquier-cosa"}, {})
+    assert resolved == {"connection": "cualquier-cosa"}
+
+
+def test_options_from_que_no_existe_en_el_plugin_se_reporta():
+    """Issue de diseño: un typo en `options_from` se ve al cargar, no como un buscador vacío."""
+    manifest = PluginManifest(name="p", label="P", resources=(Resource(name="connections", label="Conexiones"),))
+    tool = FunctionTool(
+        manifest=ToolManifest(
+            id="p.usar",
+            label="x",
+            category="X",
+            params=(Param("connection", options_from="conexiones"),),  # typo
+        ),
+        fn=lambda ctx: ToolResult.ok(),
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("p", "test", Plugin(manifest=manifest, tools=[tool]))
+
+    assert any("options_from" in e.error and "conexiones" in e.error for e in reg.errors)
+    # El tool se registra igual: el typo no impide que ande, sólo rompe el hint.
+    assert reg.manifest("p.usar") is not None
+
+
+def test_options_from_que_existe_no_se_reporta():
+    manifest = PluginManifest(name="p", label="P", resources=(Resource(name="connections", label="Conexiones"),))
+    tool = FunctionTool(
+        manifest=ToolManifest(
+            id="p.usar",
+            label="x",
+            category="X",
+            params=(Param("connection", options_from="connections"),),
+        ),
+        fn=lambda ctx: ToolResult.ok(),
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("p", "test", Plugin(manifest=manifest, tools=[tool]))
+
+    assert reg.errors == []
+
+
+def test_options_from_sin_manifest_de_plugin_siempre_se_reporta():
+    """El modo mínimo (sin PluginManifest) no declara ningún Resource posible."""
+    tool = FunctionTool(
+        manifest=ToolManifest(
+            id="p.usar",
+            label="x",
+            category="X",
+            params=(Param("connection", options_from="connections"),),
+        ),
+        fn=lambda ctx: ToolResult.ok(),
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("p", "test", [tool])  # lista de tools pelada, sin Plugin/manifest
+
+    assert any("options_from" in e.error for e in reg.errors)
+
+
+def test_options_from_de_una_accion_tambien_se_valida():
+    declaracion = Action(
+        name="probar", label="Probar", params=(Param("connection", options_from="conexiones"),)
+    )
+    manifest = PluginManifest(
+        name="p",
+        label="P",
+        resources=(Resource(name="connections", label="Conexiones"),),
+        actions=(declaracion,),
+    )
+    accion = FunctionAction(action=declaracion, fn=lambda ctx: ToolResult.ok())
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("p", "test", Plugin(manifest=manifest, tools=[], actions=[accion]))
+
+    assert any("probar.connection" in e.error for e in reg.errors)
+
+
+# ── options_from="core:..." — fuente de opciones que provee el núcleo (issue #32) ──
+
+
+def test_options_from_core_no_se_busca_entre_los_resources_del_plugin():
+    """Sin resources declarados, options_from='connections' se reportaría; 'core:plugins' no."""
+    tool = FunctionTool(
+        manifest=ToolManifest(
+            id="p.usar",
+            label="x",
+            category="X",
+            params=(Param("plugin", options_from="core:plugins"),),
+        ),
+        fn=lambda ctx: ToolResult.ok(),
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("p", "test", [tool])
+
+    assert reg.errors == []
+
+
+def test_options_from_core_con_placeholder_que_nombra_otro_param_es_valido():
+    tool = FunctionTool(
+        manifest=ToolManifest(
+            id="bots.migrar",
+            label="Migrar",
+            category="X",
+            params=(
+                Param("plugin", options_from="core:plugins"),
+                Param("coleccion", options_from="core:resources:{plugin}"),
+            ),
+        ),
+        fn=lambda ctx: ToolResult.ok(),
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("bots", "test", [tool])
+
+    assert reg.errors == []
+
+
+def test_options_from_core_con_placeholder_que_no_existe_se_reporta():
+    """Un typo acá es peor que en un options_from normal: el campo parece depender de algo."""
+    tool = FunctionTool(
+        manifest=ToolManifest(
+            id="bots.migrar",
+            label="Migrar",
+            category="X",
+            params=(Param("coleccion", options_from="core:resources:{plugn}"),),  # typo
+        ),
+        fn=lambda ctx: ToolResult.ok(),
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("bots", "test", [tool])
+
+    assert any(
+        "options_from" in e.error and "plugn" in e.error and "no existe" in e.error
+        for e in reg.errors
+    )
+
+
+def test_options_from_core_acepta_un_alias_del_param_referenciado():
+    """Mismo criterio que la resolución real: `read_from` acepta el nombre actual o un alias."""
+    tool = FunctionTool(
+        manifest=ToolManifest(
+            id="bots.migrar",
+            label="Migrar",
+            category="X",
+            params=(
+                Param("plugin", aliases=("nombre_plugin",)),
+                Param("coleccion", options_from="core:resources:{nombre_plugin}"),
+            ),
+        ),
+        fn=lambda ctx: ToolResult.ok(),
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("bots", "test", [tool])
+
+    assert reg.errors == []
+
+
+def test_options_from_core_con_sintaxis_invalida_se_reporta():
+    """Un solo placeholder, sin expresiones ni anidado: cualquier otra forma es un error de carga."""
+    tool = FunctionTool(
+        manifest=ToolManifest(
+            id="bots.migrar",
+            label="Migrar",
+            category="X",
+            params=(Param("coleccion", options_from="core:resources:{plugin}{otro}"),),
+        ),
+        fn=lambda ctx: ToolResult.ok(),
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("bots", "test", [tool])
+
+    assert any("options_from" in e.error and "sintaxis" in e.error for e in reg.errors)
+
+
+# ── placeholder: ejemplo adentro del campo vacío (issue #29) ─────────
+
+
+def test_placeholder_viaja_en_el_to_dict():
+    param = Param("ruta", placeholder=r"D:\casos\AP962\stl")
+    assert param.to_dict()["placeholder"] == r"D:\casos\AP962\stl"
+
+
+def test_placeholder_por_defecto_es_vacio():
+    """Compatibilidad: ningún plugin ni test existente declara esto, y no cambia nada si no lo usa."""
+    assert Param("x").to_dict()["placeholder"] == ""
+
+
+def test_placeholder_no_se_valida_al_resolver_params():
+    """
+    Puramente informativo, como options_from: un {variable} sigue pudiendo
+    resolver a cualquier cosa aunque no se parezca en nada al placeholder.
+    """
+    manifest = ToolManifest(
+        id="p.hacer",
+        label="Hacer",
+        category="TEST",
+        params=(Param("ruta", placeholder=r"D:\casos\AP962\stl"),),
+    )
+    resueltos = manifest.resolve_params({"ruta": "cualquier cosa"}, {})
+    assert resueltos["ruta"] == "cualquier cosa"
+
+
+def test_placeholder_no_reemplaza_doc_conviven_los_dos():
+    param = Param("coleccion", doc="La colección del plugin", placeholder="bots")
+    datos = param.to_dict()
+    assert datos["doc"] == "La colección del plugin"
+    assert datos["placeholder"] == "bots"
 
 
 # ── Params abiertos ─────────────────────────────────────────────────────

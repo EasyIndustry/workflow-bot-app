@@ -24,15 +24,16 @@ import { contenidoDeNodo, TIPO_ROTULO } from "./workflows-cards.js";
  * @param {string} id
  * @param {object} grafo      el grafo mutable que edita la vista
  * @param {object} catalogo   GET /tools
- * @param {object} opts       {alCambiar, alCerrar, alAbrirCompleta, paso, hayCorrida}
+ * @param {object} opts       {alCambiar, alCerrar, alAbrirCompleta, paso, hayCorrida, columnasDeLaFila}
  *   `paso` es la entrada de este nodo en el trace del último dry run (o null si
  *   el recorrido no pasó por él); `hayCorrida` dice si hubo algún dry run, para
  *   distinguir "no se corrió nada" de "se corrió y este nodo quedó afuera".
+ *   `columnasDeLaFila` es lo que el autocompletado ofrece como columnas.
  * @returns {HTMLElement} pensado para llenar la caja del nodo: ocupa el 100 %
  *   de lo que le den y scrollea adentro. El marco (borde, sombra) lo pone el
  *   propio nodo del SVG.
  */
-export function panelDeNodo(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirCompleta, paso = null, hayCorrida = false }) {
+export function panelDeNodo(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirCompleta, paso = null, hayCorrida = false, columnasDeLaFila = null }) {
   const nodo = grafo.nodes[id];
   if (!nodo) return null;
 
@@ -70,7 +71,7 @@ export function panelDeNodo(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirC
     ]),
     h("div", { style: { flex: "1", minHeight: "0", overflow: "auto" } }, [
       paso ? resultadoDry(paso) : null,
-      contenidoDeNodo(id, grafo, catalogo, alCambiar),
+      contenidoDeNodo(id, grafo, catalogo, alCambiar, columnasDeLaFila),
     ]),
   ]);
 }

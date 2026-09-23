@@ -39,23 +39,36 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `webapp/contexto_agente.py` | el manual agéntico: `describir` (el `describe_installation` del núcleo más fuentes y notas) y el `AGENTS.md` que se deja en la instalación al arrancar y al cambiar flujos, plugins o colecciones |
 | `webapp/plugin_install.py` · `plugin_catalog.py` | instalar un plugin desde archivo o desde el catálogo en GitHub, validando en otro proceso |
 | `webapp/updates.py` | actualizar `backend/` y `webapp/` desde releases, por `Componente` |
+| `webapp/identidad.py` | cómo se llama este Bot (Config → General); `main.js` lo usa para titular la pestaña |
+| `webapp/indicadores.py` | el check persistente de una Action de fila (`outputs.indicador`), por `(plugin, resource, item)`; `GET /resources/...` lo suma a cada item como `_indicador` |
 | `webapp/agent_providers.py` · `instalar_agente.py` · `mcp_registration.py` · `mcp_servidor.py` · `agent_terminal.py` | la pestaña Agente: CLIs, su instalación, su registro MCP, el servidor MCP de la instalación, la terminal por websocket |
 | `webapp/bandeja.py` | el ícono de la bandeja del sistema |
 | `webapp/static/js/views/*.js` | una vista por pestaña; `api.js` es el único que habla con la API; `dom.js` el `h()` |
+| `webapp/static/js/actualizar_componente.js` | confirmar, aplicar y reiniciar tras un release — lo usan tanto Config → Actualizaciones como la campana de notificaciones del marco, para no escribirlo dos veces |
+| `webapp/static/js/components/notificaciones.js` | la campana del marco (en `.pestanas`, no adentro de ninguna vista): avisa de un release nuevo del núcleo o la web app y deja instalarlo. Se consulta una vez al armar el shell, no hace polling |
+| `webapp/static/js/components/markdown.js` | un renderer de Markdown chico a mano (sin build no hay cómo traer una librería), para las notas de un release |
+| `webapp/static/js/components/click-afuera.js` | cerrar un panel colgante al clickear afuera — lo comparten el panel de Avisos de una fuente y la campana de notificaciones |
+| `webapp/static/js/preferencias.js` | preferencias de quien opera, en `localStorage` (no por instalación): hoy sólo si incluir releases de prueba, compartida entre Config → Actualizaciones y la campana |
 
 ## Endpoints que importan (prefijo `/api/core`)
 
 | Ruta | Para qué |
 |---|---|
-| `GET /overview` | resumen |
+| `GET /overview` | resumen; trae `nombre` (webapp/identidad.py) para que `main.js` titule la pestaña sin otro viaje |
+| `GET/PUT /identidad` | cómo se llama este Bot. Sin autenticación propia, igual que el resto de esta API: no es un secreto, así que un plugin que conecte Bots por IP lo puede leer sin que este Bot tenga ese plugin instalado |
 | `GET/PUT /workflows[/<n>]`, `GET /workflows/<n>/graph` | flujos |
 | `POST /validate` | dry run |
 | `POST /run` | correr y esperar |
 | `POST /runs` → `GET /runs/ticket/<t>` | correr sin esperar |
 | `GET /runs`, `GET /runs/<id>`, `GET /runs/en-vuelo`, `GET /logs/<case>` | historial, traza, en vuelo, registro |
 | `GET /tools`, `GET /plugins`, `POST /plugins/install`, `GET /plugins/catalog`, `POST /plugins/catalog/install` | plugins |
-| `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…) |
-| `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar) |
+| `GET /tools/<tool>/params-extra?<params>` | los params extra que ese tool acepta según lo que el nodo ya tiene elegido |
+| `GET /limites`, `PUT /limites/raices`, `PUT /limites/programas` | hasta dónde llega la instalación: carpetas y programas permitidos |
+| `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…). Los campos `secret` salen en `None`; un PUT que los manda así conserva el guardado, `""` lo vacía. El GET suma `_indicador` a cada item si tiene uno guardado (`webapp/indicadores.py`); el DELETE borra el suyo de paso |
+| `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar). Su resultado puede traer `outputs.vista` y la pantalla lo dibuja: tabla, casillas y una acción de seguimiento. `outputs.abrir_url` (http/https) abre una pestaña nueva en vez de mostrar el modal — cualquier Action de fila puede usarlo, no sólo una en particular. `outputs.indicador` (`{estado, texto}`, en el ok y en el err) se guarda como el check de esa fila si la Action está atada a una colección (`item` en el body) |
+| `POST /diff`, `POST /migrar` | qué difiere contra otro Bot, y empujarle lo elegido. **Sólo desde la propia máquina**: la pantalla corre acá y un plugin que lo ofrezca corre adentro del propio Bot. `incluir_secretos` arranca en `false` — el item viaja igual y el destino conserva los suyos |
+| `POST /migrar/recibir` | el otro lado: abre el sobre cifrado y escribe. Que el sobre abra **es** la autenticación de esta ruta — la única autenticada |
+| `GET/POST/DELETE /emparejamientos`, `POST /emparejamientos/importar` | la clave compartida con otro Bot; la pantalla es Config → Emparejamientos. **Sólo desde la propia máquina** (`127.0.0.1`): con esto abierto a la red, cualquiera pediría un código y el sobre dejaría de autenticar. La clave no sale nunca; el código se ve una vez. Abrir el Bot por su IP, aun sentado en esa PC, también da 403 — la pantalla lo explica en vez de mostrar el error |
 | `GET /env`, `PUT /env/<N>` | variables y secretos |
 | `GET /updates`, `PUT /updates/config`, `GET /updates/releases`, `POST /updates/install/{tag,upload}`, `POST /updates/revert`, `POST /updates/restart` | actualizaciones |
 | `GET /agent`, `GET /agent/providers`, `WS /agent/terminal` | pestaña Agente |
@@ -66,9 +79,19 @@ pide un proxy que la ponga.
 ## Front
 
 Sin build: `index.html` carga `main.js`, que enruta por hash
-(`#sources/...`, `#workflows/<nombre>`, `#/config/<seccion>`, `#agente`,
-`#plugins`). Ninguna vista conoce un plugin por nombre: settings,
-colecciones y acciones se dibujan desde `GET /tools`. Sondeos: Sources
+(`#sources/...`, `#workflows/<nombre>`, `#/config/<seccion>[/<subvista>]`,
+`#agente`, `#plugins`). El router recuerda la última ruta completa de cada
+vista (`recordarRuta`/`volverA`, en sessionStorage) y la barra de pestañas
+vuelve por ahí: cambiar de pestaña no es perder la fuente con sus filtros ni el
+flujo a medio editar; el editor de flujos, además, no relee del servidor un
+flujo con cambios sin guardar. Ninguna vista conoce un plugin por nombre: settings,
+colecciones y acciones se dibujan desde `GET /tools`. Una sección que son dos
+pantallas se parte con `components/subvistas.js`, y la vista elegida va en la
+URL para que un enlace lleve a donde uno quiere. Tipear `{` en un parámetro de
+la tarjeta de un nodo abre `components/autocompletar.js` con las salidas de los
+nodos de arriba (y quién deja cada una) y los nombres de Config; las
+`{variables}` escritas se ven marcadas con `components/resaltar-variables.js`,
+un espejo detrás del input. Sondeos: Sources
 (`runs/en-vuelo`, 1.5/5 s) y Workflows (lista, 5 s).
 
 El diagrama de un flujo lo dibuja `views/workflows-graph.js` en SVG a mano,

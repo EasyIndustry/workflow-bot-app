@@ -87,7 +87,18 @@ carga.
   [`EasyIndustry/workflow-bot-plugins`](https://github.com/EasyIndustry/workflow-bot-plugins).
 - Antes de commitear una vista, correr el recorrido real y mirarlo: Chrome
   headless por CDP con un script, o el navegador. Los chequeos de sintaxis no
-  alcanzaron nunca.
+  alcanzaron nunca. Y **cada módulo de `views/` tiene que importar**: la app
+  los carga con `import()` al navegar, así que un error de sintaxis no
+  revienta al arrancar sino al abrir esa pestaña, con "No se pudo abrir la
+  pantalla" y nada más. Un `import('/static/js/views/x.js')` por CDP contra
+  cada vista, antes del commit, lo ataja en cinco segundos; una vez salió un
+  release con dos pantallas rotas por no hacerlo.
+- **No escribir JavaScript desde un string de Python.** Un `"\\n"` adentro de
+  un `'''...'''` que después pasa por un heredoc de bash llega al archivo como
+  un salto de línea real adentro de un string JS, y el archivo deja de
+  parsear. Pasó dos veces en la misma noche. Para editar `.js`, la
+  herramienta de edición con el texto exacto; para generar, un archivo
+  aparte, nunca un literal con barras.
 
 ## Qué hay
 

@@ -5,9 +5,8 @@
  * Es la razón por la que esta pantalla no crece cuando se instala un plugin —
  * que es cómo el front viejo terminó con nueve secciones escritas a mano.
  *
- * Seis secciones tienen backend y funcionan; General está diseñada y todavía
- * no. Las que no, lo dicen y nombran lo que falta, en vez de mostrar controles
- * que no hacen nada.
+ * Las secciones tienen backend y funcionan. Las que no lo tengan lo dicen y
+ * nombran lo que falta, en vez de mostrar controles que no hacen nada.
  */
 
 import { h, poner, icono, ICONOS } from "../dom.js";
@@ -17,19 +16,24 @@ import { crearCampo } from "../components/campo.js";
 import { tabla } from "../components/tabla.js";
 import { abrirModal, confirmar } from "../components/modal.js";
 import { aviso } from "../components/aviso.js";
+import { subVistas, vistaElegida } from "../components/subvistas.js";
+import { primeraLinea, renderMarkdown } from "../components/markdown.js";
+import { incluirPrueba as incluirPruebaGuardado, guardarIncluirPrueba } from "../preferencias.js";
+import { COMPONENTES_UPDATE, instalarRelease as aplicarRelease, mostrarResultadoUpdate, reiniciarApp } from "../actualizar_componente.js";
 
 let shell = null;
 let confirmacion = null;
 
 const SECCIONES = [
-  { id: "secretos", label: "Secretos y variables", dibujar: dibujarSecretos },
+  { id: "general", label: "General", dibujar: dibujarGeneral },
+  { id: "secretos", label: "Configurar entorno", dibujar: dibujarSecretos },
   { id: "almacenamiento", label: "Almacenamiento", dibujar: dibujarAlmacenamiento },
-  { id: "limites", label: "Alcance de archivos", dibujar: dibujarLimites },
+  { id: "limites", label: "Alcance", dibujar: dibujarLimites },
   { id: "diagnostico", label: "Diagnóstico", dibujar: dibujarDiagnostico },
   { id: "base", label: "Base de datos", dibujar: dibujarBase },
   { id: "seguridad", label: "Seguridad", dibujar: dibujarSeguridad },
+  { id: "emparejamientos", label: "Emparejamientos", dibujar: dibujarEmparejamientos },
   { id: "actualizaciones", label: "Actualizaciones", dibujar: dibujarActualizaciones },
-  { id: "general", label: "General", falta: "el puerto, la retención de runs y el arranque con Windows. La retención del registro de eventos ya existe y, como el núcleo la declara igual que cualquier plugin, se edita en Plug ins → Núcleo" },
 ];
 
 export async function montar(elShell, partes) {
@@ -82,28 +86,109 @@ function encabezado(titulo, sub) {
   ]);
 }
 
+/**
+ * Casi todo lo que se confirma salió bien y va en verde. Pisar un
+ * emparejamiento no: salió bien y además perdió algo, así que también se puede
+ * dejar `{tono, texto}` en vez de una cadena.
+ */
 function consumirConfirmacion() {
   if (!confirmacion) return null;
-  const texto = confirmacion;
+  const c = confirmacion;
   confirmacion = null;
-  return aviso("ok", texto, null);
+  return typeof c === "string" ? aviso("ok", c, null) : aviso(c.tono, c.texto, null);
+}
+
+// ── General ──────────────────────────────────────────────────────────────
+//
+// Cómo se llama este Bot (webapp/identidad.py). No es un setting de plugin
+// —por eso no vive en la pantalla de ningún plugin— y tampoco es un límite
+// que impida arrancar como los de boot.env: es un rótulo, y se usa sobre
+// todo para titular la pestaña, así que con varios Bots abiertos en el mismo
+// navegador se distinguen por su nombre y no por la URL.
+
+async function dibujarGeneral() {
+  const { nombre } = await api.identidad();
+  const campoNombre = crearCampo({
+    name: "nombre", type: "str", label: "Nombre de este Bot",
+    doc: "Titula la pestaña del navegador al abrirse — la propia, o la que otra " +
+      "máquina abre con la IP de ésta. Vacío deja \"Bot\" genérico.",
+  }, nombre || "");
+
+  const error = h("div", { class: "aviso aviso--error", style: { display: "none", margin: "12px 0 0" } });
+
+  return [
+    encabezado("General", "Lo que identifica a esta instalación, más allá de su URL."),
+    consumirConfirmacion(),
+
+    h("div", { class: "seccion" }, [h("span", { text: "IDENTIDAD" })]),
+    h("div", { class: "tarjeta" }, [
+      campoNombre.elemento,
+      error,
+      h("div", { style: { padding: "0 13px 13px" } }, [
+        h("button", { class: "btn btn--primario", text: "Guardar", onClick: async () => {
+          try {
+            await api.guardarIdentidad(campoNombre.leer().trim());
+            confirmacion = "Se guardó el nombre.";
+            await dibujarSeccion(seccionPorId("general"));
+          } catch (e) {
+            error.style.display = "";
+            poner(error, h("div", { class: "aviso__cuerpo", text: e.message }));
+          }
+        } }),
+      ]),
+    ]),
+
+    h("div", { class: "tabla__pie", style: { lineHeight: "1.55" }, text:
+      "Lo lee cualquiera que sepa la URL de este Bot con GET /api/core/identidad — no es un " +
+      "secreto. Es lo que un plugin que conecta varios Bots por IP (como \"bots\" del catálogo) " +
+      "puede usar para saber cómo se llama el que está del otro lado, sin que este Bot tenga " +
+      "ese plugin ni ningún otro instalado." }),
+  ];
 }
 
 // ── Secretos y variables ────────────────────────────────────────────────
 
-async function dibujarSecretos() {
-  const datos = await api.env();
-  const items = datos.items || [];
-  const secretos = items.filter((i) => i.secret);
-  const variables = items.filter((i) => !i.secret);
+const VISTAS_ENTORNO = [
+  { id: "secretos", label: "Secretos", dibujar: dibujarEntornoSecretos },
+  { id: "variables", label: "Variables de entorno", dibujar: dibujarEntornoVariables },
+];
 
+async function dibujarSecretos(partes = []) {
+  const datos = await api.env();
+  const vista = vistaElegida(VISTAS_ENTORNO, partes[0]);
   return [
-    encabezado("Secretos y variables", [
+    encabezado("Configurar entorno", [
       "Lo que los flujos interpolan como ",
       h("span", { class: "mono", text: "{env.CLAVE}" }),
       ". Las variables se ven y se editan; los secretos se cargan y no se vuelven a mostrar, ni siquiera a quien los cargó.",
     ]),
+    subVistas(VISTAS_ENTORNO, vista.id, (id) => irA("config", "secretos", id)),
     consumirConfirmacion(),
+    ...vista.dibujar(datos),
+    pieDeEntorno(datos),
+  ];
+}
+
+/** El mismo pie en las dos: la columna de usos se calcula igual para los dos tipos. */
+function pieDeEntorno(datos) {
+  return h("div", { class: "tabla__pie", style: { lineHeight: "1.55" } }, [
+    "La columna de usos sale de cruzar los flujos, las conexiones y las " +
+    "fuentes guardadas contra estos nombres. Un nombre en 0 usos sobra; uno " +
+    "referenciado y sin valor va a fallar en medio de una ejecución.",
+    datos.key_exists
+      ? null
+      : h("div", { style: { marginTop: "6px" } }, [
+          "Todavía no hay llave de cifrado: se genera sola cuando se cargue el primer secreto.",
+        ]),
+  ]);
+}
+
+function dibujarEntornoSecretos(datos) {
+  const secretos = (datos.items || []).filter((i) => i.secret);
+  return [
+    // El aviso vive acá y no en las variables: es lo que explica por qué la
+    // tabla de al lado no muestra ningún valor, y leerlo entre las variables
+    // —que sí se ven— confundiría en vez de aclarar.
     aviso("info", "Los secretos se referencian, nunca se embeben", h("div", {}, [
       "Una conexión guarda ",
       h("span", { class: "mono", text: "Authorization: Bearer {env.API_TOKEN}" }),
@@ -112,31 +197,24 @@ async function dibujarSecretos() {
       "problema. El valor se resuelve en el servidor al ejecutar: nunca llega " +
       "al navegador.",
     ])),
-
     h("div", { class: "seccion" }, [
       h("span", {}, ["SECRETOS", h("span", { class: "seccion__suave", text: " · se escriben, no se leen" })]),
       h("button", { class: "btn btn--primario", text: "+ Nuevo secreto",
                     onClick: () => abrirEnv({ secret: true }) }),
     ]),
     tablaEnv(secretos, true),
+  ];
+}
 
+function dibujarEntornoVariables(datos) {
+  const variables = (datos.items || []).filter((i) => !i.secret);
+  return [
     h("div", { class: "seccion" }, [
       h("span", {}, ["VARIABLES", h("span", { class: "seccion__suave", text: " · visibles" })]),
       h("button", { class: "btn btn--primario", text: "+ Nueva variable",
                     onClick: () => abrirEnv({ secret: false }) }),
     ]),
     tablaEnv(variables, false),
-
-    h("div", { class: "tabla__pie", style: { lineHeight: "1.55" } }, [
-      "La columna de usos sale de cruzar los flujos, las conexiones y las " +
-      "fuentes guardadas contra estos nombres. Un nombre en 0 usos sobra; uno " +
-      "referenciado y sin valor va a fallar en medio de una ejecución.",
-      datos.key_exists
-        ? null
-        : h("div", { style: { marginTop: "6px" } }, [
-            "Todavía no hay llave de cifrado: se genera sola cuando se cargue el primer secreto.",
-          ]),
-    ]),
   ];
 }
 
@@ -259,7 +337,9 @@ function abrirEnv(item) {
           confirmacion = esNuevo
             ? `Se cargó {env.${nombre}}.`
             : `Se reemplazó el valor de {env.${nombre}}.`;
-          await dibujarSeccion(SECCIONES[0]);
+          // A la sub-vista de donde salió: volver siempre a Secretos después de
+          // cargar una variable haría perder de vista lo que se acaba de hacer.
+          await dibujarSeccion(seccionPorId("secretos"), [esSecreto ? "secretos" : "variables"]);
         } catch (e) {
           error.style.display = "";
           poner(error, h("div", { class: "aviso__cuerpo", text: e.message }));
@@ -282,7 +362,7 @@ function borrarEnv(item) {
     alConfirmar: async () => {
       await api.borrarEnv(item.name);
       confirmacion = `Se eliminó {env.${item.name}}.`;
-      await dibujarSeccion(SECCIONES[0]);
+      await dibujarSeccion(seccionPorId("secretos"), [item.secret ? "secretos" : "variables"]);
     },
   });
 }
@@ -826,8 +906,305 @@ function controlesDePolitica(datos, actual) {
   };
 }
 
+/** Una sección por su id. Por índice se rompe en silencio al reordenar la lista. */
 function seccionPorId(id) {
   return SECCIONES.find((s) => s.id === id);
+}
+
+// ── Emparejar con otro Bot ──────────────────────────────────────────────
+//
+// La clave compartida con la que viaja una migración (`webapp/emparejamiento.py`):
+// un lado genera el código y el otro lo pega. Ese copiado a mano es lo único
+// autenticado de esta API, así que la pantalla no puede negociarlo sola — no
+// hay, ni va a haber, un botón de "emparejar con aquel de la lista".
+//
+// Los cuatro endpoints contestan sólo a `127.0.0.1`, y eso incluye abrir el Bot
+// con la IP de su propia máquina: ahí el pedido sale con esa IP y el guardia lo
+// rechaza igual. Es el 403 que más desconcierta, así que se explica en vez de
+// mostrarse tal cual.
+
+function cabeceraEmparejar() {
+  return [
+    "Con qué otros Bots se puede migrar. Migrar mueve secretos por una red sin TLS, " +
+    "así que lo que viaja va adentro de un sobre cifrado con una clave ",
+    h("b", { text: "por par" }),
+    ", distinta de la llave local de cada Bot. Sin emparejamiento no se migra, y no hay " +
+    "camino en claro.",
+  ];
+}
+
+async function dibujarEmparejamientos() {
+  let items;
+  try {
+    items = (await api.emparejamientos()).items || [];
+  } catch (e) {
+    return [
+      encabezado("Emparejamientos", cabeceraEmparejar()),
+      e.status === 403
+        ? avisoSoloDesdeEsaMaquina()
+        : aviso("error", "No se pudo leer la lista", e.message),
+    ];
+  }
+
+  return [
+    encabezado("Emparejamientos", cabeceraEmparejar()),
+    consumirConfirmacion(),
+
+    aviso("info", "Uno genera el código y el otro lo pega", h("div", {}, [
+      "El Bot que va a ", h("b", { text: "recibir" }), " genera un código; el que va a ",
+      h("b", { text: "empujar" }), " lo pega, junto con la dirección del primero. Se copia " +
+      "a mano a propósito: es lo que ata la clave a alguien que puede ver las dos máquinas. " +
+      "Si se negociara sola al conectarse no habría autenticación ninguna. Hecho una vez, " +
+      "el mismo emparejamiento sirve para los dos sentidos.",
+    ])),
+
+    h("div", { class: "seccion" }, [
+      h("span", {}, ["EMPAREJADOS", h("span", {
+        class: "seccion__suave", text: " · la clave no se muestra, ni a quien la generó",
+      })]),
+    ]),
+    tablaEmparejamientos(items),
+
+    h("div", { style: { display: "flex", gap: "8px", marginTop: "10px" } }, [
+      h("button", {
+        class: "btn btn--primario", text: "Generar un código",
+        title: "Para cuando este Bot es el que recibe",
+        onClick: abrirGenerarEmparejamiento,
+      }),
+      h("button", {
+        class: "btn", text: "Pegar un código",
+        title: "Para cuando este Bot es el que empuja",
+        onClick: abrirImportarEmparejamiento,
+      }),
+    ]),
+
+    h("div", { class: "tabla__pie", style: { lineHeight: "1.55" }, text:
+      "Todo esto se hace sentado en cada máquina: los cuatro pedidos de esta pantalla sólo " +
+      "contestan desde el propio Bot. Un emparejamiento no depende de ningún plugin ni de " +
+      "ninguna colección — es de la instalación, y vive en data/, que queda fuera de lo que " +
+      "un flujo alcanza." }),
+  ];
+}
+
+/**
+ * El 403. Vale la pena explicarlo entero porque la causa más frecuente no es
+ * "estás en otra PC" sino "abriste el Bot por su dirección de red estando
+ * sentado en la PC del Bot", y ahí el mensaje del servidor manda a mover la
+ * silla en vez de a cambiar la URL.
+ */
+function avisoSoloDesdeEsaMaquina() {
+  const local = `http://localhost:${location.port || "8000"}`;
+  return aviso("falta", "Esto se hace sentado en la PC del Bot", h("div", {}, [
+    "Generar, pegar, listar y olvidar sólo contestan a un pedido que sale del propio Bot. " +
+    "Es lo que hace que el copiado a mano signifique algo: abiertos por la red, cualquiera " +
+    "pediría un código y quedaría emparejado solo.",
+    h("div", { style: { marginTop: "7px" } }, [
+      "Estás viendo esta pantalla como ", h("span", { class: "mono", text: location.origin }),
+      ". Hay que abrirla en esa máquina con ", h("span", { class: "mono", text: local }),
+      " — con la IP de la propia PC no alcanza, porque el pedido sale con esa IP y se " +
+      "rechaza igual.",
+    ]),
+  ]));
+}
+
+function tablaEmparejamientos(filas) {
+  const columnas = [
+    { clave: "nombre", label: "Nombre", ancho: "190px", peso: 500 },
+    {
+      // La dirección se compara tal cual contra el destino que pide la
+      // migración, así que se muestra entera y en mono: acá es donde se ve que
+      // sobra una barra, que falta el puerto o que es el nombre y no la IP.
+      clave: "url", label: "Dirección", mono: true,
+      render: (f) => f.url
+        ? h("span", { text: f.url })
+        : h("span", { style: { color: "var(--texto-4)" } },
+                     ["se completa cuando el otro Bot empuje"]),
+    },
+    {
+      clave: "creado_en", label: "Creado", ancho: "140px",
+      render: (f) => f.creado_en ? cuando(f.creado_en) : "—",
+    },
+    {
+      clave: "ultimo_uso", label: "Último uso", ancho: "140px",
+      render: (f) => f.ultimo_uso
+        ? cuando(f.ultimo_uso)
+        : h("span", { style: { color: "var(--texto-4)" }, text: "nunca" }),
+    },
+    {
+      clave: "_acciones", label: "", ancho: "contenido",
+      render: (f) => h("button", {
+        class: "btn btn--chico", text: "Olvidar", style: { color: "var(--rojo)" },
+        onClick: () => olvidarEmparejamiento(f),
+      }),
+    },
+  ];
+
+  return tabla(columnas, filas, {
+    vacio: "Todavía no hay ninguno: este Bot no puede migrarle a otro, ni recibir de otro.",
+  });
+}
+
+/** El lado que recibe. */
+function abrirGenerarEmparejamiento() {
+  const campoNombre = crearCampo({
+    name: "nombre", type: "str", label: "Nombre", required: true,
+    doc: "Para reconocerlo después en esta lista. El nombre de la otra máquina alcanza.",
+  }, "");
+
+  const error = h("div", { class: "aviso aviso--error", style: { display: "none", margin: "12px 16px 0" } });
+
+  const { cerrar } = abrirModal({
+    titulo: "Generar un código",
+    sub: "Para cuando este Bot es el que recibe. El código se pega en el que empuja.",
+    cuerpo: h("div", {}, [error, campoNombre.elemento]),
+    acciones: [
+      h("button", { class: "btn", text: "Cancelar", onClick: () => cerrar() }),
+      h("button", { class: "btn btn--primario", text: "Generar", onClick: async () => {
+        try {
+          const r = await api.generarEmparejamiento(campoNombre.leer().trim());
+          cerrar();
+          mostrarCodigoUnaVez(r);
+        } catch (e) {
+          error.style.display = "";
+          poner(error, h("div", { class: "aviso__cuerpo", text: e.message }));
+        }
+      } }),
+    ],
+  });
+
+  campoNombre.elemento.querySelector(".entrada")?.focus();
+}
+
+/**
+ * El código, una sola vez. No hay a dónde volver a buscarlo, y no es un olvido:
+ * lo forma la clave, y una clave que se relee por la API es una clave que sale
+ * por la API.
+ */
+function mostrarCodigoUnaVez(r) {
+  const copiar = h("button", { class: "btn btn--chico", text: "Copiar", onClick: async () => {
+    try {
+      await navigator.clipboard.writeText(r.codigo);
+      copiar.textContent = "Copiado";
+    } catch {
+      // Sin permiso de portapapeles: queda seleccionarlo a mano, que es para lo
+      // que el código se muestra entero y con `user-select: all`.
+      copiar.textContent = "Copialo a mano";
+    }
+  } });
+
+  const { cerrar } = abrirModal({
+    titulo: `Código de "${r.nombre}"`,
+    sub: "Se muestra una sola vez y no se puede volver a pedir.",
+    cuerpo: h("div", { style: { padding: "16px" } }, [
+      h("div", { class: "mono", style: {
+        fontSize: "12.5px", lineHeight: "1.6", wordBreak: "break-all", userSelect: "all",
+        padding: "10px 12px", borderRadius: "6px",
+        border: "1px solid var(--borde)", background: "var(--fondo-panel)",
+      }, text: r.codigo }),
+      h("div", { style: { marginTop: "10px" } }, [copiar]),
+      h("div", { style: { marginTop: "13px" } }, [
+        aviso("falta", "Va entero", h("div", {}, [
+          "Incluido todo lo que viene ", h("b", { text: "después del punto" }),
+          ": cortarlo ahí es el error más común, y del otro lado se ve como “ese código no " +
+          "es válido”. Si se pierde, se genera otro y se olvida éste.",
+        ])),
+      ]),
+      h("div", { class: "campo__ayuda", style: { marginTop: "13px", lineHeight: "1.55" } }, [
+        "En el otro Bot: Config → Emparejamientos → Pegar un código. Ahí, además del código, " +
+        "va la dirección de ", h("b", { text: "este" }), " Bot: la que se usa para abrirlo desde " +
+        "otra PC. El ícono de la bandeja la copia con “Copiar dirección para otras PCs”.",
+      ]),
+    ]),
+    acciones: [h("button", { class: "btn btn--primario", text: "Listo", onClick: () => cerrar() })],
+    alCerrar: async () => {
+      confirmacion = `Se generó "${r.nombre}". Falta pegar el código en el otro Bot.`;
+      await dibujarSeccion(seccionPorId("emparejamientos"));
+    },
+  });
+}
+
+/** El lado que empuja. */
+function abrirImportarEmparejamiento() {
+  const campoCodigo = crearCampo({
+    name: "codigo", type: "str", label: "Código", required: true,
+    doc: "El que generó el otro Bot, entero: los dos pedazos y el punto del medio.",
+  }, "");
+
+  const campoUrl = crearCampo({
+    name: "url", type: "str", label: "Dirección del otro Bot", required: true,
+    doc: "Con http:// y el puerto, igual que se abre ese Bot desde acá.",
+  }, "");
+
+  const campoNombre = crearCampo({
+    name: "nombre", type: "str", label: "Nombre",
+    doc: "Para reconocerlo en la lista. Vacío, queda la dirección.",
+  }, "");
+
+  const error = h("div", { class: "aviso aviso--error", style: { display: "none", margin: "12px 16px 0" } });
+
+  const { cerrar } = abrirModal({
+    titulo: "Pegar un código",
+    sub: "Para cuando este Bot es el que empuja.",
+    cuerpo: h("div", {}, [
+      error,
+      // El 90% de los intentos fallidos son esto, y el error que sale después
+      // —"no hay emparejamiento"— manda a buscar el problema al lugar
+      // equivocado: parece que faltó emparejar cuando lo que falló es una letra.
+      h("div", { style: { padding: "14px 16px 0" } }, [
+        aviso("info", "La dirección tiene que coincidir exacto", h("div", {}, [
+          "Cuando se pida la migración, el destino que se mande se compara contra esta " +
+          "dirección ", h("b", { text: "tal cual" }), ": sólo se ignora la barra del final. " +
+          "Si allá dice ", h("span", { class: "mono", text: "http://LUCAS:8000" }), " y acá ",
+          h("span", { class: "mono", text: "http://192.168.9.33:8000" }), ", no se encuentran, " +
+          "y lo que sale es “no hay emparejamiento con…”. Conviene copiar la dirección de " +
+          "donde vaya a salir el destino, y no escribirla de nuevo.",
+        ])),
+      ]),
+      campoCodigo.elemento, campoUrl.elemento, campoNombre.elemento,
+    ]),
+    acciones: [
+      h("button", { class: "btn", text: "Cancelar", onClick: () => cerrar() }),
+      h("button", { class: "btn btn--primario", text: "Guardar", onClick: async () => {
+        try {
+          const r = await api.importarEmparejamiento(
+            campoCodigo.leer().trim(), campoUrl.leer().trim(), campoNombre.leer().trim());
+          cerrar();
+          // Pisar uno que ya estaba es legítimo —es cómo se cambia la IP del
+          // otro Bot— pero el que se pierde hay que rehacerlo en las dos
+          // máquinas, así que no puede pasar en verde y sin nombre.
+          confirmacion = r.reemplazo
+            ? { tono: "falta", texto:
+                `Se guardó el emparejamiento con ${r.url}, y reemplazó al que estaba con el ` +
+                `mismo id: "${r.reemplazo.nombre}"${r.reemplazo.url ? ` (${r.reemplazo.url})` : ""}. ` +
+                "Ese ya no sirve; si hacía falta, hay que rehacerlo en las dos máquinas." }
+            : `Se guardó el emparejamiento con ${r.url}.`;
+          await dibujarSeccion(seccionPorId("emparejamientos"));
+        } catch (e) {
+          error.style.display = "";
+          poner(error, h("div", { class: "aviso__cuerpo", text: e.message }));
+        }
+      } }),
+    ],
+  });
+
+  campoCodigo.elemento.querySelector(".entrada")?.focus();
+}
+
+function olvidarEmparejamiento(f) {
+  confirmar({
+    titulo: `Olvidar "${f.nombre}"`,
+    texto:
+      "Este Bot deja de poder migrarle a ése, y de poder recibir lo que ése empuje. La clave " +
+      "se borra de acá y no se puede recuperar: para volver atrás hay que emparejarlos de " +
+      "nuevo, generando un código y pegándolo, sentado en cada una de las dos máquinas. Del " +
+      "otro lado el emparejamiento sigue estando: olvidarlo allá es hacerlo allá.",
+    botonTexto: "Olvidar",
+    alConfirmar: async () => {
+      await api.olvidarEmparejamiento(f.id);
+      confirmacion = `Se olvidó el emparejamiento "${f.nombre}".`;
+      await dibujarSeccion(seccionPorId("emparejamientos"));
+    },
+  });
 }
 
 // ── Actualizaciones del núcleo y de la web app ──────────────────────────
@@ -839,15 +1216,18 @@ function seccionPorId(id) {
 // subir el archivo si no hay internet, volver al anterior, y reiniciar. Los
 // dos componentes se dibujan con el mismo bloque: cambia el dato, no la UI.
 
-let incluirPrueba = true;
-
-const COMPONENTES_UPDATE = [
-  { id: "core", titulo: "NÚCLEO", carpeta: "backend/", que: "el núcleo", de: "del núcleo" },
-  { id: "webapp", titulo: "WEB APP", carpeta: "webapp/", que: "la web app", de: "de la web app" },
+// Repos y un componente por vista. Antes era todo una pantalla: los dos
+// bloques traían treinta releases cada uno al abrirla —sesenta pedidos de
+// notas para instalar uno— y había que barrer con el scroll para llegar al
+// segundo.
+const VISTAS_UPDATE = [
+  { id: "repos", label: "Repos" },
+  ...COMPONENTES_UPDATE.map((c) => ({ id: c.id, label: c.label, componente: c })),
 ];
 
-async function dibujarActualizaciones() {
+async function dibujarActualizaciones(partes = []) {
   const estado = await api.actualizaciones();
+  const vista = vistaElegida(VISTAS_UPDATE, partes[0]);
   return [
     encabezado("Actualizaciones", [
       "El núcleo (", h("span", { class: "mono", text: "backend/" }), ") y la web app (",
@@ -855,16 +1235,16 @@ async function dibujarActualizaciones() {
       ") se traen cada uno de los releases de su repo de GitHub y se reemplazan enteros. " +
       "No se editan acá: lo que haya que cambiar se cambia en el repo y se publica un release.",
     ]),
+    subVistas(VISTAS_UPDATE, vista.id, (id) => irA("config", "actualizaciones", id)),
     consumirConfirmacion(),
     estado.can_restart
       ? null
       : aviso("info", "Este servidor no se reinicia desde acá",
         "Lo arrancó uvicorn o un supervisor ajeno, no python -m webapp. Después de actualizar hay que reiniciar el proceso a mano."),
 
-    h("div", { class: "seccion" }, [h("span", { text: "REPOSITORIOS" })]),
-    tarjetaRepos(estado),
-
-    ...COMPONENTES_UPDATE.flatMap((c) => bloqueComponente(c, estado)),
+    ...(vista.componente
+      ? bloqueComponente(vista.componente, estado)
+      : [h("div", { class: "seccion" }, [h("span", { text: "REPOSITORIOS" })]), tarjetaRepos(estado)]),
 
     h("div", { class: "tabla__pie", text:
       "Antes de aplicar, el núcleo nuevo se arranca en otro proceso contra una base vacía, y la web app nueva se compila entera: si algo falla, no se toca nada. " +
@@ -945,7 +1325,7 @@ function bloqueComponente(c, estado) {
       h("span", { text: "RELEASES PUBLICADOS" }),
       h("div", { style: { display: "flex", gap: "10px", alignItems: "center" } }, [
         h("label", { class: "fila-control", style: { cursor: "pointer", fontSize: "12px", fontWeight: "400" } }, [
-          h("input", { type: "checkbox", checked: incluirPrueba, onChange: (e) => { incluirPrueba = e.target.checked; cargarReleases(c, listaReleases, comp); } }),
+          h("input", { type: "checkbox", checked: incluirPruebaGuardado(), onChange: (e) => { guardarIncluirPrueba(e.target.checked); cargarReleases(c, listaReleases, comp); } }),
           h("span", { text: "incluir releases de prueba" }),
         ]),
         h("button", { class: "btn btn--chico", text: "Volver a buscar", onClick: () => cargarReleases(c, listaReleases, comp) }),
@@ -962,7 +1342,8 @@ function bloqueComponente(c, estado) {
           h("button", { class: "btn", text: "Instalar", onClick: (e) => {
             const archivo = input.files && input.files[0];
             if (!archivo) return;
-            instalarRelease(c, { archivo, tag: campoTag.value.trim() }, e.target);
+            aplicarRelease(c, { archivo, tag: campoTag.value.trim() },
+              { boton: e.target, alTerminar: () => dibujarSeccion(seccionPorId("actualizaciones")) });
           } }),
         ]);
       })(),
@@ -971,19 +1352,38 @@ function bloqueComponente(c, estado) {
   ];
 }
 
-async function cargarReleases(c, contenedor, comp) {
+// Cuántos se piden por vez. El repo del núcleo va por la prerelease treinta y
+// pico y cada entrada trae sus notas: traerlas todas para instalar la primera
+// es un payload grande y una lista que nadie lee.
+const RELEASES_POR_PAGINA = 5;
+
+// Qué filas de notas están expandidas, por `<componente>:<tag>` — dos
+// componentes podrían compartir un tag ("v1.0.0") y no son la misma fila.
+// Vive acá y no adentro de `tabla()` porque cada click reconstruye la tabla
+// entera (`dibujarTabla` abajo): si el estado viviera adentro del componente
+// se perdería en esa misma reconstrucción.
+const notasExpandidas = new Set();
+
+async function cargarReleases(c, contenedor, comp, pagina = 1) {
   poner(contenedor, h("div", { class: "tabla__vacia", text: "Buscando releases en GitHub…" }));
-  let releases;
+  let datos;
   try {
-    releases = (await api.releases(c.id, incluirPrueba)).releases || [];
+    datos = await api.releases(c.id, incluirPruebaGuardado(), pagina, RELEASES_POR_PAGINA);
   } catch (e) {
     poner(contenedor, aviso("falta", e.message, (e.errores || []).join(" · ") || null));
     return;
   }
+  const releases = datos.releases || [];
   if (!releases.length) {
-    poner(contenedor, h("div", { class: "tabla__vacia", text: incluirPrueba ? `No hay ningún release publicado en ${comp.repo}.` : "No hay releases finales; sólo de prueba." }));
+    poner(contenedor, h("div", {}, [
+      h("div", { class: "tabla__vacia", text: pagina > 1
+        ? "No hay más releases para mostrar."
+        : (incluirPruebaGuardado() ? `No hay ningún release publicado en ${comp.repo}.` : "No hay releases finales; sólo de prueba.") }),
+      paginador(c, contenedor, comp, pagina, datos.hay_mas),
+    ]));
     return;
   }
+
   const columnas = [
     {
       clave: "tag", label: "Release", ancho: "170px",
@@ -997,83 +1397,67 @@ async function cargarReleases(c, contenedor, comp) {
     },
     { clave: "published_at", label: "Publicado", ancho: "110px", render: (r) => cuandoTexto(r.published_at ? Date.parse(r.published_at) / 1000 : 0) },
     {
+      // Colapsada: la primera línea no vacía, para no traer un changelog
+      // entero a la vista de un vistazo. Un click en la fila la expande y
+      // renderiza el markdown completo (`components/markdown.js`) — no hay
+      // otra forma de leerlo entero sin ir a GitHub.
+      //
+      // `stopPropagation` en el contenido: la fila entera escucha el click
+      // para expandir/colapsar (`alClic`, más abajo), y sin esto abrir un
+      // link de las notas —o simplemente seleccionar un pedazo de texto
+      // para copiarlo— también disparaba el toggle, colapsando la fila en
+      // el medio del gesto. El costo es que clickear el texto ya no expande
+      // por sí solo; para eso queda cualquier otro punto de la fila (el
+      // tag, la fecha), que es donde ya se ve el cursor de "clickeable".
       clave: "body", label: "Notas", envuelve: true,
-      render: (r) => h("div", { style: { fontSize: "12px", whiteSpace: "pre-wrap", maxHeight: "72px", overflow: "hidden" }, title: r.body, text: r.body || "—" }),
+      render: (r) => h("div", { onClick: (e) => e.stopPropagation() }, [
+        notasExpandidas.has(`${c.id}:${r.tag}`)
+          ? renderMarkdown(r.body)
+          : h("div", { style: { fontSize: "12px", color: "var(--texto-3)" }, text: primeraLinea(r.body) || "—" }),
+      ]),
     },
     {
       clave: "acciones", label: "", ancho: "100px",
       render: (r) => h("button", {
         class: "btn btn--chico", text: r.tag === comp.tag ? "Reinstalar" : "Instalar",
-        onClick: (e) => instalarRelease(c, { tag: r.tag }, e.target),
+        // `stopPropagation`: la fila entera también escucha el click para
+        // expandir las notas (`alClic` de acá abajo); sin esto, instalar
+        // también la expandía o la colapsaba de paso.
+        onClick: (e) => { e.stopPropagation(); aplicarRelease(c, { tag: r.tag }, { boton: e.target, alTerminar: () => cargarReleases(c, contenedor, comp, pagina) }); },
       }),
     },
   ];
-  poner(contenedor, tabla(columnas, releases, {}));
+
+  const dibujarTabla = () => poner(contenedor, h("div", {}, [
+    tabla(columnas, releases, {
+      alClic: (r) => {
+        const clave = `${c.id}:${r.tag}`;
+        notasExpandidas.has(clave) ? notasExpandidas.delete(clave) : notasExpandidas.add(clave);
+        dibujarTabla();
+      },
+    }),
+    paginador(c, contenedor, comp, pagina, datos.hay_mas),
+  ]));
+  dibujarTabla();
 }
 
-async function instalarRelease(c, { tag, archivo }, boton) {
-  const etiqueta = tag || (archivo && archivo.name);
-  confirmar({
-    titulo: `Actualizar ${c.que} a ${etiqueta}`,
-    texto: `Se reemplaza ${c.carpeta} entero; el actual queda guardado al lado para poder volver. Ningún run puede estar corriendo mientras se aplica, y después hay que reiniciar la app.`,
-    alConfirmar: async () => {
-      if (boton) { boton.disabled = true; boton.textContent = "Validando…"; }
-      try {
-        const r = archivo ? await api.instalarReleaseArchivo(c.id, archivo, tag || "") : await api.instalarRelease(c.id, tag);
-        mostrarResultadoUpdate(c, r);
-      } catch (e) {
-        abrirModal({
-          titulo: "No se aplicó",
-          sub: e.message,
-          cuerpo: h("pre", { class: "mono", style: { margin: "12px 16px", whiteSpace: "pre-wrap", fontSize: "11.5px" }, text: (e.errores || []).join("\n") || "Sin más detalle." }),
-          acciones: [h("button", { class: "btn", text: "Cerrar", onClick: () => { document.querySelector(".velo")?.remove(); } })],
-        });
-        if (boton) { boton.disabled = false; boton.textContent = "Instalar"; }
-      }
-    },
-  });
-}
-
-function mostrarResultadoUpdate(c, r) {
-  const que = c.que.charAt(0).toUpperCase() + c.que.slice(1);
-  const cuerpo = h("div", { style: { padding: "12px 16px", fontSize: "12.5px", lineHeight: "1.55" } }, [
-    h("div", {}, [`${que} `, h("span", { class: "mono", text: r.applied.tag }), r.core_version ? ` (versión ${r.core_version})` : "", ` copiado en ${c.carpeta}. El anterior quedó guardado al lado.`]),
-    r.new_requirements && r.new_requirements.length
-      ? aviso("falta", "Pide dependencias que el actual no tenía", h("div", { class: "mono", style: { fontSize: "11.5px" }, text: r.new_requirements.join("\n") }))
-      : null,
-    h("div", { style: { marginTop: "8px" } }, [
-      r.can_restart
-        ? "Python ya tiene cargado el código viejo: hasta reiniciar sigue corriendo ese. Reiniciar corta la app unos segundos."
-        : "Python ya tiene cargado el código viejo: hay que reiniciar el proceso a mano para que corra el nuevo.",
-    ]),
+/**
+ * Anterior/siguiente, sin número total de páginas.
+ *
+ * GitHub pagina por cantidad de releases y acá se filtran los borradores y,
+ * si no se piden, las de prueba: no hay un total honesto que mostrar. Decir
+ * "página 2 de 7" sería inventarlo, así que se dice en cuál se está y si hay
+ * algo más atrás.
+ */
+function paginador(c, contenedor, comp, pagina, hayMas) {
+  if (pagina === 1 && !hayMas) return null;
+  return h("div", { style: { display: "flex", gap: "7px", alignItems: "center", padding: "9px 0" } }, [
+    h("button", { class: "btn btn--chico", text: "← Más nuevos", disabled: pagina <= 1,
+                  onClick: () => cargarReleases(c, contenedor, comp, pagina - 1) }),
+    h("span", { style: { fontSize: "11.5px", color: "var(--texto-3)" }, text: `Página ${pagina}` }),
+    h("button", { class: "btn btn--chico", text: "Más viejos →", disabled: !hayMas,
+                  onClick: () => cargarReleases(c, contenedor, comp, pagina + 1) }),
   ]);
-  const { cerrar } = abrirModal({
-    titulo: "Actualización aplicada",
-    sub: "Falta reiniciar.",
-    cuerpo,
-    acciones: [
-      h("button", { class: "btn", text: "Más tarde", onClick: () => { cerrar(); dibujarSeccion(seccionPorId("actualizaciones")); } }),
-      r.can_restart ? h("button", { class: "btn btn--primario", text: "Reiniciar ahora", onClick: () => { cerrar(); reiniciarApp(); } }) : null,
-    ].filter(Boolean),
-  });
-}
-
-/** Pide el reinicio y espera a que el servidor vuelva; después recarga la página entera. */
-async function reiniciarApp() {
-  poner(shell.vista, h("div", { class: "cargando", text: "Reiniciando… la app vuelve sola en unos segundos." }));
-  try { await api.reiniciar(); } catch (e) { /* la conexión se corta justo al reiniciar: es lo esperado */ }
-  const espera = (ms) => new Promise((r) => setTimeout(r, ms));
-  await espera(1500);
-  for (let i = 0; i < 40; i++) {
-    try {
-      await api.actualizaciones();
-      location.hash = "#/config/actualizaciones";
-      location.reload();
-      return;
-    } catch { await espera(1000); }
-  }
-  poner(shell.vista, aviso("error", "La app no volvió",
-    "Si no levanta con lo nuevo, desde una consola en la carpeta del programa: python -m webapp --revertir-nucleo (o --revertir-webapp), y arrancarla de nuevo."));
 }
 
 function revertirComponente(c) {
@@ -1084,7 +1468,8 @@ function revertirComponente(c) {
     alConfirmar: async () => {
       try {
         const r = await api.revertirComponente(c.id);
-        mostrarResultadoUpdate(c, { applied: { tag: r.tag || "anterior al actualizador" }, new_requirements: [], can_restart: r.can_restart });
+        mostrarResultadoUpdate(c, { applied: { tag: r.tag || "anterior al actualizador" }, new_requirements: [], can_restart: r.can_restart },
+          () => dibujarSeccion(seccionPorId("actualizaciones")));
       } catch (e) {
         confirmacion = null;
         poner(shell.vista, aviso("error", "No se pudo volver", e.message));
@@ -1120,10 +1505,38 @@ function cuandoTexto(epoch) {
  * arrancaría, así que esta pantalla puede ser un formulario común y no un
  * campo de minas: lo peor que pasa es que no guarde y diga por qué.
  */
-async function dibujarLimites() {
+const VISTAS_ALCANCE = [
+  { id: "archivos", label: "Archivos", dibujar: dibujarAlcanceArchivos },
+  { id: "programas", label: "Programas", dibujar: dibujarAlcanceProgramas },
+];
+
+async function dibujarLimites(partes = []) {
   const datos = await api.limites();
-  // Se edita una copia: cancelar es volver a dibujar, sin deshacer nada.
-  let raices = (datos.raices || []).map((r) => ({ alias: r.alias, ruta: r.ruta }));
+  const vista = vistaElegida(VISTAS_ALCANCE, partes[0]);
+  return [
+    encabezado("Alcance", [
+      "Hasta dónde llega un flujo en esta máquina: qué carpetas alcanza y qué programas puede correr. " +
+      "Las dos cosas viven en ",
+      h("span", { class: "mono", text: "boot.env" }),
+      ", no en la base —se leen antes de abrirla—, y las hace cumplir el núcleo en el port, " +
+      "antes de que el flujo toque nada.",
+    ]),
+    subVistas(VISTAS_ALCANCE, vista.id, (id) => irA("config", "limites", id)),
+    ...vista.dibujar(datos),
+  ];
+}
+
+function dibujarAlcanceArchivos(datos) {
+  // Se edita una copia: cancelar es volver a dibujar, sin deshacer nada. La
+  // primera fila es siempre la caja de la instalación y no se edita: es la
+  // que resuelve toda ruta relativa, y poder pisarla es cómo una instalación
+  // quedó con `principal=D:` y sin arrancar. Lo que se agrega va debajo.
+  let raices = (datos.raices || []).filter((r) => r.ruta !== datos.por_defecto)
+    .map((r) => ({ alias: r.alias, ruta: r.ruta }));
+  // Sin raíz por defecto la instalación no acota nada, y entonces no hay
+  // ninguna fija: la primera que se agregue pasa a serlo. Poner una fila fija
+  // con una carpeta que no existe dejaba la pantalla sin poder guardar nada.
+  if (datos.por_defecto) raices.unshift({ alias: "principal", ruta: datos.por_defecto, fija: true });
   const hueco = h("div");
   const mensajes = h("div");
 
@@ -1143,25 +1556,28 @@ async function dibujarLimites() {
 
   const fila = (r, i) => {
     const alias = h("input", { class: "entrada entrada--mono", type: "text", value: r.alias,
-                               placeholder: i === 0 ? "(por defecto)" : "nombre corto",
+                               placeholder: "nombre corto", readOnly: Boolean(r.fija),
                                onInput: (e) => { r.alias = e.target.value; } });
     const ruta = h("input", { class: "entrada entrada--mono", type: "text", value: r.ruta,
-                              placeholder: "C:\carpeta o \\servidor\compartido",
+                              placeholder: "C:\\carpeta o \\\\servidor\\compartido", readOnly: Boolean(r.fija),
                               onInput: (e) => { r.ruta = e.target.value; } });
     return h("div", { class: "campo", style: { alignItems: "flex-start" } }, [
       h("div", { class: "campo__etiqueta" }, [
-        h("div", { class: "campo__nombre", text: i === 0 ? "Por defecto" : `Carpeta ${i + 1}` }),
+        h("div", { class: "campo__nombre", text: r.fija ? "Por defecto" : `Carpeta ${i + 1}` }),
+        r.fija ? h("span", { class: "badge", text: "fija" }) : null,
       ]),
       h("div", { class: "campo__control" }, [
         h("div", { style: { display: "flex", gap: "6px" } }, [
           h("div", { style: { flex: "0 0 150px" } }, [alias]),
           h("div", { style: { flex: "1", minWidth: "0" } }, [ruta]),
-          h("button", { class: "btn btn--chico", title: "Quitar esta carpeta",
-                        onClick: () => { raices.splice(i, 1); redibujar(); } },
-            [icono(ICONOS.basura, 11, 2)]),
+          r.fija
+            ? h("span", { style: { flex: "0 0 30px" } })
+            : h("button", { class: "btn btn--chico", title: "Quitar esta carpeta",
+                            onClick: () => { raices.splice(i, 1); redibujar(); } },
+                [icono(ICONOS.basura, 11, 2)]),
         ]),
-        h("div", { class: "campo__ayuda", text: i === 0
-          ? "Es la que resuelve una ruta relativa de un flujo. Puede ir sin nombre."
+        h("div", { class: "campo__ayuda", text: r.fija
+          ? "El workspace de la instalación: resuelve toda ruta relativa de todo flujo. No se cambia; las otras carpetas se agregan debajo."
           : "Un flujo la nombra como " + (r.alias || "nombre") + ":archivo, o con su ruta entera." }),
       ]),
     ]);
@@ -1171,7 +1587,9 @@ async function dibujarLimites() {
     boton.disabled = true;
     poner(mensajes);
     try {
-      const r = await api.guardarRaices(raices);
+      // Sólo lo que esta pantalla edita. La caja la pone el servidor: mandarla
+      // sería pedirle que confíe en un valor que no se puede cambiar acá.
+      const r = await api.guardarRaices(raices.filter((x) => !x.fija));
       poner(mensajes, aviso("ok", "Guardado en boot.env", h("div", {}, [
         h("div", { text: "Se lee al arrancar: hasta que el Bot no reinicie, sigue con las carpetas de antes." }),
         h("div", { style: { marginTop: "7px", display: "flex", gap: "7px", alignItems: "center" } }, [
@@ -1194,11 +1612,10 @@ async function dibujarLimites() {
   redibujar();
 
   return [
-    encabezado("Alcance de archivos", [
+    h("div", { class: "subtitulo", style: { marginBottom: "14px" } }, [
       "Las carpetas que un flujo puede leer y escribir con el port ",
       h("span", { class: "mono", text: "fs" }),
-      ". Fuera de éstas devuelve “ruta fuera del árbol permitido”. Vive en ",
-      h("span", { class: "mono", text: "boot.env" }), ", no en la base: se lee antes de abrirla.",
+      ". Fuera de éstas devuelve “ruta fuera del árbol permitido”.",
     ]),
     consumirConfirmacion(),
     mensajes,
@@ -1206,7 +1623,8 @@ async function dibujarLimites() {
     h("div", { style: { marginTop: "12px", display: "flex", gap: "7px" } }, [
       h("button", { class: "btn btn--primario", text: "Guardar",
                     onClick: (e) => guardar(e.currentTarget) }),
-      h("button", { class: "btn", text: "Descartar", onClick: () => dibujarSeccion(SECCIONES.find((s) => s.id === "limites")) }),
+      h("button", { class: "btn", text: "Descartar",
+                    onClick: () => dibujarSeccion(seccionPorId("limites"), ["archivos"]) }),
     ]),
     h("div", { class: "tabla__pie" }, [
       "La base y la llave (", h("span", { class: "mono", text: datos.data_dir }),
@@ -1215,6 +1633,129 @@ async function dibujarLimites() {
     ]),
   ];
 }
+
+/**
+ * Los programas que un flujo puede correr con el port `process`.
+ *
+ * El modo se elige, no se deduce de la lista. En el archivo los tres estados
+ * se escriben parecido —la clave ausente, presente y vacía, o con nombres— y
+ * los dos primeros son opuestos: "cualquiera" y "ninguno". Una instalación
+ * nace en "ninguno", así que quien opera ve `PortError: 'tasklist' no está en
+ * la lista` adentro de un run y parece un problema del flujo. Un campo de
+ * texto que al vaciarse cambia de significado repetiría esa trampa en la
+ * pantalla.
+ */
+function dibujarAlcanceProgramas(datos) {
+  const p = datos.programas || { modo: "ninguno", ejecutables: [] };
+  let modo = p.modo;
+  let nombres = (p.ejecutables || []).map((e) => e.nombre);
+  const hueco = h("div");
+  const mensajes = h("div");
+
+  const OPCIONES = [
+    { id: "ninguno", titulo: "Ningún programa",
+      ayuda: "Lo más acotado. Es como nace una instalación: cualquier nodo que corra algo falla." },
+    { id: "lista", titulo: "Sólo estos programas",
+      ayuda: "Lo habitual. Se compara por el nombre del ejecutable, sin ruta ni extensión: " +
+             "Toothform.exe, toothform y TOOTHFORM son el mismo." },
+    { id: "cualquiera", titulo: "Cualquier programa",
+      ayuda: "Sin límite: un flujo puede correr lo que quiera en esta máquina. Para una instalación de desarrollo." },
+  ];
+
+  const redibujar = () => poner(hueco, cuerpo());
+
+  const cuerpo = () => h("div", {}, [
+    h("div", { class: "tarjeta", style: { padding: "6px 16px 14px" } }, OPCIONES.map((o) => {
+      const radio = h("input", { type: "radio", name: "modo-programas", checked: modo === o.id,
+                                 onChange: () => { modo = o.id; redibujar(); } });
+      return h("div", { class: "campo", style: { alignItems: "flex-start" } }, [
+        h("div", { class: "campo__etiqueta" }, [
+          h("label", { class: "fila-control", style: { cursor: "pointer" } },
+            [radio, h("span", { class: "campo__nombre", text: o.titulo })]),
+        ]),
+        h("div", { class: "campo__control" }, [
+          h("div", { class: "campo__ayuda", style: { marginTop: "3px" }, text: o.ayuda }),
+          o.id === "lista" && modo === "lista" ? listaDeProgramas() : null,
+        ]),
+      ]);
+    })),
+  ]);
+
+  const listaDeProgramas = () => h("div", { style: { marginTop: "9px" } }, [
+    ...nombres.map((nombre, i) => {
+      const entrada = h("input", { class: "entrada entrada--mono", type: "text", value: nombre,
+                                   placeholder: "tasklist",
+                                   onInput: (e) => { nombres[i] = e.target.value; } });
+      const estado = (p.ejecutables || []).find((e) => e.nombre === nombre);
+      return h("div", { style: { display: "flex", gap: "6px", alignItems: "center", marginBottom: "5px" } }, [
+        h("div", { style: { flex: "1", minWidth: "0" } }, [entrada]),
+        // Que no esté en la máquina no impide guardar: se puede configurar
+        // antes de instalar el programa. Sólo se dice.
+        estado && !estado.existe
+          ? h("span", { class: "badge badge--falta", title: "No se encontró en el PATH de esta máquina", text: "no está" })
+          : h("span", { style: { flex: "0 0 52px" } }),
+        h("button", { class: "btn btn--chico", title: "Quitar este programa",
+                      onClick: () => { nombres.splice(i, 1); redibujar(); } },
+          [icono(ICONOS.basura, 11, 2)]),
+      ]);
+    }),
+    nombres.length ? null : h("div", { class: "campo__ayuda", text: "Todavía no hay ninguno." }),
+    h("button", { class: "btn btn--chico", style: { marginTop: "4px" }, text: "+ Programa",
+                  onClick: () => { nombres.push(""); redibujar(); } }),
+  ]);
+
+  const guardar = async (boton) => {
+    boton.disabled = true;
+    poner(mensajes);
+    try {
+      const r = await api.guardarProgramas(modo, nombres);
+      poner(mensajes, aviso("ok", "Guardado en boot.env", h("div", {}, [
+        h("div", { text: "Se lee al arrancar: hasta que el Bot no reinicie, sigue con lo de antes." }),
+        ...(r.avisos || []).map((a) => h("div", { class: "campo__ayuda", style: { margin: "4px 0 0" }, text: a })),
+        h("div", { style: { marginTop: "7px", display: "flex", gap: "7px", alignItems: "center" } }, [
+          h("button", { class: "btn btn--primario btn--chico", text: "Reiniciar ahora",
+                        onClick: () => reiniciarApp() }),
+          h("span", { class: "campo__ayuda", style: { margin: "0" }, text: `Copia de lo anterior en ${r.respaldo}` }),
+        ]),
+      ])));
+    } catch (e) {
+      poner(mensajes, aviso("error", e.message || "No se pudo guardar",
+        h("div", {}, (e.errores || []).map((d) => h("div", { text: `· ${d}` })))));
+    }
+    boton.disabled = false;
+  };
+
+  redibujar();
+
+  return [
+    h("div", { class: "subtitulo", style: { marginBottom: "14px" } }, [
+      "Los ejecutables que un flujo puede correr con el port ",
+      h("span", { class: "mono", text: "process" }),
+      ". Fuera de éstos devuelve “no está en la lista de comandos permitidos”.",
+    ]),
+    consumirConfirmacion(),
+    // Lo guardado todavía no rige: el proceso arrancó con lo otro. Decirlo
+    // acá evita que alguien lo guarde dos veces creyendo que no tomó.
+    p.pendiente
+      ? aviso("falta", "Hay un cambio guardado que todavía no rige",
+              `Ahora mismo vale “${rotuloModo(p.modo)}”; al reiniciar pasa a “${rotuloModo((p.escrito || {}).modo)}”.`)
+      : null,
+    mensajes,
+    hueco,
+    h("div", { style: { marginTop: "12px", display: "flex", gap: "7px" } }, [
+      h("button", { class: "btn btn--primario", text: "Guardar",
+                    onClick: (e) => guardar(e.currentTarget) }),
+      h("button", { class: "btn", text: "Descartar",
+                    onClick: () => dibujarSeccion(seccionPorId("limites"), ["programas"]) }),
+    ]),
+    h("div", { class: "tabla__pie", text:
+      "El instalador deja una instalación nueva sin ningún programa permitido, a propósito: " +
+      "es lo más acotado que el núcleo permite expresar." }),
+  ];
+}
+
+const ROTULOS_MODO = { cualquiera: "cualquier programa", ninguno: "ningún programa", lista: "sólo algunos" };
+const rotuloModo = (m) => ROTULOS_MODO[m] || m || "—";
 
 // ── Diagnóstico ─────────────────────────────────────────────────────────
 
@@ -1264,8 +1805,10 @@ async function dibujarDiagnostico() {
       : aviso("ok", "Todo en orden", null),
     h("div", { class: "seccion" }, [
       h("span", { text: "CHEQUEOS" }),
+      // Por id y no por índice: con el índice esto redibujaba Alcance, que es
+      // la sección que quedó en esa posición, y el botón parecía no hacer nada.
       h("button", { class: "btn", text: "Volver a chequear",
-                    onClick: () => dibujarSeccion(SECCIONES[2]) }),
+                    onClick: () => dibujarSeccion(seccionPorId("diagnostico")) }),
     ]),
     tabla(columnas, checks, { vacio: "El diagnóstico no devolvió ningún chequeo." }),
   ];

@@ -13,19 +13,36 @@ capaz de dejar la instalación sin levantar, con el error en una consola que
 nadie mira. Por eso la validación de acá corre **antes** de escribir y no
 después: si el conjunto nuevo no arranca, no se guarda.
 
+Programas, además de archivos
+-----------------------------
+
+`process_allowlist` es el otro límite de la misma familia: no qué carpetas
+alcanza un flujo, sino qué ejecutables puede correr por el port `process`.
+Vive en el mismo archivo y lo hace cumplir el mismo núcleo, pero no estaba en
+ninguna pantalla, así que autorizar `tasklist` en una máquina nueva era volver
+al bloc de notas — y el error que ve quien opera es un `PortError` adentro de
+un run, que parece un problema del flujo.
+
+Tiene **tres** estados y el del medio es el que confunde: la clave ausente es
+"cualquier ejecutable", la clave presente y vacía es "ninguno", y con nombres
+es "sólo ésos". Una instalación nace en "ninguno" (el wizard lo escribe así a
+propósito), así que la pantalla tiene que decir en cuál está y no dejar que
+"vacío" signifique dos cosas.
+
 Qué se puede tocar y qué no
 ---------------------------
 
-Sólo las raíces de archivos. `storage`, `plugins_dir` y `default_actor`
+Las raíces de archivos y los ejecutables permitidos. `storage`, `plugins_dir`
+y `default_actor`
 deciden dónde vive la base, de dónde se carga código y quién ejecuta: son de
 la máquina, cambiarlos desde el navegador es otra conversación y ninguna de
 las tres la pide esta pantalla. Se devuelven para mostrar, no para escribir.
 
-Lo que esta capa garantiza, y el núcleo no puede garantizar solo, es que una
-raíz nueva no se trague `data/` ni `plugins/`. El núcleo ya rechaza el
-solapamiento con `plugins_dir`, pero `data/` —la base y la llave de cifrado—
-no es un valor declarado en `boot.env` cuando se usa el default, así que el
-chequeo tiene que estar acá.
+Una raíz que contenga la instalación ya no se rechaza: desde core#26 el port
+`fs` niega la carpeta de la instalación —la base, la llave, los plugins y el
+propio `boot.env`— venga de donde venga la raíz. Antes había que prohibirla
+acá, y eso obligaba a enumerar carpeta por carpeta para usar una unidad
+entera.
 """
 
 from __future__ import annotations
@@ -44,8 +61,9 @@ PROHIBIDOS_EN_ALIAS = (",", "=", ":")
 # carpetas: lo que se pisa es la configuración que hoy arranca.
 RESPALDO = "boot.env.anterior"
 
-# El nombre que se le pone a la raíz por defecto cuando hay varias y quien la
-# cargó no le puso ninguno. Ver el comentario en `guardar`.
+# La raíz por defecto: `workspace/` de la instalación, la caja que creó el
+# wizard (`installer/source/pasos.py`, CAJA). No se edita desde la pantalla.
+CAJA = "workspace"
 PRIMERA_POR_DEFECTO = "principal"
 
 
@@ -55,6 +73,29 @@ class LimitesError(Exception):
     def __init__(self, mensaje: str, detalle: list[str] | None = None) -> None:
         super().__init__(mensaje)
         self.detalle = detalle or []
+
+
+def por_defecto(instance, root: Path) -> str | None:
+    """
+    La raíz que hoy resuelve las rutas relativas, y que esta pantalla no deja
+    cambiar.
+
+    Se toma de lo que la instalación **tiene configurado**, no de una regla:
+    asumir `<root>/workspace` dejaba la pantalla inservible cuando esa carpeta
+    no existe —pasó con una raíz que resolvió a la carpeta del programa—,
+    porque la única fila que no se puede editar era también la que impedía
+    guardar. `workspace/` es sólo el default para una instalación que todavía
+    no declaró ninguna.
+
+    `None` = esta instalación no acota nada (un flujo llega a todo el disco).
+    Es un estado legítimo, y entonces no hay raíz fija: la primera que se
+    agregue pasa a serlo.
+    """
+    actuales = getattr(instance.boot, "fs_roots_efectivos", None) or {}
+    if actuales:
+        return next(iter(actuales.values()))
+    caja = Path(root) / CAJA
+    return str(caja) if caja.is_dir() else None
 
 
 def leer(instance, root: Path) -> dict:
@@ -71,13 +112,123 @@ def leer(instance, root: Path) -> dict:
         # que poder decirlo en vez de mostrar una lista vacía.
         "sin_limite": not raices,
         "root": str(root),
+        # La que la pantalla muestra fija en la primera fila. `None` cuando la
+        # instalación no acota nada: ahí no hay ninguna fija todavía.
+        "por_defecto": por_defecto(instance, root),
         "data_dir": str(instance.data_dir),
         "plugins_dir": str(cfg.plugins_dir) if cfg.plugins_dir else None,
         "archivo": str(root / boot.ARCHIVO),
         # `fs_roots` es de v0.3.1-beta.3 en adelante; contra un núcleo viejo
         # la pantalla ofrece una sola raíz y lo dice.
         "varias_raices": hasattr(cfg, "fs_roots_efectivos"),
+        "programas": programas(instance, root),
     }
+
+
+# Los tres estados de `process_allowlist`, nombrados. La pantalla elige uno:
+# un campo de texto vacío no alcanza, porque vacío y ausente son lo contrario
+# entre sí.
+CUALQUIERA = "cualquiera"
+NINGUNO = "ninguno"
+LISTA = "lista"
+MODOS = (CUALQUIERA, NINGUNO, LISTA)
+
+
+def _estado_de(allowlist) -> dict:
+    """Uno de los tres estados, con los nombres tal como se escribieron.
+
+    El núcleo compara por `Path(x).stem.lower()` en las dos puntas, así que
+    `Toothform.exe`, `toothform` y `TOOTHFORM` son el mismo programa; se
+    devuelve lo escrito tal cual, que es lo que alguien reconoce al leerlo.
+    """
+    if allowlist is None:
+        modo = CUALQUIERA
+    elif not allowlist:
+        modo = NINGUNO
+    else:
+        modo = LISTA
+    return {
+        "modo": modo,
+        "ejecutables": [
+            {"nombre": n, "existe": shutil.which(n) is not None} for n in (allowlist or ())
+        ],
+    }
+
+
+def programas(instance, root: Path) -> dict:
+    """
+    Qué ejecutables puede correr un flujo: lo que rige y lo que va a regir.
+
+    Son dos cosas distintas y confundirlas hace que guardar parezca no haber
+    hecho nada. `instance.boot` es la configuración con la que **arrancó** este
+    proceso; `boot.env` es lo que va a leer el próximo. Entre guardar y
+    reiniciar difieren, y la pantalla tiene que poder decirlo en vez de
+    redibujarse con el valor viejo como si el guardado se hubiera perdido.
+    """
+    vigente = _estado_de(instance.boot.process_allowlist)
+    escrito = _estado_de(boot.load(root, {}).process_allowlist)
+    return {
+        **vigente,
+        "escrito": escrito,
+        # Hay algo guardado que todavía no rige: falta reiniciar.
+        "pendiente": escrito != vigente,
+    }
+
+
+def guardar_programas(instance, root: Path, modo: str, ejecutables: list[str]) -> dict:
+    """
+    Escribe `process_allowlist`. El modo es explícito, no se deduce de la lista.
+
+    Deducirlo sería repetir la trampa del archivo: alguien borra el último
+    nombre esperando "ya no hace falta la lista" y lo que queda escrito es
+    "ningún programa", que es lo más restrictivo. Acá el modo se elige y la
+    lista sólo importa cuando es `lista`.
+
+    Que un ejecutable no esté en esta máquina **no** impide guardar: se avisa.
+    Una instalación se puede configurar antes de instalar el programa que va a
+    correr, y el núcleo lo trata igual (`boot.validar` lo reporta sin ser
+    fatal).
+    """
+    if modo not in MODOS:
+        raise LimitesError("No se pudo guardar.", [f"'{modo}' no es un modo conocido."])
+
+    nombres: tuple[str, ...] = ()
+    if modo == LISTA:
+        problemas = []
+        vistos: dict[str, str] = {}
+        limpios = []
+        for crudo in ejecutables or []:
+            nombre = (crudo or "").strip()
+            if not nombre:
+                continue
+            # La coma separa los nombres en el archivo; uno con coma adentro
+            # se releería como dos, y ninguno de los dos existiría.
+            if "," in nombre:
+                problemas.append(f'"{nombre}": un nombre de programa no puede llevar una coma.')
+                continue
+            clave = Path(nombre).stem.lower()
+            if clave in vistos:
+                problemas.append(f'"{nombre}" y "{vistos[clave]}" son el mismo programa para el núcleo.')
+                continue
+            vistos[clave] = nombre
+            limpios.append(nombre)
+        if problemas:
+            raise LimitesError("Los programas no se pueden guardar así.", problemas)
+        if not limpios:
+            raise LimitesError("Los programas no se pueden guardar así.", [
+                'Con "sólo estos programas" hace falta al menos uno. '
+                'Para no permitir ninguno, elegí esa opción.'
+            ])
+        nombres = tuple(limpios)
+
+    nuevo = dataclasses.replace(
+        instance.boot, process_allowlist=None if modo == CUALQUIERA else nombres
+    )
+    if impiden := boot.fatal(nuevo):
+        raise LimitesError("Con esos programas la instalación no arrancaría.", impiden)
+
+    escrito = _escribir(root, nuevo)
+    return {"programas": programas(instance, root), **escrito}
 
 
 def normalizar(raices: list[dict]) -> list[tuple[str, str]]:
@@ -126,17 +277,18 @@ def normalizar(raices: list[dict]) -> list[tuple[str, str]]:
     return salida
 
 
-def revisar(pares: list[tuple[str, str]], *, root: Path, data_dir: Path,
-            plugins_dir: Path | None) -> list[str]:
+def revisar(pares: list[tuple[str, str]], *, root: Path) -> list[str]:
     """
     Lo que hay que mirar sobre el disco, antes de escribir nada.
 
     Devuelve los problemas; vacío es "se puede guardar".
     """
+    # Ya no se rechaza una raíz por contener la instalación: desde core#26 el
+    # port `fs` niega la carpeta de la instalación —la base, la llave, los
+    # plugins y el propio `boot.env`— venga de donde venga la raíz. Así una
+    # unidad entera es una raíz legítima sin entregar nada de eso, que es lo
+    # que obligaba a enumerar carpeta por carpeta.
     problemas: list[str] = []
-    protegidas = [("la base y la llave", Path(data_dir))]
-    if plugins_dir:
-        protegidas.append(("los plugins", Path(plugins_dir)))
 
     for alias, ruta in pares:
         nombre = f'"{alias}"' if alias else "la raíz por defecto"
@@ -179,24 +331,6 @@ def revisar(pares: list[tuple[str, str]], *, root: Path, data_dir: Path,
             problemas.append(f"{nombre}: no se pudo leer {ruta} ({exc.strerror or exc}).")
             continue
 
-        for que, protegida in protegidas:
-            try:
-                prot = protegida.resolve()
-            except OSError:
-                continue
-            if prot == resuelta or prot.is_relative_to(resuelta):
-                # Con la salida escrita: quien pone `D:\` quiere llegar a
-                # carpetas de esa unidad, y lo que hace falta decirle es que
-                # eso se consigue nombrándolas. Sin esto, la vuelta fue probar
-                # `D:` sin la barra, que pasaba y dejaba la instalación sin
-                # arrancar.
-                problemas.append(
-                    f"{nombre}: {ruta} contiene {que} ({prot}), así que no puede ser una raíz: "
-                    f"un flujo con permiso de archivos las alcanzaría. Para llegar a otras carpetas "
-                    f"de esa unidad, agregá cada una por su ruta (por ejemplo {resuelta.drive}\\Casos), "
-                    f"no la unidad entera."
-                )
-
     return problemas
 
 
@@ -212,29 +346,44 @@ def guardar(instance, root: Path, raices: list[dict]) -> dict:
     pares = normalizar(raices)
     cfg = instance.boot
 
-    if problemas := revisar(pares, root=root, data_dir=Path(instance.data_dir),
-                            plugins_dir=Path(cfg.plugins_dir) if cfg.plugins_dir else None):
+    # La raíz por defecto no se edita: es la que resuelve toda ruta relativa de
+    # todo flujo, así que cambiarla no rompe una carpeta, rompe en silencio
+    # todo lo escrito hasta ahí. Poder pisarla desde la pantalla es cómo una
+    # instalación quedó con `principal=D:` y sin arrancar. Lo que llegue en esa
+    # fila —de sólo lectura— se ignora, y lo agregado va siempre después.
+    actual = por_defecto(instance, root)
+    if actual is not None:
+        fija = (PRIMERA_POR_DEFECTO, actual)
+        # Sin alias no se conserva nada: la única raíz que puede ir sin nombre
+        # es la fija, y ésa la pone esta función.
+        extras = [(a, r) for a, r in pares if a and r != actual]
+        if any(a == PRIMERA_POR_DEFECTO for a, _ in extras):
+            # Nunca lo manda la pantalla —esa fila es de sólo lectura—, así que
+            # llegó de otro lado: se dice, no se reemplaza en silencio.
+            raise LimitesError("Las raíces no se pueden guardar así.", [
+                f'"{PRIMERA_POR_DEFECTO}" es la raíz por defecto ({actual}) y no se cambia. '
+                f"Las otras carpetas van con otro nombre, debajo."
+            ])
+        pares = [fija, *extras]
+    elif len(pares) > 1:
+        # Sin raíz previa, la primera que se agregue pasa a ser la de por
+        # defecto, y desde el guardado siguiente ya no se podrá cambiar.
+        pares = [(pares[0][0] or PRIMERA_POR_DEFECTO, pares[0][1]), *pares[1:]]
+
+    if problemas := revisar(pares, root=root):
         raise LimitesError("Las raíces no se pueden guardar así.", problemas)
 
-    # Una sola raíz sin alias se escribe como el `fs_root` de siempre: el
-    # archivo más simple posible para el caso más común, y una instalación que
-    # nunca necesitó alias no empieza a hablar de ellos.
-    if len(pares) == 1 and not pares[0][0]:
+    # Sólo la caja: se escribe como el `fs_root` de siempre, el archivo más
+    # simple para el caso más común, y una instalación que nunca necesitó
+    # alias no empieza a hablar de ellos. Con más raíces, `fs_roots` con la
+    # primera **nombrada**: el alias vacío se escribe `fs_roots==ruta` y un
+    # núcleo anterior a v0.3.1-beta.4 descarta ese par al releer —la
+    # instalación arrancaba con una raíz de menos y la segunda pasaba a
+    # resolver las rutas relativas, sin un solo error—. La app y el núcleo se
+    # actualizan por separado, así que no se da por sentado cuál está abajo.
+    if len(pares) == 1:
         nuevo = dataclasses.replace(cfg, fs_root=pares[0][1], fs_roots=None)
-    elif not pares:
-        nuevo = dataclasses.replace(cfg, fs_root=None, fs_roots=None)
     else:
-        # Con varias raíces, la primera se guarda **con nombre** aunque quien
-        # la cargó no le haya puesto uno. El alias vacío se escribe como
-        # `fs_roots==ruta`, y un núcleo anterior a v0.3.1-beta.4 descarta ese
-        # par al releer: la instalación arrancaba con una raíz de menos y la
-        # segunda pasaba a resolver las rutas relativas, sin un solo error. La
-        # app y el núcleo se actualizan por separado, así que no se puede dar
-        # por sentado cuál está abajo. Nombrarla no cambia nada para los
-        # flujos —la primera resuelve las rutas relativas se llame como se
-        # llame— y saca al archivo de esa dependencia.
-        alias_primero = pares[0][0] or PRIMERA_POR_DEFECTO
-        pares = [(alias_primero, pares[0][1]), *pares[1:]]
         nuevo = dataclasses.replace(cfg, fs_root=None, fs_roots={a: r for a, r in pares})
 
     # La última red: lo que el núcleo no dejaría arrancar no se guarda. Sin
@@ -243,6 +392,17 @@ def guardar(instance, root: Path, raices: list[dict]) -> dict:
     if impiden := boot.fatal(nuevo):
         raise LimitesError("Con esas raíces la instalación no arrancaría.", impiden)
 
+    return {"raices": [{"alias": a, "ruta": r} for a, r in pares], **_escribir(root, nuevo)}
+
+
+def _escribir(root: Path, nuevo) -> dict:
+    """
+    Deja el `boot.env` nuevo y la copia de lo anterior al lado.
+
+    Lo comparten las dos mitades de la pantalla: el archivo se regenera entero
+    con `boot.render` —lo mismo que hace `python -m backend.core config`—, así
+    que guardar los programas no puede perder las raíces ni al revés.
+    """
     archivo = root / boot.ARCHIVO
     if archivo.is_file():
         shutil.copy2(archivo, root / RESPALDO)
@@ -251,11 +411,10 @@ def guardar(instance, root: Path, raices: list[dict]) -> dict:
     archivo.write_text(boot.render(nuevo), encoding="utf-8-sig")
 
     return {
-        "raices": [{"alias": a, "ruta": r} for a, r in pares],
         "archivo": str(archivo),
         "respaldo": str(root / RESPALDO),
         # Se lee al construir la instancia: hasta que no reinicie, el Bot sigue
-        # con las raíces viejas, y decirlo es la mitad de la pantalla.
+        # con lo de antes, y decirlo es la mitad de la pantalla.
         "restart_required": True,
         "avisos": boot.validar(nuevo),
     }

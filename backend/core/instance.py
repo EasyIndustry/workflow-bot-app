@@ -20,9 +20,12 @@ plugins se descubrieran antes de atar los adapters, todos serían rechazados.
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import boot as bootstrap
 from .config import ConfigStore
@@ -37,6 +40,9 @@ from .resources import ResourceError, TableStore, store_for
 from .schema import MIGRATIONS, SCHEMA
 from .stores import RunStore, StoreError, WorkflowStore
 from .users import RunPolicy, UserError, UserStore
+
+
+log = logging.getLogger(__name__)
 
 
 class WorkflowNotFound(StoreError):
@@ -193,6 +199,9 @@ class Instance:
     def check_graph(self, graph: FlowGraph) -> list[Diagnostic]:
         """Diagnósticos de un grafo contra los tools realmente instalados."""
         extra: list[Diagnostic] = []
+        # nodo de acción → su manifest, para el chequeo de {NODO.salida} de
+        # más abajo (issue #30). Sólo lo tienen los nodos con tool resuelto.
+        manifests: dict[str, Any] = {}
 
         for node_id, node in graph.action_nodes():
             # Las nativas las resuelve el motor: no están en el registro y no
@@ -214,6 +223,7 @@ class Instance:
             manifest = self.registry.manifest(tool_id)
             if manifest is None:
                 continue
+            manifests[node_id] = manifest
             # Un param que el tool no declara se ignora en silencio al
             # ejecutar. Decirlo acá evita el "puse el parámetro y no hace nada".
             if not manifest.extra_params:
@@ -237,6 +247,46 @@ class Instance:
                         node.line,
                         node_id,
                     ))
+
+        # Issue #30: `{NODO.salida}` referencia el id de un nodo anterior, no
+        # un output plano cualquiera -- eso ya lo resuelve RunContext con un
+        # `{objeto.campo}` normal. Acá se valida la parte que un `.resolve()`
+        # en tiempo de ejecución no puede: que NODO exista como nodo de
+        # acción, que corra antes (directa o transitivamente) del nodo que lo
+        # usa, y -si el tool no declara `extra_outputs`- que la salida sea una
+        # que ese tool realmente deja.
+        ancestros: dict[str, set[str]] = {}
+        ids_de_accion = {nid for nid, _ in graph.action_nodes()}
+        for node_id, node in graph.action_nodes():
+            for clave, crudo in node.params.items():
+                if not isinstance(crudo, str):
+                    continue
+                for expr in _VAR_RE.findall(crudo):
+                    parts = expr.split(".")
+                    if len(parts) < 2 or parts[0] not in ids_de_accion:
+                        continue  # no es {NODO.salida} -- {objeto.campo} normal
+                    ref_id, salida = parts[0], parts[1]
+                    if node_id not in ancestros:
+                        ancestros[node_id] = _ancestors(graph, node_id)
+                    if ref_id not in ancestros[node_id]:
+                        extra.append(Diagnostic(
+                            Severity.ERROR,
+                            f'"{clave}" en "{node_id}" referencia a "{ref_id}", '
+                            "que no corre antes en el flujo.",
+                            node.line,
+                            node_id,
+                        ))
+                        continue
+                    ref_manifest = manifests.get(ref_id)
+                    if ref_manifest is not None and not ref_manifest.extra_outputs:
+                        declaradas = {o.name for o in ref_manifest.outputs}
+                        if salida not in declaradas:
+                            extra.append(Diagnostic(
+                                Severity.WARNING,
+                                f'"{ref_id}" no declara la salida "{salida}".',
+                                node.line,
+                                node_id,
+                            ))
 
         return extra
 
@@ -339,6 +389,68 @@ class Instance:
         if definicion is None:
             raise ResourceError(f'no hay una colección "{collection}" en el plugin "{plugin}"')
         self.resource_store(plugin, definicion).delete(key)
+
+    def describe_extra_params(self, tool_id: str, node_params: dict) -> list[dict]:
+        """
+        Los params extra que un tool con `extra_params=True` puede ofrecer,
+        dados los params que el nodo ya eligió (issue #27).
+
+        El caso: `connections.llamar` acepta cualquier `{variable}` de más
+        —lo que la Action elegida use en su url, headers y payload—, y hasta
+        ahora la única forma de saber cuáles eran era abrir la pantalla del
+        plugin y copiarlas a mano. Un tool que sabe describirse a sí mismo
+        (`Tool.describe_extra_params`, optativo) recibe acá los params ya
+        elegidos y un lector de sólo lectura sobre las colecciones del
+        **mismo** plugin, y devuelve qué otros params tienen sentido.
+
+        Vacío si el tool no lo declara (la mayoría), si no existe, o si el
+        manifest no marca `extra_params=True` — describir extras de un tool
+        que los descarta sería mostrar campos que después no llegarían a
+        ningún lado. Cualquier excepción del lado del plugin se traga y
+        vuelve vacío: esto corre mientras alguien edita un flujo, no en un
+        run, y no tiene sentido tumbar la pantalla por un describer roto.
+        """
+        manifest = self.registry.manifest(tool_id)
+        if manifest is None or not manifest.extra_params:
+            return []
+        tool = self.registry.get(tool_id)
+        describir = getattr(tool, "describe_extra_params", None)
+        if not callable(describir):
+            return []
+        dueño = self.registry.plugin_of(tool_id)
+        if dueño is None:
+            return []
+        try:
+            params = describir(dict(node_params), self._lector_de_items(dueño.name))
+            return [p.to_dict() for p in params]
+        except Exception:
+            log.exception("describe_extra_params de %s falló", tool_id)
+            return []
+
+    def _lector_de_items(self, plugin: str):
+        """
+        `leer_item(coleccion, clave, key_field="name")` ligado a un plugin,
+        para `describe_extra_params` (issue #27).
+
+        Mismo shape que `ToolContext.resource`, pero sobre
+        `resource_items_masked`: nunca ve el valor de un campo `secret`. Este
+        lector corre mientras se edita un flujo, no en un run -- no hay
+        `{env.CLAVE}` que resolver ni motivo para que el plugin vea un
+        secreto acá.
+        """
+
+        def leer(coleccion: str, clave: str, key_field: str = "name") -> dict | None:
+            objetivo = (clave or "").strip()
+            return next(
+                (
+                    i
+                    for i in self.resource_items_masked(plugin, coleccion)
+                    if str(i.get(key_field, "")) == objetivo
+                ),
+                None,
+            )
+
+        return leer
 
     # ── Ejecución ───────────────────────────────────────────────────────
 
@@ -726,6 +838,7 @@ class Instance:
                 "folder": wf.folder,
                 "enabled": wf.state != "disabled",
                 "description": wf.description,
+                "source": wf.source,
                 "tools": sorted({node.fn for _, node in graph.action_nodes()}),
             })
 
@@ -860,11 +973,18 @@ def _default_adapters(boot: bootstrap.BootConfig) -> dict:
     Se pasa `fs_roots_efectivos` y no los dos campos crudos: es la propiedad
     de `BootConfig` que ya resolvió la precedencia entre `fs_root` singular y
     `fs_roots` (issue #23), así que acá no hace falta repetirla.
+
+    `fs_denied` (issue #26) se arma acá siempre, no es algo que `boot.env`
+    declare: es lo que le permite a una instalación usar una raíz que la
+    contenga entera (`fs_root=D:\\` con la instalación en `D:\\User\\Bot`) sin
+    exponer su propia carpeta. Una protección que se puede olvidar de
+    configurar no protege.
     """
     from backend.adapters import build_default_adapters
 
     return build_default_adapters(
         fs_roots=boot.fs_roots_efectivos or None,
+        fs_denied=_fs_denied(boot),
         http_timeout=boot.http_timeout,
         # `is not None`: la allowlist vacía es "ningún ejecutable", y colapsarla
         # a `None` acá desharía, en el último tramo, lo que declaró el arranque.
@@ -872,6 +992,20 @@ def _default_adapters(boot: bootstrap.BootConfig) -> dict:
             list(boot.process_allowlist) if boot.process_allowlist is not None else None
         ),
     )
+
+
+def _fs_denied(boot: bootstrap.BootConfig) -> list[str]:
+    """
+    Lo que un flujo con el port `fs` nunca alcanza, sin importar qué raíz
+    declare (issue #26): la base y la llave (`data_dir`), el código que se
+    carga (`plugins_dir`, si está declarado) y `boot.env`, que declara los
+    límites mismos -un flujo que lo alcanzara podría reescribirlos y
+    reiniciar la instalación sin ellos.
+    """
+    denegadas = [str(boot.data_dir), str(boot.root / bootstrap.ARCHIVO)]
+    if boot.plugins_dir is not None:
+        denegadas.append(str(boot.plugins_dir))
+    return denegadas
 
 
 def _default_crypto(data_dir: Path) -> CryptoPort:
@@ -1017,6 +1151,25 @@ def _parecidos(nombre: str, disponibles: list[str], maximo: int = 2) -> list[str
     import difflib
 
     return [f'"{c}"' for c in difflib.get_close_matches(nombre, disponibles, n=maximo, cutoff=0.6)]
+
+
+# {nombre}, {NODO.salida} -- mismo patrón que RunContext, para encontrar en
+# check_graph las referencias calificadas por nodo del issue #30 sin correr
+# nada.
+_VAR_RE = re.compile(r"\{([\w.]+)\}")
+
+
+def _ancestors(graph: FlowGraph, node_id: str) -> set[str]:
+    """Ids que corren antes de `node_id`, siguiendo las aristas hacia atrás."""
+    seen: set[str] = set()
+    pending = [e.from_ for e in graph.in_edges(node_id)]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        pending.extend(e.from_ for e in graph.in_edges(current))
+    return seen
 
 
 __all__ = ["Instance", "WorkflowNotFound"]

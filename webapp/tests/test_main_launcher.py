@@ -200,3 +200,167 @@ def test_un_ejecutable_que_ya_se_llama_bot_no_se_vuelve_a_copiar(tmp_path, monke
     monkeypatch.setattr(lanzador.sys, "executable", str(propio))
 
     assert lanzador.ejecutable_propio() == str(propio)
+
+
+# ── Puerto ocupado: buscar otro, salvo que sea el Bot de esta misma instalación ──
+
+
+def test_el_siguiente_puerto_libre_saltea_al_que_tiene_un_servidor():
+    import socket
+
+    with socket.socket() as servidor:
+        servidor.bind(("127.0.0.1", 0))
+        servidor.listen(1)
+        ocupado = servidor.getsockname()[1]
+        elegido = lanzador._siguiente_puerto_libre(ocupado, cuantos=5)
+        assert elegido is not None and elegido != ocupado and ocupado < elegido < ocupado + 5
+
+
+def test_sin_rango_libre_no_devuelve_nada(monkeypatch):
+    monkeypatch.setattr(lanzador, "_puerto_libre", lambda p: False)
+    assert lanzador._siguiente_puerto_libre(8001, cuantos=3) is None
+
+
+def _puerto_ocupado_por(monkeypatch, raiz_del_otro, quien=None):
+    """El 8000 está tomado; `raiz_del_otro` dice por quién (None: otro programa, salvo que `quien` diga otra cosa)."""
+    monkeypatch.setattr(lanzador, "_puerto_libre", lambda p: p != 8000)
+    monkeypatch.setattr(lanzador, "_esperar_puerto_libre", lambda p, *a: p != 8000)
+    respuesta = (quien or ("bot" if raiz_del_otro is not None else "otro"), raiz_del_otro)
+    monkeypatch.setattr(lanzador, "_quien_escucha", lambda url: respuesta)
+    monkeypatch.setattr(lanzador, "_siguiente_puerto_libre", lambda desde, *a: desde)
+    monkeypatch.setattr(lanzador, "ESPERA_DESCONOCIDO", 0.0)
+
+
+def test_sin_port_y_con_otro_programa_en_el_8000_arranca_en_el_siguiente(tmp_path, monkeypatch):
+    """
+    Antes salía un cartel pidiendo cerrar el otro programa o elegir puerto a
+    mano. Quien hizo doble clic en el acceso directo quiere el Bot, no un
+    número de puerto.
+    """
+    _puerto_ocupado_por(monkeypatch, None)
+    accion, puerto, mensaje = lanzador._decidir_puerto(None, tmp_path)
+    assert (accion, puerto) == ("arrancar", 8001)
+    assert "8000" in mensaje and "8001" in mensaje and "otro programa" in mensaje
+
+
+def test_sin_port_y_con_otro_bot_en_el_8000_no_abre_el_ajeno(tmp_path, monkeypatch):
+    """
+    Lo que se veía en la máquina de desarrollo: el 8000 con el Bot de otra
+    instalación, doble clic en el acceso directo de ésta, y se abría la
+    pantalla del otro —con sus datos— como si fuera el propio. Después no se
+    sabía cuál cerrar. Otro Bot es otro programa: se arranca en otro puerto.
+    """
+    otra = tmp_path / "otra-instalacion"
+    otra.mkdir()
+    _puerto_ocupado_por(monkeypatch, otra)
+    accion, puerto, mensaje = lanzador._decidir_puerto(None, tmp_path / "esta")
+    assert (accion, puerto) == ("arrancar", 8001)
+    assert "otro Bot" in mensaje
+
+
+def test_el_bot_de_esta_misma_instalacion_ya_abierto_se_abre_en_pantalla(tmp_path, monkeypatch):
+    # Aunque la raíz venga escrita distinto: mayúsculas, un `..` en el medio.
+    _puerto_ocupado_por(monkeypatch, tmp_path / "x" / ".." / "esta")
+    (tmp_path / "esta").mkdir()
+    accion, puerto, _ = lanzador._decidir_puerto(None, tmp_path / "esta")
+    assert (accion, puerto) == ("abrir", 8000)
+
+
+def test_con_port_explicito_un_puerto_ocupado_sigue_siendo_un_error(tmp_path, monkeypatch):
+    """
+    Quien escribió `--port` eligió ese puerto: el wizard ya buscó uno libre y
+    el reinicio tiene que volver adonde está el navegador. Cambiárselo por
+    detrás sería peor que avisar.
+    """
+    _puerto_ocupado_por(monkeypatch, None)
+    accion, puerto, mensaje = lanzador._decidir_puerto(8000, tmp_path)
+    assert (accion, puerto) == ("fallar", 8000)
+    assert "--port" in mensaje
+
+
+def test_con_el_puerto_libre_se_arranca_ahi_sin_mas(tmp_path, monkeypatch):
+    monkeypatch.setattr(lanzador, "_puerto_libre", lambda p: True)
+    monkeypatch.setattr(lanzador, "_esperar_puerto_libre", lambda p, *a: True)
+    assert lanzador._decidir_puerto(None, tmp_path) == ("arrancar", 8000, "")
+    assert lanzador._decidir_puerto(8010, tmp_path) == ("arrancar", 8010, "")
+
+
+def test_sin_port_no_se_esperan_ocho_segundos(tmp_path, monkeypatch):
+    """
+    La espera a que el puerto se libere es para el reinicio, que siempre pasa
+    --port. En el doble clic el ocupante es permanente, y esperar era abrir la
+    pantalla ocho segundos tarde sin decir nada.
+    """
+    monkeypatch.setattr(lanzador, "_esperar_puerto_libre",
+                        lambda p, *a: pytest.fail("sin --port no hay que esperar"))
+    monkeypatch.setattr(lanzador, "_puerto_libre", lambda p: True)
+    assert lanzador._decidir_puerto(None, tmp_path) == ("arrancar", 8000, "")
+
+
+def test_si_lo_que_ocupa_el_puerto_no_dice_quien_es_no_se_arranca_otro_bot(tmp_path, monkeypatch):
+    """
+    El Bot de esta misma instalación tardando en levantar contestaba tarde el
+    overview, se lo tomaba por "otro programa" y se arrancaba un segundo Bot
+    sobre el mismo data/. Ahora se insiste, y si sigue sin decir quién es, se
+    avisa y no se arranca.
+    """
+    _puerto_ocupado_por(monkeypatch, None, quien="desconocido")
+    accion, puerto, mensaje = lanzador._decidir_puerto(None, tmp_path)
+    assert (accion, puerto) == ("fallar", 8000)
+    assert "no termina de contestar" in mensaje
+
+
+def test_si_termina_contestando_que_es_este_bot_se_abre_la_pantalla(tmp_path, monkeypatch):
+    (tmp_path / "esta").mkdir()
+    respuestas = iter([("desconocido", None), ("desconocido", None), ("bot", tmp_path / "esta")])
+    monkeypatch.setattr(lanzador, "_puerto_libre", lambda p: False)
+    monkeypatch.setattr(lanzador, "_quien_escucha", lambda url: next(respuestas))
+    monkeypatch.setattr(lanzador.time, "sleep", lambda s: None)
+    accion, puerto, _ = lanzador._decidir_puerto(None, tmp_path / "esta")
+    assert (accion, puerto) == ("abrir", 8000)
+
+
+def _servidor_de_prueba(manejar):
+    """Un servidor TCP en un hilo que atiende una conexión con `manejar(conn)`; devuelve el puerto."""
+    import socket
+    import threading
+
+    servidor = socket.socket()
+    servidor.bind(("127.0.0.1", 0))
+    servidor.listen(1)
+
+    def atender():
+        conn, _ = servidor.accept()
+        try:
+            manejar(conn)
+        finally:
+            conn.close()
+            servidor.close()
+
+    threading.Thread(target=atender, daemon=True).start()
+    return servidor.getsockname()[1]
+
+
+def _responder_http(codigo, cuerpo=b"{}"):
+    def manejar(conn):
+        conn.recv(4096)
+        conn.sendall(
+            f"HTTP/1.1 {codigo} X\r\nContent-Type: application/json\r\nContent-Length: {len(cuerpo)}\r\n"
+            f"Connection: close\r\n\r\n".encode() + cuerpo
+        )
+    return manejar
+
+
+def test_quien_escucha_distingue_bot_otro_programa_y_desconocido():
+    puerto = _servidor_de_prueba(_responder_http(200, b'{"root": "C:\\\\Bot"}'))
+    assert lanzador._quien_escucha(f"http://127.0.0.1:{puerto}") == ("bot", pathlib.Path(r"C:\Bot"))
+
+    puerto = _servidor_de_prueba(_responder_http(404, b"not found"))
+    assert lanzador._quien_escucha(f"http://127.0.0.1:{puerto}") == ("otro", None)
+
+    puerto = _servidor_de_prueba(_responder_http(500, b"boom"))
+    assert lanzador._quien_escucha(f"http://127.0.0.1:{puerto}") == ("desconocido", None)
+
+    # Algo que no habla HTTP: antes reventaba el lanzador con BadStatusLine.
+    puerto = _servidor_de_prueba(lambda conn: (conn.recv(4096), conn.sendall(b"hola\n")))
+    assert lanzador._quien_escucha(f"http://127.0.0.1:{puerto}") == ("otro", None)

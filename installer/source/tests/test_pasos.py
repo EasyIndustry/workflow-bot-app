@@ -382,3 +382,19 @@ def test_el_comando_de_la_webapp_apunta_a_la_instalacion(tmp_path):
 def test_abrir_sin_instalacion_falla_antes_de_lanzar_nada(tmp_path):
     with pytest.raises(pasos.InstalacionError, match="no hay una instalación"):
         pasos.abrir_webapp(str(tmp_path / "nada"), 8010)
+
+
+def test_una_instalacion_de_prueba_no_cambia_cual_abre_el_bot(tmp_path, monkeypatch):
+    """
+    Crear una instalación descartable no puede pisar "la última instalación"
+    del usuario: si después se borra la carpeta, el Bot arranca contra la
+    carpeta del programa y ni los límites se pueden guardar. Pasó en desarrollo.
+    """
+    llamadas = []
+    monkeypatch.setattr(pasos.ubicacion, "registrar", lambda raiz: llamadas.append(raiz) or raiz)
+
+    pasos.instalar(str(tmp_path / "prueba"), registrar=False)
+    assert llamadas == []
+
+    pasos.instalar(str(tmp_path / "real"))
+    assert len(llamadas) == 1

@@ -33,6 +33,7 @@ import { api } from "../api.js";
 import { irA, rutaActual } from "../router.js";
 import { tabla } from "../components/tabla.js";
 import { confirmar } from "../components/modal.js";
+import { alClickAfuera } from "../components/click-afuera.js";
 import { aviso } from "../components/aviso.js";
 import { abrirLog } from "./log-modal.js";
 
@@ -56,7 +57,7 @@ let flujos = [];
 const avisosPorFuente = new Map();
 const MAX_AVISOS = 40;
 let avisosAbiertos = false;
-let cerrarAvisosAlClickearFuera = null;
+let quitarClickAfueraDeAvisos = null;
 
 function anotar(nombre, tono, texto) {
   const lista = avisosPorFuente.get(nombre) || [];
@@ -522,22 +523,17 @@ function panelDeAvisos(a, lista) {
 }
 
 /**
- * Cierra el panel al clickear afuera. El listener se guarda en una variable
- * del módulo y se saca antes de poner otro: cada redibujo arma un contenedor
- * nuevo, y sin esto quedaban listeners apuntando a nodos que ya no existen.
+ * Cierra el panel al clickear afuera (`components/click-afuera.js`). Se saca
+ * el listener anterior antes de poner otro: cada redibujo arma un
+ * contenedor nuevo, y sin esto quedaban apuntando a nodos que ya no existen.
  */
 function escucharClickFuera(contenedor) {
-  if (cerrarAvisosAlClickearFuera) {
-    document.removeEventListener("pointerdown", cerrarAvisosAlClickearFuera, true);
-  }
-  cerrarAvisosAlClickearFuera = (e) => {
-    if (contenedor.contains(e.target)) return;
-    document.removeEventListener("pointerdown", cerrarAvisosAlClickearFuera, true);
-    cerrarAvisosAlClickearFuera = null;
+  if (quitarClickAfueraDeAvisos) quitarClickAfueraDeAvisos();
+  quitarClickAfueraDeAvisos = alClickAfuera(contenedor, () => {
+    quitarClickAfueraDeAvisos = null;
     avisosAbiertos = false;
     redibujarQuieto();
-  };
-  document.addEventListener("pointerdown", cerrarAvisosAlClickearFuera, true);
+  });
 }
 
 function resumenDe(a, fuente) {
@@ -806,11 +802,23 @@ const ESTADO = {
   err: { clase: "badge badge--error", texto: "err" },
 };
 
-/** El flujo de una fila: el elegido a mano, o el de la fuente. */
+/**
+ * El flujo de una fila: el elegido a mano, el de la fuente, o —si ninguno— el
+ * único flujo que declara estar pensado para esta fuente (`%% source:`, núcleo
+ * v0.3.1-beta.11, core#31). Con dos o más declarados no se adivina: quedan
+ * primeros en el desplegable y se elige.
+ */
 function flujoDe(a, fuente, fila) {
   const caseId = claveDe(fuente, fila);
   if (a.flujoPorFila[caseId] !== undefined) return a.flujoPorFila[caseId];
-  return fuente.default_flow || "";
+  if (fuente.default_flow) return fuente.default_flow;
+  const propios = flujosParaLaFuente(fuente);
+  return propios.length === 1 ? propios[0].name : "";
+}
+
+/** Los flujos que declaran esta fuente en su cabecera. */
+function flujosParaLaFuente(fuente) {
+  return flujos.filter((w) => w.source === fuente.name);
 }
 
 function celdaBot(clave, fila, fuente, a, filas) {
@@ -851,6 +859,11 @@ function celdaBot(clave, fila, fuente, a, filas) {
       return h("span", { style: { color: "var(--texto-4)" },
                          title: "No hay ningún flujo guardado", text: "—" });
     }
+    // Primero los flujos pensados para esta fuente (core#31), después el resto.
+    // Sin ninguno declarado, la lista plana de siempre.
+    const propios = flujosParaLaFuente(fuente);
+    const otros = flujos.filter((w) => !propios.includes(w));
+    const opcion = (w) => h("option", { value: w.name, text: w.name });
     const selector = h("select", {
       class: "selector selector--chico",
       // No redibuja: cambiar el flujo de una fila no cambia nada más en la
@@ -858,7 +871,10 @@ function celdaBot(clave, fila, fuente, a, filas) {
       onChange: (e) => { a.flujoPorFila[caseId] = e.target.value; },
     }, [
       h("option", { value: "", text: "—" }),
-      ...flujos.map((w) => h("option", { value: w.name, text: w.name })),
+      ...(propios.length
+        ? [h("optgroup", { label: "Para esta fuente" }, propios.map(opcion)),
+           h("optgroup", { label: "Otros" }, otros.map(opcion))]
+        : flujos.map(opcion)),
     ]);
     selector.value = flujoDe(a, fuente, fila);
     return selector;

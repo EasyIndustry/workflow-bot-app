@@ -50,7 +50,7 @@ def test_list_tools_trae_el_catalogo_y_los_nativos(raiz):
     ids = {t["id"] for t in resultado["tools"]}
     assert ids == {"core.log", "core.set_status", "core.wait"}
     assert {n["id"] for n in resultado["nativos"]} == {"flow.ejecutar", "flow.retry_gate"}
-    assert set(resultado["ports_disponibles"]) == {"http", "fs", "process", "clock", "browser", "window"}
+    assert set(resultado["ports_disponibles"]) == {"http", "fs", "process", "clock", "browser", "window", "geometry"}
 
 
 def test_list_tools_incluye_un_plugin_local(raiz):
@@ -607,6 +607,16 @@ def test_list_resource_items_tapa_secrets(raiz):
     assert item["token"] is None
 
 
+def test_describe_extra_params_sin_describer_es_vacio(raiz):
+    """
+    Issue #27: la operación llega hasta `Instance.describe_extra_params` por
+    el mismo camino que el resto (CLI en subproceso, --json). La mayoría de
+    los tools no describe una forma dinámica: vacío, no error.
+    """
+    resultado = ops.describe_extra_params("demo.mover", plugins={"demo": DEMO}, root=raiz)
+    assert resultado == {"tool": "demo.mover", "params": []}
+
+
 def test_run_action_con_item_resuelve_params_desde_el_resource(raiz):
     """
     La otra mitad del issue #7: "ingresar un source" es una sola llamada, sin
@@ -688,6 +698,7 @@ def test_la_lista_de_tools_no_crece_con_los_plugins():
         "list_tools",
         "list_plugins",
         "list_resource_items",
+        "describe_extra_params",
         "list_ports",
         "list_users",
         "list_flows",

@@ -14,7 +14,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from backend.core.ports import FileInfo, HttpResponse, PortError, ProcessResult, WindowInfo
+from backend.core.ports import (
+    FileInfo,
+    HttpResponse,
+    NearestOnSurfaceResult,
+    PortError,
+    ProcessResult,
+    WindowInfo,
+)
 
 
 class FakeHttp:
@@ -106,11 +113,15 @@ class FakeFs:
                 hijos.append(self.stat(ruta))
         return hijos
 
-    def walk(self, path):
+    def walk(self, path, max_depth=None):
         p = _norm(path)
         for ruta in sorted(self.dirs | set(self.files)):
-            if ruta != p and ruta.startswith(p + "/"):
-                yield self.stat(ruta)
+            if ruta == p or not ruta.startswith(p + "/"):
+                continue
+            profundidad = ruta[len(p) + 1:].count("/") + 1
+            if max_depth is not None and profundidad > max_depth:
+                continue
+            yield self.stat(ruta)
 
     # ── Escritura ───────────────────────────────────────────────────────
 
@@ -343,6 +354,38 @@ class FakeBrowser:
         self.cerrado = True
 
 
+class FakeGeometry:
+    """
+    Adapter de geometría guionado (issue #19): nunca corre `trimesh` de
+    verdad.
+
+    `resultados` mapea `mesh_bytes` a la lista de `(punto_proyectado,
+    distancia)` que devuelve, en el mismo orden que los `points` pedidos.
+    Igual que el resto de los fakes: una malla no guionada levanta
+    `PortError`, para poder probar también el camino de error del tool.
+    A diferencia del `NullGeometryAdapter` real que trae el core,
+    `available` es True -- lo que un test necesita para ejercer el tool
+    como si hubiera un adapter de verdad detrás.
+    """
+
+    def __init__(self, resultados: dict[bytes, list[tuple]] | None = None) -> None:
+        self.resultados = dict(resultados or {})
+        self.calls: list[dict] = []
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    def nearest_on_surface(self, mesh_bytes, points):
+        self.calls.append({"op": "nearest_on_surface", "n_points": len(points)})
+        if mesh_bytes not in self.resultados:
+            raise PortError("FakeGeometry: nadie guionó esta malla")
+        pares = self.resultados[mesh_bytes]
+        return NearestOnSurfaceResult(
+            points=tuple(p for p, _ in pares), distances=tuple(d for _, d in pares)
+        )
+
+
 class FakeWindow:
     """
     Ventana de escritorio guionada: nunca toca una de verdad.
@@ -353,8 +396,14 @@ class FakeWindow:
     levanta `PortError`.
     """
 
-    def __init__(self, windows: dict | None = None) -> None:
+    def __init__(self, windows: dict | None = None, states: dict | None = None) -> None:
         self.windows = {clave: dict(controles) for clave, controles in (windows or {}).items()}
+        # `states` (issue #25): igual forma que `windows`, pero para
+        # `read_state` -- {titulo: {control: "on"/"off"/"indeterminate"/None}}.
+        # `None` es un valor guionado válido (el control no tiene estado); un
+        # control ausente del dict es "nadie lo guionó", y eso sí es error,
+        # igual que en `read_text`.
+        self.states = {clave: dict(estados) for clave, estados in (states or {}).items()}
         self.calls: list[dict] = []
         self._contador = 0
         self._abiertas: dict[str, str] = {}
@@ -379,8 +428,10 @@ class FakeWindow:
             raise PortError("FakeWindow: operación sin haber buscado la ventana antes")
         return clave
 
-    def click(self, window, control, *, timeout=None):
-        self.calls.append({"op": "click", "handle": window.handle, "control": control})
+    def click(self, window, control, *, button="left", timeout=None):
+        self.calls.append(
+            {"op": "click", "handle": window.handle, "control": control, "button": button}
+        )
         self._clave(window)
 
     def type_text(self, window, control, text, *, timeout=None):
@@ -396,9 +447,16 @@ class FakeWindow:
             raise PortError(f"FakeWindow: nadie guionó el control {control!r}")
         return controles[control]
 
+    def read_state(self, window, control, *, timeout=None):
+        self.calls.append({"op": "read_state", "handle": window.handle, "control": control})
+        estados = self.states.get(self._clave(window), {})
+        if control not in estados:
+            raise PortError(f"FakeWindow: nadie guionó el estado de {control!r}")
+        return estados[control]
+
 
 def fake_adapters(**overrides) -> dict:
-    """Los seis ports en versión falsa. Se puede pisar cualquiera."""
+    """Los ports de plugin en versión falsa. Se puede pisar cualquiera."""
     adapters = {
         "http": FakeHttp(),
         "fs": FakeFs(),
@@ -406,6 +464,7 @@ def fake_adapters(**overrides) -> dict:
         "clock": FakeClock(),
         "browser": FakeBrowser(),
         "window": FakeWindow(),
+        "geometry": FakeGeometry(),
     }
     adapters.update(overrides)
     return adapters
@@ -420,6 +479,7 @@ __all__ = [
     "FakeBrowser",
     "FakeClock",
     "FakeFs",
+    "FakeGeometry",
     "FakeHttp",
     "FakeProcess",
     "FakeWindow",

@@ -59,3 +59,44 @@ def test_prioridad_explicito_programa_anotada_programa(tmp_path, entorno):
     # 1. lo explícito, por argumento o por BOT_ROOT
     assert ubicacion.resolver_root(programa, str(explicita), entorno) == explicita.resolve()
     assert ubicacion.resolver_root(programa, None, {**entorno, "BOT_ROOT": str(explicita)}) == explicita.resolve()
+
+
+# ── Un data/ suelto en la carpeta del programa ─────────────────────────
+
+
+def test_un_programa_instalado_con_data_suelto_no_secuestra_la_raiz(tmp_path):
+    """
+    Si un arranque no encuentra la instalación anotada, cae en la carpeta del
+    programa y ahí se crea `data/`. Sin esto, desde ese momento esa carpeta
+    "es" una instalación y gana sobre la anotada: el cliente abre el Bot, ve
+    una instalación vacía y la suya queda intacta al lado. Pasó de verdad.
+    """
+    programa = tmp_path / "Programs" / "Bot"
+    (programa / "runtime").mkdir(parents=True)     # lo que trae el .exe
+    (programa / "data").mkdir()                    # el accidente
+    instalacion = tmp_path / "User" / "Bot"
+    (instalacion / "data").mkdir(parents=True)
+    (instalacion / "boot.env").write_text("root=.", encoding="utf-8")
+
+    assert ubicacion.es_instalacion(programa) is False
+    entorno = {"LOCALAPPDATA": str(tmp_path / "cfg")}
+    ubicacion.registrar(instalacion, entorno)
+    assert ubicacion.resolver_root(programa, entorno=entorno) == instalacion
+
+
+def test_un_programa_instalado_con_boot_env_si_es_instalacion(tmp_path):
+    """Portable de verdad: el wizard escribió boot.env ahí. Eso no es un accidente."""
+    programa = tmp_path / "Bot"
+    (programa / "runtime").mkdir(parents=True)
+    (programa / "boot.env").write_text("root=.", encoding="utf-8")
+
+    assert ubicacion.es_instalacion(programa) is True
+
+
+def test_el_repo_sigue_alcanzando_con_data(tmp_path):
+    """La regla 2 existe para esto: en un checkout, data/ vive al lado del código."""
+    repo = tmp_path / "workflow-bot-app"
+    (repo / "data").mkdir(parents=True)
+
+    assert ubicacion.es_instalacion(repo) is True
+    assert ubicacion.resolver_root(repo, entorno={"LOCALAPPDATA": str(tmp_path / "cfg")}) == repo

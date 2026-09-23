@@ -24,6 +24,12 @@ let shell = null;
 // borra con el redibujo. Se deja acá y lo consume el próximo `dibujarPlugin`.
 let confirmacion = null;
 
+// Lo mismo adentro del catálogo: instalar recarga la lista entera, así que el
+// "Listo" de la fila no puede vivir en el DOM de la fila que se está tirando.
+// Se anota por nombre de plugin y lo consume la fila nueva. Se vacía al abrir
+// el modal: es el resultado de esta pasada, no de la anterior.
+let instaladosEnCatalogo = {};
+
 export async function montar(elShell, partes) {
   shell = elShell;
   shell.ponerRotulo("PLUG INS");
@@ -191,6 +197,7 @@ function pintarLibrerias(datos, recargar) {
 function filaLibrerias(p, recargar) {
   const faltan = (p.requirements || []).filter((r) => !r.ok);
   const detalle = h("div", { style: { fontSize: "11.5px", color: "var(--rojo)", display: "none", whiteSpace: "pre-wrap" } });
+  const listo = h("div", { style: { fontSize: "11.5px", color: "var(--verde)", display: "none", marginTop: "3px" } });
   const chkOffline = h("input", { type: "checkbox" });
   const boton = faltan.length
     ? h("button", { class: "btn btn--chico btn--primario", text: `Instalar ${faltan.length === 1 ? "la que falta" : `las ${faltan.length} que faltan`}` })
@@ -238,6 +245,7 @@ function filaLibrerias(p, recargar) {
  * curado; cualquier otra (`draft`) es trabajo sin terminar y se dice.
  */
 async function abrirCatalogo() {
+  instaladosEnCatalogo = {};
   const cuerpo = h("div", {}, [h("div", { class: "cargando", style: { padding: "22px" }, text: "Leyendo el catálogo…" })]);
   const { cerrar } = abrirModal({
     titulo: "Plugins en línea",
@@ -310,16 +318,32 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
   const estado = !entrada.installed
     ? h("span", { class: "badge", text: "no instalado" })
     : prov
-      ? h("span", { class: "badge badge--ok", title: `commit ${prov.commit || "?"}`,
+      ? h("span", { class: entrada.hay_nueva ? "badge badge--falta" : "badge badge--ok",
+                    title: `commit ${prov.commit || "?"}`,
                     text: `instalado · v${prov.version || "?"} · ${prov.branch || "?"}` })
       : h("span", { class: "badge badge--ok", text: "instalado (a mano)" });
+  // La ficha del catálogo no publica versión (workflow-bot-plugins#2), así
+  // que lo comparable es el commit que tocó esa carpeta por última vez. Dice
+  // "cambió desde que lo instalaste", que es la pregunta real antes de
+  // reinstalar.
+  const novedad = entrada.hay_nueva
+    ? h("span", { class: "badge badge--falta", style: { marginLeft: "6px" },
+                  title: [`el catálogo va por ${entrada.upstream.head}`,
+                          entrada.upstream.fecha ? `del ${entrada.upstream.fecha.slice(0, 10)}` : "",
+                          `${entrada.upstream.adelante} commit${entrada.upstream.adelante === 1 ? "" : "s"} desde el que tenés`,
+                          "Actualizar baja lo de ahora."].filter(Boolean).join("\n"),
+                  text: "hay una versión nueva" })
+    : null;
   const boton = h("button", {
-    class: "btn btn--chico" + (entrada.installed ? "" : " btn--primario"),
-    text: entrada.installed ? "Reinstalar" : "Instalar",
+    class: "btn btn--chico" + (!entrada.installed || entrada.hay_nueva ? " btn--primario" : ""),
+    text: !entrada.installed ? "Instalar" : entrada.hay_nueva ? "Actualizar" : "Reinstalar",
     disabled: !entrada.installable,
     title: entrada.installable ? `Baja la rama ${datos.branch} e instala ${entrada.path}` : "Entrada de índice sin código: no hay nada que instalar desde acá",
   });
   const detalle = h("div", { style: { fontSize: "11.5px", color: "var(--rojo)", display: "none", whiteSpace: "pre-wrap" } });
+  const hecho = instaladosEnCatalogo[entrada.name];
+  const listo = h("div", { style: { fontSize: "11.5px", color: "var(--verde)", display: hecho ? "" : "none", marginTop: "3px" },
+                           text: hecho || "" });
   // Si el plugin trae librerías, "sin internet" las toma sólo de la carpeta
   // wheels/ (del plugin o de la instalación) en vez de salir a PyPI.
   const chkOffline = h("input", { type: "checkbox" });
@@ -329,15 +353,20 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
     boton.textContent = "Instalando…";
     try {
       const r = await api.instalarDesdeCatalogo(entrada.name, { offline: chkOffline.checked });
+      // Se queda en el catálogo. Antes cerraba el modal y saltaba a la ficha
+      // del plugin: si estabas instalando tres seguidos, después de cada uno
+      // había que volver a abrir "Plugins en línea" y buscar dónde ibas. El
+      // resultado se dice acá, en la fila, y la lista se recarga para que el
+      // estado y el aviso de versión nueva queden al día.
+      instaladosEnCatalogo[entrada.name] = `Listo: v${r.installed.plugin.version}`
+        + `, ${r.installed.plugin.tools.length} tool${r.installed.plugin.tools.length === 1 ? "" : "s"}.`;
       confirmacion = `Se instaló "${r.installed.name}" v${r.installed.plugin.version} desde ${datos.repo} (${datos.branch}).`;
-      cerrarModal();
-      irA("plugins", r.installed.name);
-      await montar(shell, [r.installed.name]);
+      await recargar();
     } catch (e) {
       detalle.textContent = [e.message, ...(e.errores || [])].join("\n");
       detalle.style.display = "";
       boton.disabled = false;
-      boton.textContent = entrada.installed ? "Reinstalar" : "Instalar";
+      boton.textContent = !entrada.installed ? "Instalar" : entrada.hay_nueva ? "Actualizar" : "Reinstalar";
     }
   });
 
@@ -346,11 +375,13 @@ function filaCatalogo(entrada, datos, recargar, cerrarModal) {
       h("div", { style: { display: "flex", alignItems: "center", gap: "8px" } }, [
         h("span", { style: { fontWeight: "600", fontSize: "13px" }, text: entrada.name }),
         estado,
+        novedad,
       ]),
       h("div", { style: { fontSize: "12px", color: "var(--texto-2)", marginTop: "3px" }, text: entrada.description }),
       h("div", { class: "mono", style: { fontSize: "11px", color: "var(--texto-4)", marginTop: "3px" },
         text: [`ports: ${(entrada.ports || []).join(", ") || "—"}`, entrada.compatible_core ? `core ${entrada.compatible_core}` : "", entrada.compatible_runtime ? `runtime ${entrada.compatible_runtime}` : "", entrada.path || entrada.source].filter(Boolean).join(" · ") }),
       detalle,
+      listo,
     ]),
     h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" } }, [
       boton,
@@ -589,6 +620,7 @@ async function dibujarPlugin(plugin) {
 
   partes.push(...seccionSettings(plugin, faltan));
   for (const recurso of plugin.resources || []) partes.push(await seccionResource(plugin, recurso));
+  partes.push(...seccionAcciones(plugin));
   partes.push(...seccionTools(plugin));
   partes.push(notaDelEsquema());
 
@@ -676,10 +708,22 @@ async function seccionResource(plugin, recurso) {
   const items = datos.items || [];
 
   // Se muestran las tres primeras columnas del esquema, más la clave. Ver los
-  // demás campos es abrir el item: una tabla con doce columnas no se lee.
+  // demás campos es abrir el item: una tabla con doce columnas no se lee. La
+  // clave suele estar también entre los campos, y salía dos veces —"Nombre |
+  // Nombre"—, así que se la saca de los tres.
+  const campoClave = (recurso.fields || []).find((f) => f.name === claveDe);
   const columnas = [
-    { clave: claveDe, label: "Nombre", ancho: "230px", peso: "600" },
-    ...(recurso.fields || []).slice(0, 3).map((f) => ({
+    {
+      clave: claveDe, label: (campoClave && campoClave.label) || "Nombre", ancho: "230px", peso: "600",
+      // `_indicador`: el último resultado de una Action de fila sobre este
+      // item (webapp/indicadores.py) — lo calcula el servidor, no viene del
+      // plugin. Ausente = nunca se probó, y no se dibuja nada.
+      render: (fila) => h("span", { style: { display: "flex", alignItems: "center", gap: "6px", minWidth: "0" } }, [
+        h("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, text: fila[claveDe] }),
+        indicadorDeFila(fila),
+      ]),
+    },
+    ...(recurso.fields || []).filter((f) => f.name !== claveDe).slice(0, 3).map((f) => ({
       clave: f.name, label: f.label || f.name, mono: true,
       ancho: f.type === "enum" ? "110px" : null,
       render: (fila) => {
@@ -690,8 +734,17 @@ async function seccionResource(plugin, recurso) {
       },
     })),
     {
-      clave: "_acciones", label: "", ancho: "122px",
+      // Lo que ocupen los botones: cuántos hay y qué dicen lo decide el plugin
+      // (sus Actions sobre la colección), así que un ancho fijo se quedaba
+      // corto y "Probar", "Comparar contenido" y el tacho salían recortados.
+      clave: "_acciones", label: "", ancho: "contenido",
       render: (fila) => h("div", { style: { display: "flex", gap: "6px" } }, [
+        // Las Actions que el plugin declaró **sobre esta colección**. El
+        // contrato del núcleo dice que su botón va en la fila y no suelto, y
+        // hasta acá no se dibujaba en ningún lado: una Action con `resource`
+        // existía en el manifest y no tenía forma de dispararse.
+        ...accionesDeFila(plugin, recurso).map((accion) =>
+          botonDeFila(plugin, recurso, accion, fila, claveDe)),
         h("button", { class: "btn btn--chico", text: "Editar",
                       onClick: () => irA("plugins", plugin.name, recurso.name, String(fila[claveDe])) }),
         h("button", { class: "btn btn--chico", title: "Eliminar", style: { color: "var(--rojo)" },
@@ -730,6 +783,20 @@ async function seccionResource(plugin, recurso) {
     // propio vacío, y aparecía dos veces.
     recurso.doc && items.length ? h("div", { class: "tabla__pie", text: recurso.doc }) : null,
   ]);
+}
+
+/** El badge de `_indicador` al lado del nombre, o nada si el item nunca se probó. */
+function indicadorDeFila(fila) {
+  const marca = fila._indicador;
+  if (!marca) return null;
+  const ok = marca.estado === "ok";
+  return h("span", {
+    class: "badge " + (ok ? "badge--ok" : "badge--error"),
+    style: { flex: "0 0 auto" },
+    title: (marca.texto || (ok ? "última vez, ok" : "última vez, error"))
+      + (marca.updated_at ? ` · ${new Date(marca.updated_at * 1000).toLocaleString()}` : ""),
+    text: ok ? "✓" : "✕",
+  });
 }
 
 /**
@@ -790,6 +857,381 @@ function paramsParaAccion(form, accion, extrasForm) {
     if (valores[p.name] !== undefined) params[p.name] = valores[p.name];
   }
   return params;
+}
+
+// ── Acciones sobre una fila ─────────────────────────────────────────────
+
+
+/** Las Actions que el plugin declaró sobre esta colección (`Action.resource`). */
+function accionesDeFila(plugin, recurso) {
+  return (plugin.actions || []).filter((a) => a.resource === recurso.name);
+}
+
+/**
+ * El botón de una Action sobre un item, con su resultado en un modal.
+ *
+ * El resultado va a un modal y no debajo de la tabla porque lo que devuelve
+ * puede ser una vista entera —una comparación con sus casillas— y meterla entre
+ * las filas dejaría dos tablas encimadas sin decir cuál es cuál.
+ *
+ * El núcleo recibe el item por su clave (`item`), no por sus campos: la Action
+ * corre sobre lo **guardado**, que es lo que la distingue del botón "Probar"
+ * del formulario. Así no hay forma de que corra contra algo que no está.
+ */
+function botonDeFila(plugin, recurso, accion, fila, claveDe) {
+  const clave = String(fila[claveDe]);
+
+  const abrir = () => {
+    // `outputs.abrir_url`: cualquier Action de fila puede devolverlo para que
+    // la app abra lo que sea que apunte en una pestaña nueva — el plugin
+    // `bots` es el primer caso, no el único que esto conoce. La ventana se
+    // abre ahora, en el mismo click, antes de esperar la respuesta: un
+    // `window.open()` después de un `await` puede quedar bloqueado por el
+    // popup blocker. Si la Action no trae `abrir_url`, se cierra sola.
+    //
+    // Sin `noopener` acá: con esa opción `window.open` devuelve `null` —es la
+    // forma en que el propio navegador corta la referencia—, así que no
+    // quedaría cómo redirigirla después y esta ventana en blanco quedaría
+    // abierta y huérfana para siempre. La retiene el Bot mismo, así que igual
+    // no hay nada que un `opener` pueda tocar del lado de la pestaña nueva.
+    let ventana = null;
+    try { ventana = window.open("about:blank", "_blank"); } catch { /* sin permiso del navegador: se sigue sin abrir nada */ }
+
+    const cuerpo = h("div", { class: "cargando", text: "Ejecutando…" });
+    let modal;
+    // Un solo modal para toda la secuencia: la acción de seguimiento de una
+    // vista —migrar lo tildado— reemplaza el contenido de éste en vez de abrir
+    // otro encima, que dejaría la comparación tapada detrás del resultado.
+    const correr = async (params = {}, cual = accion.name) => {
+      poner(cuerpo, h("div", { class: "cargando", text: "Ejecutando…" }));
+      // `item` sólo para la Action que está declarada **sobre** la colección.
+      // La de seguimiento que dispara una vista suele ser suelta —comparar
+      // cuelga de la fila, migrar no— y el núcleo rechaza un `item` en una
+      // Action que no está atada a ninguna: "no acepta `item`". Con el item
+      // pegado al botón y no a la Action, migrar fallaba justo al confirmar.
+      const declarada = (plugin.actions || []).find((a) => a.name === cual);
+      const item = declarada && declarada.resource ? clave : null;
+      try {
+        const resp = await api.ejecutarAccion(plugin.name, cual, params, item);
+        const outputs = resp.result.outputs || {};
+
+        // `outputs.indicador` (webapp/indicadores.py) ya quedó guardado del
+        // lado del servidor al ejecutar la Action; acá sólo hace falta
+        // refrescar la tabla para que el check de la fila se vea al tiro, sin
+        // esperar a la próxima vez que se abra el plugin. En segundo plano:
+        // el modal de resultado no tiene que esperarlo.
+        if (outputs.indicador) dibujarPlugin(plugin).catch(() => {});
+
+        const url = resp.result.status === "ok" && typeof outputs.abrir_url === "string"
+          && /^https?:\/\//.test(outputs.abrir_url) ? outputs.abrir_url : null;
+        if (url) {
+          if (ventana) {
+            // `ventana.opener = null` corta la referencia hacia acá antes de
+            // mandarla a otro origen — lo que hace `noopener` normalmente,
+            // pero puesto después de abrir en vez de al abrir, porque antes
+            // hacía falta la referencia para poder redirigirla.
+            try { ventana.opener = null; } catch { /* algunos navegadores no dejan: sigue igual */ }
+            ventana.location = url;
+          } else {
+            window.open(url, "_blank", "noopener");
+          }
+          ventana = null;  // ya se usó: que el finally no la cierre
+          modal.cerrar();
+          return;
+        }
+        poner(cuerpo, dibujarResultadoDeAccion(resp.result, plugin, correr));
+      } catch (e) {
+        poner(cuerpo, aviso("error", "No se pudo ejecutar", e.message));
+      } finally {
+        if (ventana) { ventana.close(); ventana = null; }
+      }
+    };
+    modal = abrirModal({
+      titulo: accion.label || accion.name,
+      sub: `${recurso.item_label || "Item"}: ${clave}`,
+      cuerpo,
+      acciones: [h("button", { class: "btn", text: "Cerrar", onClick: () => modal.cerrar() })],
+    });
+    correr();
+  };
+
+  return h("button", {
+    class: "btn btn--chico", text: accion.label || accion.name,
+    title: accion.doc || "",
+    style: accion.dangerous ? { color: "var(--rojo)" } : null,
+    onClick: () => {
+      if (!accion.dangerous) return abrir();
+      confirmar({
+        titulo: accion.label || accion.name,
+        texto: accion.doc || `Se ejecuta sobre "${clave}". No se puede deshacer desde acá.`,
+        botonTexto: "Sí, hacerlo",
+        alConfirmar: abrir,
+      });
+    },
+  });
+}
+
+
+// ── Acciones sueltas, y la vista que declaran ───────────────────────────
+
+/**
+ * Las Actions que no son el botón "Probar" de ninguna colección.
+ *
+ * Hasta acá una Action sólo tenía lugar adentro del formulario de un item
+ * (`accionDePrueba`), así que una que no es "probar esto antes de guardar" —
+ * comparar contra otro Bot, migrar, listar lo que hay del otro lado— no se
+ * podía disparar desde ningún lado: existía en el manifest y no en la pantalla.
+ *
+ * Cuáles quedan acá se decide por descarte y no por una marca nueva en el
+ * esquema: las que `accionDePrueba` ya eligió para alguna colección se dibujan
+ * allá, y el resto acá. Así no hay que tocar el núcleo para que una Action
+ * tenga dónde vivir, y ninguna aparece dos veces.
+ */
+function seccionAcciones(plugin) {
+  const comoPrueba = new Set(
+    (plugin.resources || [])
+      .map((r) => accionDePrueba(plugin, r))
+      .filter(Boolean)
+      .map((a) => a.name));
+  const sueltas = (plugin.actions || []).filter((a) => !a.resource && !comoPrueba.has(a.name));
+  if (!sueltas.length) return [];
+
+  return [
+    h("div", { class: "seccion" }, [h("span", { text: "Acciones" })]),
+    ...sueltas.map((accion) => tarjetaDeAccion(plugin, accion)),
+  ];
+}
+
+/**
+ * Los mismos params, con el buscador que cada uno declara.
+ *
+ * Un `Param` con `options_from` nombra una colección **del mismo plugin** cuyos
+ * items son sus valores típicos (`contract.py`), y `campo.js` ya sabe dibujarlo
+ * como texto con buscador — pero pide que quien arma el campo le diga cómo
+ * traer los valores, y hace bien: así el componente no importa `api` ni sabe de
+ * colecciones. El editor de flujos ya lo resuelve igual
+ * (`workflows-cards.js`); acá faltaba, así que un param que declaraba de dónde
+ * salen sus valores se dibujaba como un texto pelado y había que acordarse del
+ * nombre exacto.
+ *
+ * Es una ayuda y no una lista cerrada: el valor puede ser una `{variable}` que
+ * recién se resuelve al correr, y por eso el núcleo declara `options_from`
+ * informativo y no lo valida. Que el nombre exista sí lo validó `registry` al
+ * cargar el plugin, así que acá se confía en él y un fallo al traer la lista
+ * deja el campo como estaba.
+ *
+ * Sólo `Param` lo declara: ni `Setting` ni `Field` lo tienen, así que los
+ * formularios de settings y de un item no pasan por acá. Cuando el núcleo se
+ * los dé, es agregar la llamada — no cambiar esto.
+ */
+function conBuscadores(plugin, params) {
+  // `options_from` puede ser una colección del plugin o una fuente del núcleo
+  // (`core:plugins`, `core:resources:{plugin}`; núcleo v0.3.1-beta.11,
+  // core#32). Cuál es y cómo se resuelve lo sabe `api`; acá sólo se le pasa lo
+  // que el formulario tiene cargado, porque la lista puede depender de otro
+  // campo, y se declara de cuál para que el formulario la recargue al cambiar.
+  return (params || []).map((p) => (p.options_from
+    ? {
+        ...p,
+        opciones: (valores) => api.opcionesDeParam(plugin.name, p.options_from, valores || {}),
+        depende_de: api.dependenciaDeOpciones(p.options_from),
+      }
+    : p));
+}
+
+function tarjetaDeAccion(plugin, accion) {
+  const params = conBuscadores(plugin, accion.params);
+  const form = params.length ? crearFormulario(params) : null;
+  const resultado = h("div", { style: { marginTop: "10px" } });
+
+  // `cual` deja que la vista de un resultado dispare **otra** Action del mismo
+  // plugin —comparar y después migrar lo tildado— sin que esta pantalla sepa
+  // cómo se llama ninguna: el nombre lo pone el resultado.
+  const correr = async (params, cual = accion.name) => {
+    poner(resultado, h("div", { class: "cargando", text: "Ejecutando…" }));
+    try {
+      const resp = await api.ejecutarAccion(plugin.name, cual, params);
+      poner(resultado, dibujarResultadoDeAccion(resp.result, plugin, correr));
+    } catch (e) {
+      poner(resultado, aviso("error", "No se pudo ejecutar", e.message));
+    }
+  };
+
+  const boton = h("button", {
+    class: accion.dangerous ? "btn" : "btn btn--primario",
+    text: accion.label || accion.name,
+    style: accion.dangerous ? { color: "var(--rojo)" } : null,
+    onClick: () => {
+      let params = {};
+      try {
+        if (form) params = form.leer();
+      } catch (e) {
+        return poner(resultado, aviso("error", "Falta completar algo", e.message));
+      }
+      // Igual que cuando la dispara una selección: una Action `dangerous`
+      // pregunta antes. Sin esto, la misma Action confirmaba si se llegaba
+      // desde una tabla y no confirmaba si se apretaba su propio botón — que
+      // es el camino más fácil de apretar sin querer.
+      if (!accion.dangerous) return correr(params);
+      confirmar({
+        titulo: accion.label || accion.name,
+        texto: accion.doc || "Esta acción escribe. No se puede deshacer desde acá.",
+        botonTexto: "Sí, hacerlo",
+        alConfirmar: () => correr(params),
+      });
+    },
+  });
+
+  return h("div", { class: "tarjeta", style: { padding: "13px 16px", marginBottom: "8px" } }, [
+    accion.doc ? h("div", { class: "campo__ayuda", style: { marginBottom: "9px" }, text: accion.doc }) : null,
+    form ? form.elemento : null,
+    h("div", { style: { marginTop: "9px" } }, [boton]),
+    resultado,
+  ].filter(Boolean));
+}
+
+/**
+ * El resultado de una Action, dibujado como la propia Action lo declara.
+ *
+ * `outputs.vista` es lo que deja que un plugin arme una pantalla útil sin que
+ * esta vista lo conozca por nombre y sin escribirle una pantalla a medida a
+ * cada uno. Va en el **resultado** y no en el manifest a propósito: las
+ * columnas de una comparación dependen de lo que se comparó, así que no se
+ * pueden declarar antes de correrla.
+ *
+ * Todo lo que el plugin manda se dibuja como texto: `h()` nunca usa
+ * `innerHTML`, así que un valor con `<` no ejecuta nada.
+ *
+ * `_nota` y `_elegible` son las dos claves reservadas de una fila. Van con `_`
+ * porque el núcleo ya marca así lo suyo en los items de una colección
+ * (`_updated_at`, `_error`), y una fila puede ser justamente uno de esos items
+ * pasado tal cual. Si alguna vez se filtra `_*` en bloque en algún lado, esto
+ * se apaga sin avisar.
+ */
+function dibujarVista(vista, plugin, correr) {
+  const filas = Array.isArray(vista.filas) ? vista.filas : [];
+  const claveDe = vista.clave || "clave";
+  const seleccion = vista.seleccion || null;
+  const elegidas = new Set();
+
+  // `ancho` viene crudo de la Vista que armó el plugin: un largo CSS. El
+  // "contenido" de la tabla queda afuera a propósito: sólo alinea cuando cada
+  // fila dibuja lo mismo (una botonera), y acá cada fila dibuja su texto.
+  const columnas = (vista.columnas || []).map((c) => ({
+    clave: c.campo, label: c.label || c.campo, ancho: c.ancho && c.ancho !== "contenido" ? c.ancho : null,
+    render: (fila) => {
+      const v = fila[c.campo];
+      if (v === undefined || v === null || v === "") return "—";
+      const texto = typeof v === "object" ? JSON.stringify(v) : String(v);
+      // La nota del plugin va pegada a su fila, en la primera columna: es
+      // donde explica por qué una fila no se puede elegir — el caso de un
+      // item con campos secretos, que no se puede comparar con nada.
+      if (c === (vista.columnas || [])[0] && fila._nota) {
+        return h("div", {}, [
+          h("div", { text: texto }),
+          h("div", { class: "campo__ayuda", style: { marginTop: "2px" }, text: fila._nota }),
+        ]);
+      }
+      return texto;
+    },
+  }));
+
+  // La Action de seguimiento, para saber si pide confirmación. `dangerous` ya
+  // existía en el esquema; acá se usa para lo que es —"esto escribe en otra
+  // máquina"— y el `aviso` queda para lo propio de esta selección. Son dos
+  // cosas distintas a propósito: el aviso se lee **mientras** se tilda, la
+  // confirmación es el último paso. Dos diálogos seguidos no harían esto más
+  // seguro; entrenarían a pasar de largo los dos.
+  const destinoDeLaSeleccion = seleccion
+    ? (plugin.actions || []).find((a) => a.name === seleccion.accion)
+    : null;
+
+  const disparar = () => {
+    if (!elegidas.size) return;
+    correr({ ...(seleccion.params || {}), [seleccion.param]: [...elegidas] }, seleccion.accion);
+  };
+
+  const boton = seleccion
+    ? h("button", {
+        class: "btn btn--primario", text: seleccion.etiqueta || "Aplicar", disabled: true,
+        onClick: () => {
+          if (!destinoDeLaSeleccion || !destinoDeLaSeleccion.dangerous) return disparar();
+          confirmar({
+            titulo: seleccion.etiqueta || destinoDeLaSeleccion.label,
+            texto: `Se van a escribir ${elegidas.size} en la otra punta, pisando lo que haya.`,
+            botonTexto: "Sí, hacerlo",
+            alConfirmar: disparar,
+          });
+        },
+      })
+    : null;
+
+  const refrescarBoton = () => {
+    if (!boton) return;
+    boton.disabled = elegidas.size === 0;
+    boton.textContent = elegidas.size
+      ? `${seleccion.etiqueta || "Aplicar"} (${elegidas.size})`
+      : (seleccion.etiqueta || "Aplicar");
+  };
+
+  if (seleccion) {
+    columnas.unshift({
+      clave: "_elegir", label: "", ancho: "34px",
+      render: (fila) => {
+        if (fila._elegible === false) return "";
+        const caja = h("input", {
+          type: "checkbox",
+          onChange: (e) => {
+            if (e.target.checked) elegidas.add(fila[claveDe]);
+            else elegidas.delete(fila[claveDe]);
+            refrescarBoton();
+          },
+        });
+        return caja;
+      },
+    });
+  }
+
+  const partes = [
+    vista.titulo ? h("div", { class: "campo__ayuda", style: { marginBottom: "7px" }, text: vista.titulo }) : null,
+    h("div", { style: { overflow: "auto" } }, [
+      tabla(columnas, filas, { vacio: vista.vacio || "No hay nada que mostrar." }),
+    ]),
+  ];
+
+  if (seleccion) {
+    // El aviso va **arriba** del botón y siempre visible, no en un modal de
+    // confirmación: lo que hay que entender acá —que se pisa lo del otro lado,
+    // que un secreto no se pudo comparar— tiene que estar a la vista mientras
+    // alguien tilda, no aparecer cuando ya decidió.
+    partes.push(h("div", { style: { marginTop: "10px" } }, [
+      seleccion.aviso ? aviso("falta", seleccion.aviso, null) : null,
+      h("div", { style: { marginTop: "8px" } }, [boton]),
+    ].filter(Boolean)));
+  }
+
+  return h("div", {}, partes.filter(Boolean));
+}
+
+/** El resultado de una Action: su vista declarada, o el aviso de siempre. */
+function dibujarResultadoDeAccion(resultado, plugin, correr) {
+  if (resultado.status !== "ok") {
+    return aviso("error", "No salió bien", resultado.message || "Sin detalle.");
+  }
+  const vista = resultado.outputs && resultado.outputs.vista;
+  if (vista && vista.tipo === "tabla") {
+    const correrOtra = async (params, nombre) => {
+      const otra = (plugin.actions || []).find((a) => a.name === nombre);
+      if (!otra) return;
+      await correr(params, nombre);
+    };
+    return h("div", {}, [
+      resultado.message ? aviso("ok", resultado.message, null) : null,
+      h("div", { style: { marginTop: resultado.message ? "10px" : "0" } },
+        [dibujarVista(vista, plugin, correrOtra)]),
+    ].filter(Boolean));
+  }
+  return dibujarResultadoDePrueba(resultado);
 }
 
 /** El resultado de una Action, mostrado como filas si las trae, o como aviso. */
@@ -888,7 +1330,7 @@ async function dibujarItem(plugin, recurso, clave) {
   // ejemplo "vars", los valores para resolver un {id_externo} incrustado en la
   // URL o el payload. En un run real salen del contexto del caso; acá los da
   // quien está probando, así que necesitan su propio mini-formulario.
-  const extras = accion ? accionExtras(accion, recurso) : [];
+  const extras = conBuscadores(plugin, accion ? accionExtras(accion, recurso) : []);
   const extrasForm = extras.length ? crearFormulario(extras) : null;
 
   const botonProbar = accion ? h("button", {

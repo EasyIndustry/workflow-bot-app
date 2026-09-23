@@ -62,6 +62,72 @@ function vigente() {
   return rutaActual().vista === "workflows";
 }
 
+// Las columnas de la fila por flujo, para el autocompletado de las tarjetas.
+// La fuente es la que el flujo declara (`%% source:`, núcleo v0.3.1-beta.11,
+// core#31; se fija en Propiedades) y, si no declara ninguna, la de su última
+// corrida: `Run.source` dice contra cuál corrió. Una página de esa fuente —la
+// misma vista previa que usa la grilla de Sources— da las columnas con un
+// valor de ejemplo. Se guarda un rato por flujo y fuente: la lista se abre con
+// cada `{` tipeada, y esto son dos pedidos y una lectura de la fuente.
+const _columnasPorFlujo = new Map();
+const VIGENCIA_COLUMNAS = 60_000;
+
+// Las fuentes de la instalación, para el selector de Propiedades y para saber
+// si la que un flujo declara existe acá. Se leen al montar y al abrir
+// Propiedades; hasta que llegan, `fuenteExiste` no acusa a nadie.
+let fuentes = null;
+function fuenteExiste(nombre) {
+  return fuentes === null || fuentes.some((f) => f.name === nombre);
+}
+async function cargarFuentes() {
+  try {
+    fuentes = await api.fuentes();
+  } catch {
+    fuentes = fuentes || null;
+  }
+  return fuentes || [];
+}
+
+function ejemploCorto(valor) {
+  if (valor === null || valor === undefined || valor === "") return "";
+  const texto = typeof valor === "object" ? JSON.stringify(valor) : String(valor);
+  return texto.length > 28 ? texto.slice(0, 27) + "…" : texto;
+}
+
+/**
+ * @returns {Promise<null|{fuente: string, declarada: boolean, existe: boolean,
+ *   columnas: Array<{nombre: string, ejemplo: string}>}>}  null cuando no hay
+ *   fuente declarada ni corrida de la que inferirla. `existe: false` es una
+ *   fuente declarada que esta instalación no tiene (el flujo vino de otro Bot).
+ */
+async function columnasDeLaFila(a) {
+  const declarada = (a.wf && a.wf.source) || "";
+  const clave = `${a.nombre}\n${declarada}`;
+  const guardado = _columnasPorFlujo.get(clave);
+  if (guardado && Date.now() - guardado.cuando < VIGENCIA_COLUMNAS) return guardado.promesa;
+  const promesa = (async () => {
+    let nombreFuente = declarada;
+    if (!nombreFuente) {
+      const runs = await api.runs({ limit: 200 });
+      const ultimo = runs.find((r) => r.flow === a.nombre && r.source);
+      if (!ultimo) return null;
+      nombreFuente = ultimo.source;
+    }
+    const fuente = (await api.fuentes()).find((f) => f.name === nombreFuente);
+    if (!fuente) return { fuente: nombreFuente, declarada: !!declarada, existe: false, columnas: [] };
+    const resp = await api.filasDeFuente(fuente, { limit: 1 });
+    const fila = resp.result && resp.result.status === "ok" ? (resp.result.outputs.rows || [])[0] : null;
+    return {
+      fuente: nombreFuente,
+      declarada: !!declarada,
+      existe: true,
+      columnas: fila ? Object.keys(fila).map((c) => ({ nombre: c, ejemplo: ejemploCorto(fila[c]) })) : [],
+    };
+  })().catch(() => null);
+  _columnasPorFlujo.set(clave, { cuando: Date.now(), promesa });
+  return promesa;
+}
+
 export async function montar(elShell, partes) {
   shell = elShell;
   shell.ponerRotulo("WORKFLOWS");
@@ -69,6 +135,7 @@ export async function montar(elShell, partes) {
   [flujos, catalogo] = await Promise.all([
     api.workflows(),
     catalogo ? Promise.resolve(catalogo) : api.tools(),
+    cargarFuentes(),
   ]);
 
   if (!vigente()) return;
@@ -207,6 +274,11 @@ function dibujarSinElegir() {
 // ── El flujo abierto ────────────────────────────────────────────────────
 
 async function abrirFlujo(nombre) {
+  // El mismo flujo que ya estaba abierto, con cambios sin guardar: se vuelve a
+  // dibujar lo que hay en memoria. Volver de otra pestaña no puede descartar
+  // una edición a medias, y menos en silencio; el aviso "sin guardar" sigue ahí.
+  if (abierto && abierto.nombre === nombre && abierto.sucio) return dibujar();
+
   poner(shell.vista, h("div", { class: "cargando", text: "Cargando el flujo…" }));
 
   let wf, grafo;
@@ -220,25 +292,33 @@ async function abrirFlujo(nombre) {
   }
   if (!vigente()) return;
 
+  // Sin cambios pendientes se relee del servidor —otro Bot o un agente pueden
+  // haberlo guardado— pero cómo se estaba mirando (pestaña Nodos/Texto, tarjeta
+  // abierta, nodo elegido en el diagrama, dry run desplegado) se conserva.
+  const previo = abierto && abierto.nombre === nombre ? abierto : null;
   abierto = {
+    ...(previo || {}),
     nombre,
     wf,
     // El grafo se edita en memoria; el texto es la otra cara del mismo objeto.
     grafo: grafo.graph || grafo,
     diagnosticos: (grafo.graph || grafo).diagnostics || grafo.diagnostics || [],
     texto: wf.content || "",
-    modo: (abierto && abierto.nombre === nombre) ? abierto.modo : "tarjetas",
+    modo: previo ? previo.modo : "tarjetas",
     // Quién manda al guardar: el grafo o el texto — no necesariamente el
     // mismo que `modo` está mostrando. Cambian juntos casi siempre, pero la
     // tarjeta flotante del diagrama edita el grafo sin tocar `modo` (no
     // cambia de pestaña), así que tienen que ser dos cosas separadas o un
     // cambio ahí se perdería en silencio si `modo` seguía en "texto".
     fuenteDeVerdad: "grafo",
-    seleccionado: null,
+    seleccionado: previo ? previo.seleccionado : null,
     sucio: false,
-    dryRun: null,
+    dryRun: previo ? previo.dryRun : null,
+    // Nunca se hereda: una corrida que estaba en vuelo al salir se descarta
+    // al volver (`abierto !== a`), y con un `true` copiado el botón quedaría
+    // en "Corriendo…" para siempre.
     dryCorriendo: false,
-    dryAbierto: false,
+    dryAbierto: previo ? previo.dryAbierto : false,
     diagnosticoAbierto: false,
   };
   dibujar();
@@ -252,6 +332,10 @@ function dibujar() {
   if (a.diagramaEl && a.diagramaEl.lienzo) a.vista = a.diagramaEl.lienzo.obtenerVista();
   const errores = a.diagnosticos.filter((d) => d.severity === "error");
   const avisos = a.diagnosticos.filter((d) => d.severity === "warning");
+  // La caja que scrollea la arma `panelTarjetas`, y sólo si la pestaña es
+  // Tarjetas: se limpia antes para no volver a poner el scroll sobre la del
+  // dibujado anterior, que ya no está en el documento.
+  a.cajaTarjetas = null;
 
   poner(shell.vista, h("div", { style: { display: "flex", flexDirection: "column", gap: "0", height: "100%" } }, [
     cabecera(a, errores, avisos),
@@ -265,6 +349,10 @@ function dibujar() {
     filaDeColumnas(a),
     barraDryRun(a),
   ].filter(Boolean)));
+
+  // Acá y no adentro de `panelTarjetas`: `scrollTop` sobre un elemento que
+  // todavía no está en el documento no se guarda.
+  if (a.cajaTarjetas) a.cajaTarjetas.scrollTop = a.scrollTarjetas || 0;
 }
 
 /**
@@ -366,6 +454,19 @@ function cabecera(a, errores, avisos) {
         h("div", { class: "titulo", text: a.nombre }),
         a.wf.folder
           ? h("span", { class: "chip-id", text: a.wf.folder })
+          : null,
+        // La fuente declarada (core#31). Si esta instalación no la tiene —el
+        // flujo vino de otro Bot— se ve en ámbar: el flujo corre igual contra
+        // la que se elija, pero las columnas de la fila no van a estar.
+        a.wf.source
+          ? h("span", {
+              class: "chip-id",
+              style: fuenteExiste(a.wf.source) ? null : { color: "var(--ambar)" },
+              title: fuenteExiste(a.wf.source)
+                ? "Fuente para la que está pensado este flujo. Se cambia en Propiedades."
+                : `Este flujo está pensado para la fuente "${a.wf.source}", que no existe en esta instalación.`,
+              text: `fuente: ${a.wf.source}`,
+            })
           : null,
         h("span", { class: a.wf.state === "disabled" ? "badge" : "badge badge--ok",
                     text: a.wf.state === "disabled" ? "deshabilitado" : "habilitado" }),
@@ -523,7 +624,7 @@ function panelTexto(a) {
     h("div", { class: "tabla__pie", style: { flexShrink: "0" } }, [
       "La cabecera ",
       h("span", { class: "mono", text: "%% clave: valor" }),
-      " es parte del archivo: carpeta, estado y descripción. Se editan también en Propiedades.",
+      " es parte del archivo: carpeta, estado, descripción y fuente. Se editan también en Propiedades.",
     ]),
   ]);
 }
@@ -548,8 +649,13 @@ function panelTarjetas(a) {
   // propósito: cuando eran uno, abrir una tarjeta abría también el panel
   // sobre el diagrama y quedaban dos editores del mismo nodo a la vista.
   const pila = pilaDeTarjetas(a.grafo, catalogo, {
+    columnasDeLaFila: () => columnasDeLaFila(a),
     seleccionado: a.abierta,
-    alSeleccionar: (id) => { a.abierta = id; dibujar(); },
+    // Sin `dibujar()`: abrir y cerrar lo resuelve la propia pila sobre las
+    // tarjetas que ya están (#2). Acá sólo se anota cuál quedó abierta, para
+    // que un redibujo de verdad la vuelva a abrir. `agregar` y `quitar` llaman
+    // a esto y después a `alCambiar({redibujar: true})`, que sí redibuja.
+    alSeleccionar: (id) => { a.abierta = id; },
     alUbicar: (id) => { if (a.diagramaEl && a.diagramaEl.enfocarNodo) a.diagramaEl.enfocarNodo(id); },
     alCambiar: ({ redibujar }) => {
       a.sucio = true;
@@ -560,12 +666,22 @@ function panelTarjetas(a) {
   });
   const contador = h("span", { class: "seccion__suave" });
   aplicarFiltroDeTarjetas(a, pila, contador);
+
+  // El que scrollea. `dibujar()` rehace la vista entera, así que es un elemento
+  // nuevo en cada dibujado y nace en el tope: sin recordar la posición, elegir
+  // un tool o quitar un nodo con la pila scrolleada mandaba la vista arriba
+  // (#2, la otra mitad — abrir una tarjeta ya no pasa por acá).
+  a.cajaTarjetas = h("div", {
+    style: { flex: "1", minHeight: "0", overflow: "auto" },
+    onScroll: (e) => { a.scrollTarjetas = e.target.scrollTop; },
+  }, [pila]);
+
   return h("div", { style: { display: "flex", flexDirection: "column", flex: "1", width: "100%", height: "100%", minHeight: "0", minWidth: "0" } }, [
     h("div", { class: "seccion", style: { flexShrink: "0", margin: "0 0 8px" } }, [
       h("span", { style: { whiteSpace: "nowrap" } }, ["Nodos", contador]),
       filtroDeTarjetas(a, pila, contador),
     ]),
-    h("div", { style: { flex: "1", minHeight: "0", overflow: "auto" } }, [pila]),
+    a.cajaTarjetas,
   ]);
 }
 
@@ -666,6 +782,7 @@ function panelRender(a) {
   const armarPanel = (id) => panelDeNodo(id, a.grafo, catalogo, {
     paso: pinturaDry(a).pasos[id] || null,
     hayCorrida: Boolean(a.dryRun),
+    columnasDeLaFila: () => columnasDeLaFila(a),
     alCambiar: ({ redibujar }) => {
       a.sucio = true;
       // El grafo manda al guardar aunque `a.modo` siga en "texto": esto
@@ -1199,6 +1316,7 @@ async function guardar(a, boton) {
       folder: a.wf.folder || "",
       state: a.wf.state || "enabled",
       description: a.wf.description || "",
+      source: a.wf.source || "",
     });
     a.texto = contenido;
     a.wf = respuesta.workflow;
@@ -1243,6 +1361,7 @@ function abrirPropiedades(a) {
                                placeholder: "FORM/CNC4" });
   const descripcion = h("textarea", { class: "entrada entrada--area", value: a.wf.description || "" });
   const habilitado = h("input", { type: "checkbox", checked: a.wf.state !== "disabled" });
+  const fuente = selectorDeFuente(a.wf.source || "");
 
   const { cerrar } = abrirModal({
     titulo: `Propiedades de "${a.nombre}"`,
@@ -1258,6 +1377,13 @@ function abrirPropiedades(a) {
       h("div", { class: "campo" }, [
         h("div", { class: "campo__etiqueta" }, [h("div", { class: "campo__nombre", text: "Descripción" })]),
         h("div", { class: "campo__control" }, [descripcion]),
+      ]),
+      h("div", { class: "campo" }, [
+        h("div", { class: "campo__etiqueta" }, [h("div", { class: "campo__nombre", text: "Fuente" })]),
+        h("div", { class: "campo__control" }, [fuente.elemento, h("div", { class: "campo__ayuda", text:
+          "Para qué fuente está pensado el flujo. Con esto las tarjetas ofrecen " +
+          "las columnas de la fila al tipear {, y la grilla de esa fuente lo " +
+          "propone al elegir flujo. No obliga: correrlo contra otra fuente sigue valiendo." })]),
       ]),
       h("div", { class: "campo" }, [
         h("div", { class: "campo__etiqueta" }, [h("div", { class: "campo__nombre", text: "Estado" })]),
@@ -1276,9 +1402,10 @@ function abrirPropiedades(a) {
         a.wf.folder = carpeta.value.trim();
         a.wf.description = descripcion.value;
         a.wf.state = habilitado.checked ? "enabled" : "disabled";
+        a.wf.source = fuente.valor();
         // La cabecera es parte del texto, así que el grafo se lleva la metadata
         // y el serializador la escribe.
-        a.grafo.meta = { folder: a.wf.folder, state: a.wf.state, description: a.wf.description };
+        a.grafo.meta = { folder: a.wf.folder, state: a.wf.state, description: a.wf.description, source: a.wf.source };
         a.sucio = true;
         cerrar();
         dibujar();
@@ -1287,9 +1414,35 @@ function abrirPropiedades(a) {
   });
 }
 
+/**
+ * El selector de fuente de Propiedades y del alta: las fuentes de la
+ * instalación, más "ninguna". Se vuelven a leer al abrirlo, porque se pueden
+ * haber creado en Sources mientras esta pantalla estaba abierta. Una declarada
+ * que no existe acá se ofrece igual, marcada, para no perderla al aplicar.
+ */
+function selectorDeFuente(actual) {
+  const selector = h("select", { class: "selector" }, [h("option", { value: "", text: "— ninguna —" })]);
+  const pintar = (lista) => {
+    const nombres = lista.map((f) => f.name);
+    poner(selector,
+      h("option", { value: "", text: "— ninguna —" }),
+      ...nombres.map((n) => h("option", { value: n, text: n })),
+      actual && !nombres.includes(actual)
+        ? h("option", { value: actual, text: `${actual} (no existe en esta instalación)` })
+        : null);
+    selector.value = actual;
+  };
+  pintar(fuentes || []);
+  cargarFuentes().then(pintar);
+  return { elemento: selector, valor: () => selector.value };
+}
+
 function nuevoFlujo() {
   const nombre = h("input", { class: "entrada", type: "text", placeholder: "mi-flujo" });
   const carpeta = h("input", { class: "entrada entrada--mono", type: "text", placeholder: "FORM/CNC4" });
+  // La fuente se pide al crear porque es cuando más se escriben tarjetas, y sin
+  // ella el autocompletado no tiene columnas que ofrecer hasta la primera corrida.
+  const fuente = selectorDeFuente("");
   const error = h("div", { class: "aviso aviso--error", style: { display: "none", margin: "12px 16px 0" } });
 
   const { cerrar } = abrirModal({
@@ -1309,6 +1462,11 @@ function nuevoFlujo() {
         h("div", { class: "campo__control" }, [carpeta, h("div", { class: "campo__ayuda", text:
           "Opcional. Se parte por / para armar el árbol." })]),
       ]),
+      h("div", { class: "campo" }, [
+        h("div", { class: "campo__etiqueta" }, [h("div", { class: "campo__nombre", text: "Fuente" })]),
+        h("div", { class: "campo__control" }, [fuente.elemento, h("div", { class: "campo__ayuda", text:
+          "Opcional. Para qué fuente está pensado: las tarjetas ofrecen sus columnas al tipear {." })]),
+      ]),
     ]),
     acciones: [
       h("button", { class: "btn", text: "Cancelar", onClick: () => cerrar() }),
@@ -1319,10 +1477,10 @@ function nuevoFlujo() {
           const { content } = await api.serializar({
             nodes: { SN1: { type: "start", label: "inicio", line: 1 } },
             edges: [], start_node: "SN1",
-            meta: { folder: carpeta.value.trim(), state: "enabled", description: "" },
+            meta: { folder: carpeta.value.trim(), state: "enabled", description: "", source: fuente.valor() },
           });
           await api.guardarWorkflow(valor, {
-            content, folder: carpeta.value.trim(), state: "enabled", description: "",
+            content, folder: carpeta.value.trim(), state: "enabled", description: "", source: fuente.valor(),
           });
           cerrar();
           flujos = await api.workflows();

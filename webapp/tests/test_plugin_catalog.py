@@ -205,3 +205,118 @@ def test_configuracion_tiene_defaults_y_valida_lo_que_se_guarda():
         cat.guardar_configuracion(inst, repo="sin-barra", branch="cured")
     with pytest.raises(cat.CatalogError):
         cat.guardar_configuracion(inst, repo="Org/plugins", branch="")
+
+
+# ── ¿La que tengo es la última? ────────────────────────────────────────
+
+
+def _abrir_falso(respuestas):
+    """Un `abrir` que devuelve lo que se le diga según la URL."""
+    def abrir(url, destino=None, token=None):
+        for trozo, cuerpo in respuestas.items():
+            if trozo in url:
+                return json.dumps(cuerpo).encode("utf-8")
+        raise AssertionError(f"URL sin respuesta en el test: {url}")
+    return abrir
+
+
+# La forma real de `GET /compare/{base}...{head}`: no hay un "head", hay
+# `base_commit` y `commits` del más viejo al más nuevo. Escribirla de memoria
+# fue el error de la primera versión, y el test la daba por buena.
+COMPARACION = {
+    "status": "ahead",
+    "ahead_by": 3,
+    "base_commit": {"sha": "4b9f7ab0000", "commit": {"author": {"date": "2026-09-16T10:00:00Z"}}},
+    "commits": [
+        {"sha": "aaa1111", "commit": {"author": {"date": "2026-09-17T09:00:00Z"}}},
+        {"sha": "e7ef3231234", "commit": {"author": {"date": "2026-09-17T22:00:00Z"}}},
+    ],
+    "files": [{"filename": "convertidor/plugin.py"}, {"filename": "README.md"}],
+}
+
+IDENTICOS = {"status": "identical", "ahead_by": 0, "commits": [],
+             "base_commit": {"sha": "4b9f7ab0000", "commit": {"author": {"date": "2026-09-16T10:00:00Z"}}},
+             "files": []}
+
+
+def test_cambios_desde_dice_que_se_tocó_y_dónde_quedó_la_rama():
+    r = cat.cambios_desde("o/r", "4b9f7ab", "draft", _abrir_falso({"/compare/": COMPARACION}))
+
+    assert r["head"] == "e7ef323"
+    assert r["adelante"] == 3
+    assert r["rutas"] == ["convertidor/plugin.py", "README.md"]
+
+
+def test_sin_nada_en_el_medio_la_cabeza_es_la_base():
+    """`status: identical`: la rama está donde se instaló, no hay versión nueva."""
+    r = cat.cambios_desde("o/r", "4b9f7ab", "draft", _abrir_falso({"/compare/": IDENTICOS}))
+
+    assert (r["head"], r["adelante"], r["rutas"]) == ("4b9f7ab", 0, [])
+    assert cat._toca(r["rutas"], "convertidor") is False
+
+
+def test_si_github_no_contesta_no_se_dice_nada():
+    """Es información de más en una pantalla que ya funciona: no puede romperla."""
+    def abrir(url, destino=None, token=None):
+        raise OSError("sin red")
+
+    assert cat.cambios_desde("o/r", "4b9f7ab", "draft", abrir) is None
+    assert cat.cambios_desde("o/r", "", "draft", abrir) is None
+
+
+def test_toca_mira_la_carpeta_del_plugin_y_no_el_prefijo():
+    rutas = ["convertidor/plugin.py", "README.md", "convertidor-viejo/x.py"]
+
+    assert cat._toca(rutas, "convertidor") is True
+    assert cat._toca(rutas, "archivos") is False
+    # "convertidor-viejo" empieza igual que "convertidor" y no es lo mismo.
+    assert cat._toca(["convertidor-viejo/x.py"], "convertidor") is False
+
+
+def _listar_con(monkeypatch, tmp_path, procedencia, entradas):
+    monkeypatch.setattr(cat, "cambios_desde", lambda *a, **k: {
+        "head": "e7ef323", "fecha": "2026-09-17T22:00:00Z", "adelante": 3,
+        "rutas": [f["filename"] for f in COMPARACION["files"]],
+    })
+    monkeypatch.setattr(cat, "entradas", lambda *a, **k: entradas)
+    monkeypatch.setattr(cat, "ramas", lambda *a, **k: ["draft"])
+    monkeypatch.setattr(cat, "procedencia_de", lambda _d, modulo: dict(procedencia) or None)
+    monkeypatch.setattr(cat, "configuracion", lambda _i: {"repo": "o/r", "branch": "draft"})
+    monkeypatch.setattr(cat, "token_de", lambda _i: None)
+    import webapp.plugin_install as pi
+    monkeypatch.setattr(pi, "instalados", lambda _d: [{"name": e["module"]} for e in entradas])
+
+    class Inst:
+        boot = type("B", (), {"plugins_dir": tmp_path})()
+    return {e["name"]: e for e in cat.listar(Inst())["entries"]}
+
+
+def test_solo_marca_el_plugin_que_cambio(tmp_path, monkeypatch):
+    """
+    El falso positivo que tenía la primera versión: la procedencia guarda el
+    commit de la **rama** al instalar, no el de la carpeta del plugin, así que
+    comparar uno contra otro marcaba como desactualizado hasta lo recién
+    instalado. Comparando lo que cambió entre los dos commits, sólo se marca
+    el que de verdad se tocó.
+    """
+    entradas = [
+        {"name": "convertidor", "module": "convertidor", "path": "convertidor", "installable": True},
+        {"name": "archivos", "module": "archivos", "path": "archivos", "installable": True},
+    ]
+    r = _listar_con(monkeypatch, tmp_path, {"commit": "4b9f7ab", "branch": "draft"}, entradas)
+
+    assert r["convertidor"]["hay_nueva"] is True
+    assert r["archivos"]["hay_nueva"] is False
+    assert r["convertidor"]["upstream"]["head"] == "e7ef323"
+
+
+@pytest.mark.parametrize("procedencia", [
+    {"commit": "4b9f7ab", "branch": "cured"},   # otra rama: no comparable
+    {},                                          # instalado a mano
+])
+def test_sin_con_que_comparar_no_se_inventa(tmp_path, monkeypatch, procedencia):
+    entradas = [{"name": "convertidor", "module": "convertidor", "path": "convertidor", "installable": True}]
+    r = _listar_con(monkeypatch, tmp_path, procedencia, entradas)
+
+    assert r["convertidor"]["hay_nueva"] is False
+    assert r["convertidor"]["upstream"] is None
