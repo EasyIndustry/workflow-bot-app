@@ -6,6 +6,42 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-23
 
+- **Lo que le faltaba a `bots` del lado de la app: abrir pestaña, check
+  persistente, y el respaldo de título.** El agente de plugins dejó un doc
+  (no puede abrir issues en este repo) pidiendo tres cosas para su plugin
+  `bots`; se negoció qué forma tenían que tener sin romper que ninguna
+  pantalla conozca un plugin por nombre y que `backend/` no se edita
+  (ver docs/pendientes.md → Plugins (catálogo)):
+  - `outputs.abrir_url` en el resultado de cualquier Action de fila abre una
+    pestaña nueva (`plugins.js`, `botonDeFila`). La ventana se abre en el
+    mismo click —antes del `await` de la Action— para no chocar con el popup
+    blocker, y **sin** `noopener` al abrirla: con `noopener` puesto ahí
+    `window.open` devuelve `null` y no queda cómo redirigirla después, así
+    que se abría una pestaña en blanco huérfana y una segunda con la URL de
+    verdad. El corte de la referencia hacia esta pestaña (lo que `noopener`
+    daría) se hace después, con `ventana.opener = null` antes de asignarle
+    `location`.
+  - `outputs.indicador` (`{estado, texto}`, en el ok y en el err) es el check
+    de la fila. El doc proponía guardarlo en `plugin_items` —la tabla de
+    `backend/`, o directo en la fila del plugin dueño de la colección—; los
+    dos tocan algo que no corresponde (esquema del núcleo, o un campo `_`
+    que `TableStore.write` descarta igual). Se guarda en su propia colección
+    (`webapp/indicadores.py`, `resource_store("webapp", ...)`, igual
+    mecanismo que `identidad.py`), y `GET /resources/<plugin>/<resource>` lo
+    suma a cada item como `_indicador`, calculado ahí y no guardado en la
+    fila del plugin.
+  - El `?bot=` de la URL con la que se abrió la pestaña es el respaldo del
+    título cuando el Bot remoto todavía no se puso nombre (`main.js`,
+    prioridad `/identidad` → `?bot=` → "Bot").
+
+  El plugin `botsMiNombre` que pedía el doc no se hizo: ya estaba resuelto
+  por `/identidad` de forma genérica, que es lo que el propio doc pedía como
+  mejor opción. Verificado por CDP contra un plugin de prueba
+  (`webapp/tests/plugin_con_accion_de_fila.py`): "Abrir en pestaña" abre una
+  sola pestaña (no dos) que navega a la URL real y titula con `?bot=`;
+  "Probar" deja el check verde/rojo visible sin recargar. Tests:
+  `webapp/tests/test_indicadores.py`.
+
 - **Cómo se llama este Bot, para titular la pestaña (`webapp/identidad.py`,
   `GET`/`PUT /identidad`, Config → General).** Con varios Bots abiertos en
   pestañas del mismo navegador —cada uno por su IP— todas decían "Bot" y no

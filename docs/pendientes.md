@@ -78,11 +78,13 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
 - `bots`: falta el reclamo atómico para Bots colaborativos con la misma
   lista; es un campo en la fuente de datos (una Action de `connections`),
   no un tool más.
-- `bots`: abrir una pestaña nueva hacia otro Bot conocido (23/09). La app ya
-  expone `GET /identidad` con el nombre que ese Bot se puso, y el propio Bot
-  titula su pestaña solo con eso (`main.js`) — no depende de que `bots` esté
-  instalado en el destino. Lo que falta es del lado del plugin: la acción
-  que abre la pestaña (probablemente con el port `window`) y si usa el
-  nombre propio del Bot remoto, el alias que la persona le puso a la
-  conexión al darla de alta, o los dos.
+- `bots`: abrir una pestaña nueva hacia otro Bot conocido y dejar un check
+  persistente de "Probar conexión" por fila (23/09) — ver estado-del-proyecto
+  del mismo día. Del lado de la app ya está todo: `outputs.abrir_url` en
+  cualquier Action de fila abre la pestaña (`plugins.js`), `outputs.indicador`
+  se guarda y se dibuja como check (`webapp/indicadores.py`), y `?bot=` en la
+  URL titula la pestaña cuando el Bot remoto no se nombró a sí mismo
+  (`main.js`). Nada de esto depende de que `bots` esté instalado. Lo que
+  falta es sólo del lado del plugin: que sus Actions "probar" y "abrir"
+  devuelvan esas dos claves.
 - Sincronía manual entre el catálogo privado y el índice público.

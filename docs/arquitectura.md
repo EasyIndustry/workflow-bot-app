@@ -40,6 +40,7 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `webapp/plugin_install.py` · `plugin_catalog.py` | instalar un plugin desde archivo o desde el catálogo en GitHub, validando en otro proceso |
 | `webapp/updates.py` | actualizar `backend/` y `webapp/` desde releases, por `Componente` |
 | `webapp/identidad.py` | cómo se llama este Bot (Config → General); `main.js` lo usa para titular la pestaña |
+| `webapp/indicadores.py` | el check persistente de una Action de fila (`outputs.indicador`), por `(plugin, resource, item)`; `GET /resources/...` lo suma a cada item como `_indicador` |
 | `webapp/agent_providers.py` · `instalar_agente.py` · `mcp_registration.py` · `mcp_servidor.py` · `agent_terminal.py` | la pestaña Agente: CLIs, su instalación, su registro MCP, el servidor MCP de la instalación, la terminal por websocket |
 | `webapp/bandeja.py` | el ícono de la bandeja del sistema |
 | `webapp/static/js/views/*.js` | una vista por pestaña; `api.js` es el único que habla con la API; `dom.js` el `h()` |
@@ -58,8 +59,8 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `GET /tools`, `GET /plugins`, `POST /plugins/install`, `GET /plugins/catalog`, `POST /plugins/catalog/install` | plugins |
 | `GET /tools/<tool>/params-extra?<params>` | los params extra que ese tool acepta según lo que el nodo ya tiene elegido |
 | `GET /limites`, `PUT /limites/raices`, `PUT /limites/programas` | hasta dónde llega la instalación: carpetas y programas permitidos |
-| `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…). Los campos `secret` salen en `None`; un PUT que los manda así conserva el guardado, `""` lo vacía |
-| `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar). Su resultado puede traer `outputs.vista` y la pantalla lo dibuja: tabla, casillas y una acción de seguimiento |
+| `GET/PUT/DELETE /resources/<plugin>/<coleccion>[/<clave>]` | items de colecciones (conexiones, Bots conocidos…). Los campos `secret` salen en `None`; un PUT que los manda así conserva el guardado, `""` lo vacía. El GET suma `_indicador` a cada item si tiene uno guardado (`webapp/indicadores.py`); el DELETE borra el suyo de paso |
+| `POST /actions/<plugin>/<accion>` | una Action de plugin (probar, previsualizar). Su resultado puede traer `outputs.vista` y la pantalla lo dibuja: tabla, casillas y una acción de seguimiento. `outputs.abrir_url` (http/https) abre una pestaña nueva en vez de mostrar el modal — cualquier Action de fila puede usarlo, no sólo una en particular. `outputs.indicador` (`{estado, texto}`, en el ok y en el err) se guarda como el check de esa fila si la Action está atada a una colección (`item` en el body) |
 | `POST /diff`, `POST /migrar` | qué difiere contra otro Bot, y empujarle lo elegido. **Sólo desde la propia máquina**: la pantalla corre acá y un plugin que lo ofrezca corre adentro del propio Bot. `incluir_secretos` arranca en `false` — el item viaja igual y el destino conserva los suyos |
 | `POST /migrar/recibir` | el otro lado: abre el sobre cifrado y escribe. Que el sobre abra **es** la autenticación de esta ruta — la única autenticada |
 | `GET/POST/DELETE /emparejamientos`, `POST /emparejamientos/importar` | la clave compartida con otro Bot; la pantalla es Config → Emparejamientos. **Sólo desde la propia máquina** (`127.0.0.1`): con esto abierto a la red, cualquiera pediría un código y el sobre dejaría de autenticar. La clave no sale nunca; el código se ve una vez. Abrir el Bot por su IP, aun sentado en esa PC, también da 403 — la pantalla lo explica en vez de mostrar el error |

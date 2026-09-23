@@ -713,7 +713,16 @@ async function seccionResource(plugin, recurso) {
   // Nombre"—, así que se la saca de los tres.
   const campoClave = (recurso.fields || []).find((f) => f.name === claveDe);
   const columnas = [
-    { clave: claveDe, label: (campoClave && campoClave.label) || "Nombre", ancho: "230px", peso: "600" },
+    {
+      clave: claveDe, label: (campoClave && campoClave.label) || "Nombre", ancho: "230px", peso: "600",
+      // `_indicador`: el último resultado de una Action de fila sobre este
+      // item (webapp/indicadores.py) — lo calcula el servidor, no viene del
+      // plugin. Ausente = nunca se probó, y no se dibuja nada.
+      render: (fila) => h("span", { style: { display: "flex", alignItems: "center", gap: "6px", minWidth: "0" } }, [
+        h("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, text: fila[claveDe] }),
+        indicadorDeFila(fila),
+      ]),
+    },
     ...(recurso.fields || []).filter((f) => f.name !== claveDe).slice(0, 3).map((f) => ({
       clave: f.name, label: f.label || f.name, mono: true,
       ancho: f.type === "enum" ? "110px" : null,
@@ -774,6 +783,20 @@ async function seccionResource(plugin, recurso) {
     // propio vacío, y aparecía dos veces.
     recurso.doc && items.length ? h("div", { class: "tabla__pie", text: recurso.doc }) : null,
   ]);
+}
+
+/** El badge de `_indicador` al lado del nombre, o nada si el item nunca se probó. */
+function indicadorDeFila(fila) {
+  const marca = fila._indicador;
+  if (!marca) return null;
+  const ok = marca.estado === "ok";
+  return h("span", {
+    class: "badge " + (ok ? "badge--ok" : "badge--error"),
+    style: { flex: "0 0 auto" },
+    title: (marca.texto || (ok ? "última vez, ok" : "última vez, error"))
+      + (marca.updated_at ? ` · ${new Date(marca.updated_at * 1000).toLocaleString()}` : ""),
+    text: ok ? "✓" : "✕",
+  });
 }
 
 /**
@@ -859,6 +882,21 @@ function botonDeFila(plugin, recurso, accion, fila, claveDe) {
   const clave = String(fila[claveDe]);
 
   const abrir = () => {
+    // `outputs.abrir_url`: cualquier Action de fila puede devolverlo para que
+    // la app abra lo que sea que apunte en una pestaña nueva — el plugin
+    // `bots` es el primer caso, no el único que esto conoce. La ventana se
+    // abre ahora, en el mismo click, antes de esperar la respuesta: un
+    // `window.open()` después de un `await` puede quedar bloqueado por el
+    // popup blocker. Si la Action no trae `abrir_url`, se cierra sola.
+    //
+    // Sin `noopener` acá: con esa opción `window.open` devuelve `null` —es la
+    // forma en que el propio navegador corta la referencia—, así que no
+    // quedaría cómo redirigirla después y esta ventana en blanco quedaría
+    // abierta y huérfana para siempre. La retiene el Bot mismo, así que igual
+    // no hay nada que un `opener` pueda tocar del lado de la pestaña nueva.
+    let ventana = null;
+    try { ventana = window.open("about:blank", "_blank"); } catch { /* sin permiso del navegador: se sigue sin abrir nada */ }
+
     const cuerpo = h("div", { class: "cargando", text: "Ejecutando…" });
     let modal;
     // Un solo modal para toda la secuencia: la acción de seguimiento de una
@@ -875,9 +913,37 @@ function botonDeFila(plugin, recurso, accion, fila, claveDe) {
       const item = declarada && declarada.resource ? clave : null;
       try {
         const resp = await api.ejecutarAccion(plugin.name, cual, params, item);
+        const outputs = resp.result.outputs || {};
+
+        // `outputs.indicador` (webapp/indicadores.py) ya quedó guardado del
+        // lado del servidor al ejecutar la Action; acá sólo hace falta
+        // refrescar la tabla para que el check de la fila se vea al tiro, sin
+        // esperar a la próxima vez que se abra el plugin. En segundo plano:
+        // el modal de resultado no tiene que esperarlo.
+        if (outputs.indicador) dibujarPlugin(plugin).catch(() => {});
+
+        const url = resp.result.status === "ok" && typeof outputs.abrir_url === "string"
+          && /^https?:\/\//.test(outputs.abrir_url) ? outputs.abrir_url : null;
+        if (url) {
+          if (ventana) {
+            // `ventana.opener = null` corta la referencia hacia acá antes de
+            // mandarla a otro origen — lo que hace `noopener` normalmente,
+            // pero puesto después de abrir en vez de al abrir, porque antes
+            // hacía falta la referencia para poder redirigirla.
+            try { ventana.opener = null; } catch { /* algunos navegadores no dejan: sigue igual */ }
+            ventana.location = url;
+          } else {
+            window.open(url, "_blank", "noopener");
+          }
+          ventana = null;  // ya se usó: que el finally no la cierre
+          modal.cerrar();
+          return;
+        }
         poner(cuerpo, dibujarResultadoDeAccion(resp.result, plugin, correr));
       } catch (e) {
         poner(cuerpo, aviso("error", "No se pudo ejecutar", e.message));
+      } finally {
+        if (ventana) { ventana.close(); ventana = null; }
       }
     };
     modal = abrirModal({

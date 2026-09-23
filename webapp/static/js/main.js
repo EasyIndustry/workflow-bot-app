@@ -61,7 +61,13 @@ alCambiar(navegar);
 // tanto en la pestaña propia como en la que otra máquina abrió con la IP de
 // ésta, porque cada Bot titula la suya sola, sin depender de qué la abrió.
 function titular(r) {
-  document.title = (r && r.nombre) || "Bot";
+  // Si este Bot todavía no se puso nombre (Config → General), el `?bot=` con
+  // el que se abrió la pestaña es el respaldo: el alias que la persona le
+  // puso a esta conexión en su lista, guardado en su propia colección — más
+  // útil que un Bot sin nombrar. Es una convención genérica de la URL, no
+  // algo que sepa de qué plugin la puso ahí.
+  const desdeUrl = new URLSearchParams(location.search).get("bot");
+  document.title = (r && r.nombre) || desdeUrl || "Bot";
 }
 
 // Sin hash: una instalación recién hecha —sin plugins, fuentes ni flujos—

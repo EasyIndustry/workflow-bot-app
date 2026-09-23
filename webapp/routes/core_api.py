@@ -49,7 +49,7 @@ from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
 from backend.core.users import DEFAULTS_POR_KIND, KINDS, UserError  # noqa: E402
-from webapp import contexto_agente, db_view, emparejamiento, identidad, items_secretos, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
+from webapp import contexto_agente, db_view, emparejamiento, identidad, indicadores, items_secretos, librerias, limites, migracion, plugin_catalog, plugin_install, updates  # noqa: E402
 from webapp import (  # noqa: E402
     agent_provider_config,
     agent_providers,
@@ -1302,9 +1302,19 @@ _con_los_secretos_guardados = items_secretos.con_los_secretos_guardados
 def list_resource(plugin: str, resource: str):
     """Items de una colección que administra un plugin (conexiones, comandos…)."""
     definicion = _resource(plugin, resource)
+    items = _instance.resource_items_masked(plugin, resource)
+    # `_indicador`: el último resultado de una Action de fila sobre cada item
+    # (webapp/indicadores.py), calculado acá y no guardado en el item del
+    # plugin — ver el docstring de ese módulo. Ausente = nunca se probó.
+    marcas = indicadores.de_coleccion(_instance, plugin, resource)
+    clave = definicion.key_field
+    for item in items:
+        marca = marcas.get(str(item.get(clave)))
+        if marca:
+            item["_indicador"] = marca
     return {
         "resource": definicion.to_dict(),
-        "items": _instance.resource_items_masked(plugin, resource),
+        "items": items,
     }
 
 
@@ -1344,6 +1354,7 @@ def delete_resource_item(plugin: str, resource: str, key: str):
         _store(plugin, resource).delete(key)
     except ResourceError as exc:
         raise HTTPException(404, str(exc)) from None
+    indicadores.borrar(_instance, plugin, resource, key)
     _regenerar_manual()
     return {"ok": True}
 
@@ -1945,6 +1956,18 @@ async def run_plugin_action(plugin: str, action: str, body: ActionBody):
     resultado, registro = await run_in_threadpool(
         lambda: _instance.run_action(plugin, action, params=body.params, item=body.item)
     )
+    # `outputs.indicador` (en el ok y en el err) es el check persistente de la
+    # fila (webapp/indicadores.py). Sólo tiene dónde guardarse si la Action
+    # corrió atada a un item de una colección: `item` trae la clave y la
+    # propia Action declarada dice de qué resource.
+    if body.item:
+        declarada = next((a for a in _instance.registry.actions_of(plugin) if a.name == action), None)
+        indicador = (resultado.outputs or {}).get("indicador")
+        if declarada and declarada.resource and isinstance(indicador, dict):
+            indicadores.guardar(
+                _instance, plugin, declarada.resource, body.item,
+                str(indicador.get("estado") or ""), str(indicador.get("texto") or ""),
+            )
     return {
         "result": resultado.to_dict(),
         "log": [{"message": mensaje, "level": nivel} for mensaje, nivel in registro],
