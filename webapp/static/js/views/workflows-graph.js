@@ -265,8 +265,11 @@ export function dibujarGrafo(grafo, {
     // arrastre corta su propio `click` antes de llegar acá (ver
     // `hacerPaneable`), así que mover el dibujo no cierra lo que uno estaba
     // mirando.
+    // Los controles del zoom y el pie (Correr, Registro y su menú) tampoco:
+    // acercar el dibujo o elegir la fila con un nodo abierto lo cerraba y
+    // rehacía la pantalla, y el menú de Registro desaparecía a mitad de uso.
     envoltura.addEventListener("click", (e) => {
-      if (e.target.closest && e.target.closest(".lienzo__arista, [data-nodo-id], [data-interactivo], .lienzo__panel")) return;
+      if (e.target.closest && e.target.closest(".lienzo__arista, [data-nodo-id], [data-interactivo], .lienzo__panel, .lienzo__controles, .lienzo__pie")) return;
       soltarArista();
       if (alClicFondo) alClicFondo();
     });
@@ -1473,13 +1476,25 @@ function crearPanelFlotante(clase) {
   let alClicAfuera = null;
   let alTecla = null;
   let donde = null;
+  let pendiente = null;
+
+  // Los listeners se sacan siempre, esté o no abierto, y el timer que los
+  // cuelga se cancela: con un doble clic en el "+", el segundo clic abría
+  // (timer en vuelo), el `dblclick` cerraba antes de que hubiera nada que
+  // sacar, y después el timer colgaba un `keydown` en captura sobre un panel
+  // ya cerrado. Ese Escape huérfano se tragaba todos los demás de la app —
+  // modales incluidos— hasta recargar.
+  const soltarEscuchas = () => {
+    if (pendiente) { clearTimeout(pendiente); pendiente = null; }
+    if (alClicAfuera) { document.removeEventListener("pointerdown", alClicAfuera, true); alClicAfuera = null; }
+    if (alTecla) { document.removeEventListener("keydown", alTecla, true); alTecla = null; }
+  };
 
   const cerrar = () => {
+    soltarEscuchas();
     if (elemento.hidden) return;
     elemento.hidden = true;
     elemento.replaceChildren();
-    if (alClicAfuera) { document.removeEventListener("pointerdown", alClicAfuera, true); alClicAfuera = null; }
-    if (alTecla) { document.removeEventListener("keydown", alTecla, true); alTecla = null; }
   };
 
   // Adentro del visor: un panel alto abierto abajo se sale de la ventana, y
@@ -1502,11 +1517,16 @@ function crearPanelFlotante(clase) {
   };
 
   const abrir = (clientX, clientY, hijos) => {
+    // Reabrir sin cerrar antes (otro "+" con el menú abierto) no puede dejar
+    // un par de listeners de más.
+    soltarEscuchas();
     donde = { x: clientX, y: clientY };
     elemento.hidden = false;
     reemplazar(hijos);
     // En el siguiente turno, para que el mismo gesto que lo abrió no lo cierre.
-    setTimeout(() => {
+    pendiente = setTimeout(() => {
+      pendiente = null;
+      if (elemento.hidden) return;
       alClicAfuera = (e) => { if (!elemento.contains(e.target)) cerrar(); };
       alTecla = (e) => { if (e.key === "Escape") { e.stopPropagation(); cerrar(); } };
       document.addEventListener("pointerdown", alClicAfuera, true);

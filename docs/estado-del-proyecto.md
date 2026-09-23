@@ -6,6 +6,18 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-23
 
+- **Tres bugs del lienzo, arreglados** (rama `lienzo-n8n-main`,
+  v0.5.0-lienzo.3). Verificado por CDP con mouse y teclado reales, y la
+  misma prueba contra lienzo.2 los reproduce los tres:
+  - Cambiar o quitar una arista desde el nodo abierto redibuja el lienzo
+    entero (conserva el encuadre y el scroll del panel). Antes el SVG quedaba
+    con la arista vieja, y un "+" sobre ella creaba un nodo sin entradas.
+  - Doble clic en un "+" ya no deja un `keydown` en captura colgado de
+    `document`: el menú cancela el timer que lo cuelga al cerrarse. Ese
+    listener se tragaba todos los Escape de la app hasta recargar.
+  - El zoom y el pie (Correr, Registro y su menú) no cuentan como clic en el
+    fondo: con un nodo abierto lo cerraban y rehacían la pantalla.
+
 - **La rueda sobre el nodo abierto del lienzo scrollea sus params** en vez
   de hacer zoom (rama `lienzo-n8n-main`, v0.5.0-lienzo.2). Ctrl+rueda sigue
   siendo zoom en cualquier lado, y al llegar al final del panel la rueda no
@@ -23,10 +35,8 @@ desarrollo o la PC de un cliente), no sólo con tests.
   meterlo en main. El nodo abierto en el lienzo ahora recibe
   `columnasDeLaFila` (lo que main le daba a la tarjeta flotante, que la rama
   reemplazó), y volver al flujo conserva el dry run pero nunca hereda
-  `dryCorriendo`. Sigue con los hallazgos de la revisión sin arreglar: el
-  lienzo no se redibuja cuando el editor del nodo cambia aristas, un doble
-  clic en "+" deja un listener de Escape colgado en `document`, y los
-  controles de zoom y Registro cuentan como clic en el fondo.
+  `dryCorriendo`. Los tres hallazgos graves de la revisión se arreglaron
+  después, en lienzo.3 (arriba).
 
 - **El aviso de salidas repetidas en una tarjeta va de a una línea por
   grupo de nodos, no por salida.** Dos nodos del mismo tool dejan todas sus

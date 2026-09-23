@@ -71,7 +71,8 @@ export function panelDeNodo(id, grafo, catalogo, { alCambiar, alCerrar, alAbrirC
     ]),
     // `overscrollBehavior`: al llegar al final, la rueda no sigue de largo a
     // scrollear lo que haya detrás del lienzo.
-    h("div", { style: { flex: "1", minHeight: "0", overflow: "auto", overscrollBehavior: "contain" } }, [
+    // La clase la busca `workflows.js` para reponer el scroll al redibujar.
+    h("div", { class: "nodo-panel__scroll", style: { flex: "1", minHeight: "0", overflow: "auto", overscrollBehavior: "contain" } }, [
       paso ? resultadoDry(paso) : null,
       contenidoDeNodo(id, grafo, catalogo, alCambiar, columnasDeLaFila),
     ]),

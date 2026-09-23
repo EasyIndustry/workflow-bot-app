@@ -820,11 +820,21 @@ function panelRender(a) {
       // edita el grafo, no el texto, sin cambiar de pestaña.
       a.fuenteDeVerdad = "grafo";
       marcarSucio(a);
-      // Sólo si cambió la estructura (tool, aristas) se rearma el panel: un
-      // simple tipeo no lo necesita, y hacerlo igual le haría perder el foco
-      // al input a la primera tecla. Se rearma el panel solo, no el dibujo:
-      // las medidas del nodo abierto son fijas, así que el layout no cambia.
-      if (redibujar) diagramaEl.actualizarPanel();
+      // Sólo si cambió la estructura (tool, aristas) se redibuja: un simple
+      // tipeo no lo necesita, y hacerlo igual le haría perder el foco al
+      // input a la primera tecla. Y es el dibujo entero, no sólo el panel:
+      // quitar o redirigir una arista desde acá dejaba el SVG con la vieja,
+      // y sus herramientas apuntando a un objeto que ya no estaba en
+      // `grafo.edges` — un "+" ahí creaba un nodo sin ninguna entrada. El
+      // encuadre ya sobrevive a `dibujar()`; el scroll del panel se repone
+      // acá, para que editar una arista de abajo no lo mande arriba.
+      if (redibujar) {
+        const caja = shell.vista.querySelector("foreignObject .nodo-panel__scroll");
+        const scroll = caja ? caja.scrollTop : 0;
+        dibujar();
+        const nueva = shell.vista.querySelector("foreignObject .nodo-panel__scroll");
+        if (nueva) nueva.scrollTop = scroll;
+      }
     },
     alCerrar: () => { a.seleccionado = null; dibujar(); },
     alAbrirCompleta: () => {
