@@ -4,6 +4,15 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-09-23
+
+- **Núcleo v0.3.1-beta.12 vendorizado: core#33.** `FsPort.walk(max_depth)`
+  para listar los hijos directos de una carpeta sin statear ni recursar todo
+  el árbol: bajar a una subcarpeta de un share con 50k entradas costaba 80 s.
+  Es un cambio del port, lo aprovechan los plugins (`archivos`); la web app no
+  llama a `walk` y no cambia nada. `backend/tests/test_adapters.py` verde en
+  Windows (73). Sale en v0.5.0-beta.8.
+
 ## 2026-09-22
 
 - **La tarjeta de decisión también ofrece las variables.** El campo Variable
