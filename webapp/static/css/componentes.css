@@ -334,7 +334,11 @@
 .resaltado > * { grid-area: 1 / 1; min-width: 0; }
 .resaltado__espejo { pointer-events: none; overflow: hidden; white-space: pre; color: var(--texto); }
 .resaltado__campo { position: relative; background: transparent; color: transparent; caret-color: var(--texto); }
-.resaltado__campo::selection { color: transparent; }
+/* Con un `::selection` declarado, Chrome deja de pintar el fondo de la
+   selección por defecto: sólo con `color` se seleccionaba sin que se viera.
+   Translúcido porque el campo va encima del espejo, que es el que muestra
+   las letras. */
+.resaltado__campo::selection { color: transparent; background: color-mix(in srgb, var(--azul) 30%, transparent); }
 /* Sin `font-weight`: la negrita ensancha la letra y el espejo dejaría de
    coincidir con el input. El trazo se engorda con la sombra, que no mueve nada. */
 .variable {
