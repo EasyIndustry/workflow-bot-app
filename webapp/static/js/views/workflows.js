@@ -26,7 +26,7 @@ import { aviso } from "../components/aviso.js";
 import { crearEditorDeCodigo } from "../components/editor-codigo.js";
 import { dibujarGrafo } from "./workflows-graph.js";
 import { dibujarMermaid } from "./workflows-mermaid.js";
-import { pilaDeTarjetas, textoBuscable, crearNodo, quitarNodo } from "./workflows-cards.js";
+import { pilaDeTarjetas, textoBuscable, crearNodo, quitarNodo, etiquetaCorta } from "./workflows-cards.js";
 import { panelDeNodo } from "./workflows-node-panel.js";
 import { soloDiagrama, guardarSoloDiagrama } from "../preferencias.js";
 
@@ -782,13 +782,24 @@ function marcarSucio(a) {
  */
 function pinturaDry(a) {
   const trace = (a.dryRun && a.dryRun.run && a.dryRun.run.trace) || [];
+  const logs = (a.dryRun && a.dryRun.run && a.dryRun.run.logs) || [];
+  // En seco las acciones no corren, así que una decisión sobre la salida de
+  // una (`{status}` de una llamada) no tiene valor: el núcleo sigue por la
+  // primera rama y deja un warning con el `node_id`. Esa decisión se pinta
+  // en ámbar y con el aviso, no con un tilde como si hubiera evaluado.
+  const sinValor = new Map(logs
+    .filter((l) => l.level === "warning" && l.node_id && /sin valor conocido/.test(l.message || ""))
+    .map((l) => [l.node_id, l.message]));
   const estados = {};
   const pasos = {};
   const recorridas = new Set();
   trace.forEach((paso, i) => {
     const id = paso.node_id || paso.node;
-    estados[id] = paso.status === "err" ? "err" : "ok";
-    pasos[id] = paso;
+    const aviso = paso.node_type === "decision" && paso.status !== "err" && sinValor.has(id);
+    estados[id] = paso.status === "err" ? "err" : aviso ? "aviso" : "ok";
+    pasos[id] = aviso
+      ? { ...paso, message: `${sinValor.get(id).replace(/^\[DRY\]\s*/, "")}. Para probar otra, abrí la decisión y elegí la rama.` }
+      : paso;
     if (i > 0) recorridas.add(`${trace[i - 1].node_id || trace[i - 1].node}→${id}`);
   });
   const fallo = trace.find((p) => p.status === "err");
@@ -818,8 +829,22 @@ function panelRender(a) {
   let diagramaEl;
   const armarPanel = (id) => panelDeNodo(id, a.grafo, catalogo, {
     paso: pinturaDry(a).pasos[id] || null,
+    estado: pinturaDry(a).estados[id] || null,
     hayCorrida: Boolean(a.dryRun),
     columnasDeLaFila: () => columnasDeLaFila(a),
+    // Sólo en una decisión: qué rama probar en seco. Elegir otra vuelve a
+    // correr si ya había un resultado a la vista, para que el cambio se vea.
+    ramaDry: a.grafo.nodes[id] && a.grafo.nodes[id].type === "decision" ? {
+      ramas: ramasDeDecision(a, id).map((r) => ({ ...r, etiqueta: `${r.condicion} → ${etiquetaCorta(r.destino, a.grafo)}` })),
+      elegida: (a.ramasDry || {})[id] ?? null,
+      alElegir: (valor) => {
+        a.ramasDry = { ...(a.ramasDry || {}) };
+        if (valor == null) delete a.ramasDry[id];
+        else a.ramasDry[id] = valor;
+        if (a.dryRun) correrDry(a);
+        else if (diagramaEl.actualizarPanel) diagramaEl.actualizarPanel();
+      },
+    } : null,
     grande: Boolean(nodoGrande),
     alAgrandar: () => {
       nodoGrande = nodoGrande ? null : diagramaEl.medidaGrande();
@@ -1108,6 +1133,33 @@ function resumenDry(a) {
  * (`actualizarDryRun`), la tarjeta flotante del nodo elegido y la barra del
  * pie. Nada de esto pasa por `dibujar()` a propósito — ver `barraDryRun`.
  */
+/**
+ * Las ramas que se eligieron a mano para el dry run, como columnas de la fila:
+ * `{status: "404"}`. Funciona sin nada nuevo en el núcleo porque la decisión
+ * lee primero la fila y después las variables (`decision_value`), y en seco
+ * las variables que dejan las acciones no existen. Sólo viaja en el dry run:
+ * la corrida de verdad no lo manda nunca.
+ */
+function valoresDeRamas(a) {
+  const valores = {};
+  for (const [id, valor] of Object.entries(a.ramasDry || {})) {
+    const nodo = a.grafo.nodes[id];
+    if (nodo && nodo.type === "decision" && nodo.variable && valor != null) valores[nodo.variable] = valor;
+  }
+  return valores;
+}
+
+/**
+ * Las ramas que una decisión puede tomar, para el selector del dry run: una
+ * por arista con condición. Una condición con coma (`Impresion,Terminado`)
+ * entra con cualquiera de los valores, así que alcanza con el primero.
+ */
+function ramasDeDecision(a, id) {
+  return (a.grafo.edges || [])
+    .filter((e) => e.from === id && e.condition)
+    .map((e) => ({ condicion: e.condition, valor: e.condition.split(",")[0].trim(), destino: e.to }));
+}
+
 async function correrDry(a) {
   if (a.dryCorriendo) return;
   a.dryCorriendo = true;
@@ -1120,7 +1172,7 @@ async function correrDry(a) {
     a.dryRun = await api.validar({
       flow: a.nombre,
       case_id: r ? r.clave : "dry-run",
-      row: r ? r.fila : {},
+      row: { ...(r ? r.fila : {}), ...valoresDeRamas(a) },
       source: r ? r.fuente : "",
     });
   } catch (e) {
@@ -1287,7 +1339,11 @@ function detalleDry(a) {
 
   const d = a.dryRun;
   const faltantes = Object.entries(d.missing_config || {});
-  const pasos = (d.run && d.run.trace) || [];
+  // Lo mismo que pinta el lienzo: una decisión sin valor va en ámbar y con el
+  // aviso, no como "ok".
+  const pintura = pinturaDry(a);
+  const pasos = ((d.run && d.run.trace) || []).map((p) => pintura.pasos[p.node_id || p.node] || p);
+  const estadoDe = (p) => pintura.estados[p.node_id || p.node];
 
   const columnas = [
     { clave: "node_id", label: "Nodo", ancho: "130px", mono: true,
@@ -1295,14 +1351,22 @@ function detalleDry(a) {
     { clave: "fn", label: "Tool", ancho: "170px", mono: true },
     {
       clave: "status", label: "", ancho: "62px",
-      render: (p) => h("span", { class: p.status === "err" ? "badge badge--error" : "badge badge--ok",
-                                 text: p.status || "ok" }),
+      render: (p) => h("span", {
+        class: p.status === "err" ? "badge badge--error" : estadoDe(p) === "aviso" ? "badge badge--falta" : "badge badge--ok",
+        text: estadoDe(p) === "aviso" ? "sin valor" : p.status || "ok",
+      }),
     },
     {
       // La columna que justifica el producto: los params **ya resueltos**, con
       // las interpolaciones hechas. Es lo que nadie puede saber leyendo el .mmd.
+      // En una decisión, el valor con que decidió.
       clave: "params", label: "Parámetros ya resueltos", envuelve: true,
       render: (p) => {
+        if (p.node_type === "decision") {
+          const nodo = a.grafo.nodes[p.node_id] || {};
+          return h("span", { class: "mono", style: { fontSize: "11px" },
+                             text: p.decision_value ? `${nodo.variable || "valor"}="${p.decision_value}"` : "sin valor" });
+        }
         const params = p.params || {};
         const claves = Object.keys(params);
         if (!claves.length) return "—";

@@ -816,7 +816,7 @@ function aristas(id, grafo, alCambiar) {
   ].filter(Boolean);
 }
 
-function etiquetaCorta(id, grafo) {
+export function etiquetaCorta(id, grafo) {
   const nodo = grafo.nodes[id] || {};
   const nombre = nodo.display || nodo.label || nodo.variable || nodo.fn || "";
   return nombre ? `${id} — ${nombre}` : id;

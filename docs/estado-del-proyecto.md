@@ -6,6 +6,25 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-23
 
+- **El dry run del lienzo dice cuándo una decisión no tuvo valor, y deja
+  elegir qué rama probar** (rama `lienzo-n8n-main`, v0.5.0-lienzo.5). En seco
+  las acciones no corren, así que una decisión sobre lo que deja una
+  (`{status}` de una llamada) queda sin valor, y el núcleo sigue por la
+  primera rama con un warning (`executor.py`, "sin valor conocido"). El
+  lienzo le ponía un tilde verde como si hubiera evaluado, y las demás ramas
+  no se podían revisar. Ahora:
+  - esa decisión va en ámbar (`?`, "sin valor en seco") en el lienzo, en el
+    panel y en la tabla del pie, con el aviso del núcleo;
+  - la decisión abierta tiene "En seco, probar la rama": el valor elegido
+    viaja como columna de la fila del dry run (`valoresDeRamas`). No hizo
+    falta tocar el núcleo, porque `decision_value` lee primero la fila. La
+    corrida de verdad no lo manda nunca;
+  - el panel y la tabla muestran con qué valor decidió, en vez de "este
+    nodo no lleva parámetros".
+  Verificado por CDP: automática → `?` y rama 200; elegir 404 vuelve a
+  correr y va por "No encontrado". En main la tabla del pie sigue diciendo
+  "ok" en una decisión sin valor: el arreglo es de esta rama.
+
 - **La selección de texto se ve en los campos con `{variables}`.** El
   `::selection` del campo resaltado sólo declaraba `color: transparent`, y
   con un `::selection` declarado Chrome deja de pintar el fondo por defecto:

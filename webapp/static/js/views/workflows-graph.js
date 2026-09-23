@@ -1187,6 +1187,9 @@ const COLOR_ESTADO = {
   ok: { borde: "var(--verde)", badge: "var(--verde)", glifo: "✓" },
   err: { borde: "var(--rojo)", badge: "var(--rojo)", glifo: "!" },
   skip: { borde: "var(--borde-fuerte)", badge: "var(--texto-4)", glifo: "–" },
+  // Una decisión que en seco no tuvo valor: el núcleo siguió por la primera
+  // rama y lo avisa. Con un tilde verde parecía que había evaluado.
+  aviso: { borde: "var(--ambar)", badge: "var(--ambar)", glifo: "?" },
 };
 
 const RADIO = 12;
@@ -1846,7 +1849,8 @@ function tooltipDeNodo(id, datos, etiqueta, secundaria, estado, paso) {
   const params = Object.entries(datos.params || {});
   const filas = params.slice(0, MAX_PARAMS_TOOLTIP);
   const resueltos = paso && paso.params ? paso.params : null;
-  const estadoRotulo = estado === "err" ? "falló en seco" : estado === "ok" ? "ok en seco" : estado === "skip" ? "salteado" : null;
+  const estadoRotulo = estado === "err" ? "falló en seco" : estado === "ok" ? "ok en seco"
+    : estado === "skip" ? "salteado" : estado === "aviso" ? "sin valor en seco" : null;
   return [
     h("div", { class: "lienzo__tooltip-titulo" }, [
       h("span", { text: String(etiqueta) }),

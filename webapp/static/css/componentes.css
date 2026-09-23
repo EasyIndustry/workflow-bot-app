@@ -615,6 +615,7 @@
 .lienzo__tooltip-estado--ok { background: var(--verde-fondo); color: var(--verde); }
 .lienzo__tooltip-estado--err { background: var(--rojo-fondo); color: var(--rojo); }
 .lienzo__tooltip-estado--skip { background: var(--fondo-cabecera); color: var(--texto-3); }
+.lienzo__tooltip-estado--aviso { background: var(--ambar-fondo); color: var(--ambar); }
 .lienzo__tooltip-sub { color: var(--texto-4); font-size: 10.5px; margin-top: 2px; }
 .lienzo__tooltip-params {
   display: grid; grid-template-columns: max-content 1fr; gap: 1px 10px;
