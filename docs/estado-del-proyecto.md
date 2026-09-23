@@ -6,6 +6,59 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-23
 
+- **Campana de notificaciones de releases, y el changelog se puede leer
+  entero sin ir a GitHub.** Dos pedidos sueltos:
+  - Un botón en `.pestanas` (no adentro de ninguna vista, como el de Avisos
+    de una fuente pero de la app entera) que avisa si hay un release nuevo
+    del núcleo o de la web app y deja instalarlo ahí mismo
+    (`components/notificaciones.js`). Se consulta una vez al abrir la app,
+    no hace polling — decisión tomada a propósito, no una limitación. Sigue
+    la misma preferencia "incluir releases de prueba" que ya tenía Config →
+    Actualizaciones, ahora compartida por `localStorage`
+    (`static/js/preferencias.js`) para que activarla en un lado valga en
+    los dos.
+  - La tabla de releases de Config → Actualizaciones mostraba las notas
+    enteras, en texto plano, recortadas a 72px. Ahora muestra sólo la
+    primera línea y un click en la fila expande y renderiza el Markdown de
+    verdad (`components/markdown.js`, escrito a mano — sin build no hay
+    forma de traer una librería, y las notas de un release no necesitan
+    mucho más que encabezados, listas, negrita y links).
+
+  De paso, refactor: `instalarRelease`/`mostrarResultadoUpdate`/
+  `reiniciarApp` vivían adentro de `views/config.js`, atados a `shell.vista`
+  — la campana los necesitaba igual, pero puede estar disparándose desde
+  cualquier pestaña, no sólo desde Config. Se movieron a
+  `static/js/actualizar_componente.js`, con su propio overlay para
+  "reiniciando" en vez de escribir sobre `shell.vista`. De paso se corrigió
+  un bug real que tenía desde siempre: el modal de confirmación decía
+  "Eliminar" en rojo para una acción que instala, no borra nada.
+
+  Dos bugs encontrados en la revisión posterior a escribir el feature (no
+  al escribirlo): el botón "Instalar" del panel de la campana cerraba el
+  panel *antes* de llamar a `instalarRelease`, así que el nodo del botón que
+  esa función iba a deshabilitar quedaba desprendido del DOM y "Validando…"
+  no se veía en ningún lado — se corrigió el orden, el panel se cierra recién cuando la
+  instalación termina. Y la fila expandida de Config → Actualizaciones
+  colapsaba con cualquier click adentro de las notas —un link, seleccionar
+  texto—, porque el click se propagaba al `alClic` de la fila entera; ahora el
+  contenido de las notas corta esa propagación (con el costo de que
+  clickear el texto ya no expande por sí solo, hay que clickear otro punto
+  de la fila).
+
+  Un aviso para la próxima vez que se pruebe esto por CDP: confirmar el
+  modal de "Actualizar" de verdad contra el propio checkout de desarrollo
+  reemplaza `webapp/` con el release descargado — pasó una vez haciendo
+  esta verificación, y lo salvó `webapp.anterior/`, que el propio
+  mecanismo de actualización deja al lado por las dudas. Se prueba el
+  camino hasta el modal de confirmación y ahí se cancela.
+
+  Verificado por CDP: badge y contenido del panel reflejan lo que
+  `GET /updates/releases` devuelve de cada componente por separado (un
+  componente con 403/502 no tapa el aviso del otro, gracias a
+  `Promise.allSettled` en vez de `Promise.all`); la preferencia de prueba
+  sobrevive a un reload real; expandir/colapsar y el `stopPropagation` del
+  botón Instalar contra el toggle de la fila.
+
 - **Lo que le faltaba a `bots` del lado de la app: abrir pestaña, check
   persistente, y el respaldo de título.** El agente de plugins dejó un doc
   (no puede abrir issues en este repo) pidiendo tres cosas para su plugin

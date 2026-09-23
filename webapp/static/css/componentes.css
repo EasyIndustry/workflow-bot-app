@@ -373,6 +373,38 @@
 
 .cargando { padding: 30px; text-align: center; color: var(--texto-3); font-size: 12.5px; }
 
+/* Pantalla completa mientras la app reinicia (actualizar_componente.js). No es
+   un modal porque puede dispararse desde cualquier pestaña — la del bloque de
+   Config → Actualizaciones o la campana del marco— y tapar todo, en vez de
+   pisar `shell.vista`, es lo único que se ve bien sin importar cuál. */
+.reinicio-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--fondo);
+}
+
+/* ── Markdown (components/markdown.js) ──────────────────────────────────
+   Las notas de un release, renderizadas a mano. Tipografía chica a
+   propósito: vive adentro de una fila de tabla o de un panel angosto de la
+   campana, nunca de página completa. */
+.markdown { font-size: 12.5px; line-height: 1.55; color: var(--texto-2); }
+.markdown > *:first-child { margin-top: 0; }
+.markdown > *:last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3,
+.markdown h4, .markdown h5, .markdown h6 {
+  margin: 10px 0 4px; font-size: 12.5px; font-weight: 600; color: var(--texto);
+}
+.markdown p { margin: 6px 0; }
+.markdown ul, .markdown ol { margin: 6px 0; padding-left: 20px; }
+.markdown li { margin: 2px 0; }
+.markdown hr { border: 0; border-top: 1px solid var(--borde); margin: 10px 0; }
+.markdown code {
+  font-family: var(--mono); font-size: 11.5px;
+  background: var(--fondo-panel); border: 1px solid var(--borde); padding: 1px 4px;
+}
+.markdown a { color: var(--azul); }
+.markdown__vacio { color: var(--texto-4); }
+
 /* ── Grilla de casos: las columnas del bot, fijas ─────────────────────── */
 
 /*

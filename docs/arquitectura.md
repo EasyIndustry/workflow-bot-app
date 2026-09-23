@@ -44,6 +44,11 @@ Cada tool declara params/outputs y sólo habla con el mundo por **ports**
 | `webapp/agent_providers.py` · `instalar_agente.py` · `mcp_registration.py` · `mcp_servidor.py` · `agent_terminal.py` | la pestaña Agente: CLIs, su instalación, su registro MCP, el servidor MCP de la instalación, la terminal por websocket |
 | `webapp/bandeja.py` | el ícono de la bandeja del sistema |
 | `webapp/static/js/views/*.js` | una vista por pestaña; `api.js` es el único que habla con la API; `dom.js` el `h()` |
+| `webapp/static/js/actualizar_componente.js` | confirmar, aplicar y reiniciar tras un release — lo usan tanto Config → Actualizaciones como la campana de notificaciones del marco, para no escribirlo dos veces |
+| `webapp/static/js/components/notificaciones.js` | la campana del marco (en `.pestanas`, no adentro de ninguna vista): avisa de un release nuevo del núcleo o la web app y deja instalarlo. Se consulta una vez al armar el shell, no hace polling |
+| `webapp/static/js/components/markdown.js` | un renderer de Markdown chico a mano (sin build no hay cómo traer una librería), para las notas de un release |
+| `webapp/static/js/components/click-afuera.js` | cerrar un panel colgante al clickear afuera — lo comparten el panel de Avisos de una fuente y la campana de notificaciones |
+| `webapp/static/js/preferencias.js` | preferencias de quien opera, en `localStorage` (no por instalación): hoy sólo si incluir releases de prueba, compartida entre Config → Actualizaciones y la campana |
 
 ## Endpoints que importan (prefijo `/api/core`)
 

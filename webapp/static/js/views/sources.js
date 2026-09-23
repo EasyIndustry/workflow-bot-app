@@ -33,6 +33,7 @@ import { api } from "../api.js";
 import { irA, rutaActual } from "../router.js";
 import { tabla } from "../components/tabla.js";
 import { confirmar } from "../components/modal.js";
+import { alClickAfuera } from "../components/click-afuera.js";
 import { aviso } from "../components/aviso.js";
 import { abrirLog } from "./log-modal.js";
 
@@ -56,7 +57,7 @@ let flujos = [];
 const avisosPorFuente = new Map();
 const MAX_AVISOS = 40;
 let avisosAbiertos = false;
-let cerrarAvisosAlClickearFuera = null;
+let quitarClickAfueraDeAvisos = null;
 
 function anotar(nombre, tono, texto) {
   const lista = avisosPorFuente.get(nombre) || [];
@@ -522,22 +523,17 @@ function panelDeAvisos(a, lista) {
 }
 
 /**
- * Cierra el panel al clickear afuera. El listener se guarda en una variable
- * del módulo y se saca antes de poner otro: cada redibujo arma un contenedor
- * nuevo, y sin esto quedaban listeners apuntando a nodos que ya no existen.
+ * Cierra el panel al clickear afuera (`components/click-afuera.js`). Se saca
+ * el listener anterior antes de poner otro: cada redibujo arma un
+ * contenedor nuevo, y sin esto quedaban apuntando a nodos que ya no existen.
  */
 function escucharClickFuera(contenedor) {
-  if (cerrarAvisosAlClickearFuera) {
-    document.removeEventListener("pointerdown", cerrarAvisosAlClickearFuera, true);
-  }
-  cerrarAvisosAlClickearFuera = (e) => {
-    if (contenedor.contains(e.target)) return;
-    document.removeEventListener("pointerdown", cerrarAvisosAlClickearFuera, true);
-    cerrarAvisosAlClickearFuera = null;
+  if (quitarClickAfueraDeAvisos) quitarClickAfueraDeAvisos();
+  quitarClickAfueraDeAvisos = alClickAfuera(contenedor, () => {
+    quitarClickAfueraDeAvisos = null;
     avisosAbiertos = false;
     redibujarQuieto();
-  };
-  document.addEventListener("pointerdown", cerrarAvisosAlClickearFuera, true);
+  });
 }
 
 function resumenDe(a, fuente) {
