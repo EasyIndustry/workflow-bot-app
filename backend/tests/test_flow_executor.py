@@ -20,7 +20,7 @@ from backend.core.contract import (
     ToolResult,
 )
 from backend.core.flow import RunContext, execute_flow, parse_flow
-from backend.tests.fakes import fake_adapters
+from backend.tests.fakes import FakeFs, fake_adapters
 
 # Ports que se le dan al plugin de prueba. Los cuatro, para que un test pueda
 # ejercer cualquiera sin declarar un plugin distinto cada vez.
@@ -42,10 +42,15 @@ def _registry(*extra, adapters=None) -> ToolRegistry:
     return reg
 
 
-def _tool(tool_id: str, fn, params=(), outputs=()) -> FunctionTool:
+def _tool(tool_id: str, fn, params=(), outputs=(), dry_run="skip") -> FunctionTool:
     return FunctionTool(
         manifest=ToolManifest(
-            id=tool_id, label=tool_id, category="TEST", params=tuple(params), outputs=tuple(outputs)
+            id=tool_id,
+            label=tool_id,
+            category="TEST",
+            params=tuple(params),
+            outputs=tuple(outputs),
+            dry_run=dry_run,
         ),
         fn=fn,
     )
@@ -119,6 +124,34 @@ def test_decision_prioriza_el_row():
     assert ctx.decision_value("referencia") == "CNC4"
 
 
+def test_decision_value_acepta_nodo_calificado_y_recursivo():
+    """
+    Issue #35: una decisión puede ramificar sobre un campo *adentro* de un
+    output agrupado por nodo, no sólo sobre un output plano de nivel
+    superior -- mismo `_deep_get` que ya usaba `resolve()` para un param de
+    Acción (issue #30), tantos niveles como haga falta.
+    """
+    ctx = RunContext(vars={"LAYA": {"matriz": {"eleccion": "regar"}}})
+    assert ctx.decision_value("LAYA.matriz.eleccion") == "regar"
+
+
+def test_decision_value_indexa_una_lista_con_un_segmento_numerico():
+    ctx = RunContext(vars={"LAYA": {"opciones": [{"eleccion": "regar"}, {"eleccion": "esperar"}]}})
+    assert ctx.decision_value("LAYA.opciones.1.eleccion") == "esperar"
+
+
+def test_decision_value_calificado_prioriza_clave_plana_exacta():
+    """Un output que de casualidad se llame igual que la expresión calificada gana, sin ambigüedad."""
+    ctx = RunContext(vars={"LAYA.eleccion": "literal", "LAYA": {"eleccion": "anidado"}})
+    assert ctx.decision_value("LAYA.eleccion") == "literal"
+
+
+def test_decision_value_calificado_sin_match_devuelve_none():
+    ctx = RunContext(vars={"LAYA": {"eleccion": "regar"}})
+    assert ctx.decision_value("LAYA.no_existe") is None
+    assert ctx.decision_value("OTRO.eleccion") is None
+
+
 # ── Recorrido del grafo ─────────────────────────────────────────────────
 
 
@@ -152,6 +185,33 @@ def test_decision_toma_la_rama_del_valor():
     )
     assert [t.node_id for t in _run(flow, row={"referencia": "CNC4"}).trace] == ["D", "A"]
     assert [t.node_id for t in _run(flow, row={"referencia": "CNC3"}).trace] == ["D", "C"]
+
+
+def test_decision_ramifica_sobre_un_campo_calificado_de_un_output():
+    """
+    Issue #35, de punta a punta: un tool deja un output estructurado (una
+    "matriz de decisiones") y el nodo de Decisión ramifica sobre un campo de
+    adentro, sin que el tool tenga que desglosarlo aparte como output plano.
+    """
+    tool = _tool(
+        "test.decide",
+        lambda ctx: ToolResult.ok(matriz={"eleccion": "regar", "confianza": 0.9}),
+        outputs=[Output("matriz", ParamType.JSON)],
+    )
+    flow = (
+        "flowchart TD\n"
+        "    B(inicio)\n"
+        '    LAYA["test.decide"]\n'
+        "    D{LAYA.matriz.eleccion}\n"
+        '    A["core.log | message=regando"]\n'
+        '    C["core.log | message=esperando"]\n'
+        "    B --> LAYA\n"
+        "    LAYA --> D\n"
+        "    D -->|regar| A\n"
+        "    D -->|esperar| C\n"
+    )
+    result = _run(flow, registry=_registry(tool))
+    assert [t.node_id for t in result.trace] == ["LAYA", "D", "A"]
 
 
 def test_decision_sin_rama_falla_con_el_nodo():
@@ -552,6 +612,124 @@ def test_dry_run_detecta_tool_inexistente():
     )
     assert result.failed
     assert "no existe" in result.message
+
+
+# ── dry_run="run" (issue #34) ────────────────────────────────────────────
+
+
+def _registry_solo_lectura(*tools, adapters=None) -> ToolRegistry:
+    """
+    Como `_registry()`, pero el plugin de prueba sólo declara `fs`/`http` --
+    sin `process`/`window`/`browser`, que no tienen modo de sólo lectura y
+    harían que `dry_run_ok` diera False siempre (issue #34).
+    """
+    reg = ToolRegistry(adapters=adapters or fake_adapters())
+    reg._add_plugin("core", "builtin", build_builtin_plugin())
+    reg._add_plugin(
+        "test",
+        "test",
+        Plugin(manifest=PluginManifest(name="test", label="Test", ports=("fs", "http")), tools=list(tools)),
+    )
+    return reg
+
+
+def test_dry_run_run_ejecuta_de_verdad_y_alimenta_una_decision():
+    """
+    Caso real del issue: un tool que sólo LEE un archivo y dice qué encontró.
+    Sin `dry_run="run"` la decisión posterior no tiene valor y siempre va por
+    la primera rama; con él, corre de verdad y decide como en una corrida real.
+    """
+    fs = FakeFs(files={"/casos/0044/id_externo.txt": "5 fallidos"})
+    tool = _tool(
+        "test.leer_log",
+        lambda ctx: ToolResult.ok(
+            fallidos="si" if "fallidos" in ctx.port("fs").read_text("/casos/0044/id_externo.txt") else "no"
+        ),
+        outputs=[Output("fallidos", ParamType.STR)],
+        dry_run="run",
+    )
+    flow = (
+        "flowchart TD\n"
+        "    B(inicio)\n"
+        '    LEER["test.leer_log"]\n'
+        "    D{fallidos}\n"
+        '    SI["core.log | message=hubo fallidos"]\n'
+        '    NO["core.log | message=todo bien"]\n'
+        "    B --> LEER --> D\n"
+        "    D -->|si| SI\n"
+        "    D -->|no| NO\n"
+    )
+    reg = _registry_solo_lectura(tool, adapters=fake_adapters(fs=fs))
+    result = execute_flow(flow, registry=reg, case_id="0044", dry_run=True)
+    assert [t.node_id for t in result.trace] == ["LEER", "D", "SI"]
+    assert result.trace[0].dry_executed is True
+    assert result.trace[0].outputs == {"fallidos": "si"}
+
+
+def test_dry_run_run_bloquea_una_escritura_de_verdad():
+    """
+    El núcleo lo hace cumplir, no confía en la declaración: un tool que dice
+    `dry_run="run"` pero escribe igual falla con PortError, en vez de escribir.
+    """
+    fs = FakeFs()
+
+    def _escribe(ctx):
+        ctx.port("fs").write_text("/tmp/x.txt", "no debería")
+        return ToolResult.ok()
+
+    tool = _tool("test.escribe_igual", _escribe, dry_run="run")
+    reg = _registry_solo_lectura(tool, adapters=fake_adapters(fs=fs))
+    result = execute_flow(
+        'flowchart TD\n    B(inicio)\n    N["test.escribe_igual"]\n    B --> N\n',
+        registry=reg,
+        case_id="0044",
+        dry_run=True,
+    )
+    assert result.failed
+    assert "escritura en dry run" in result.trace[0].message
+    assert "/tmp/x.txt" not in fs.files
+
+
+def test_dry_run_run_sin_modo_lectura_posible_se_trata_como_skip():
+    """
+    Issue #34: un tool que pide `process` no tiene modo de sólo lectura --
+    aunque declare `dry_run="run"`, el executor lo trata como "skip" y nunca
+    lo ejecuta de verdad en seco.
+    """
+    ejecutado = []
+    tool = _tool(
+        "test.corre_proceso",
+        lambda ctx: ejecutado.append(1) or ToolResult.ok(),
+        dry_run="run",
+    )
+    reg = ToolRegistry(adapters=fake_adapters())
+    reg._add_plugin("core", "builtin", build_builtin_plugin())
+    reg._add_plugin(
+        "test", "test",
+        Plugin(manifest=PluginManifest(name="test", label="Test", ports=("process",)), tools=[tool]),
+    )
+    result = execute_flow(
+        'flowchart TD\n    B(inicio)\n    N["test.corre_proceso"]\n    B --> N\n',
+        registry=reg,
+        case_id="0044",
+        dry_run=True,
+    )
+    assert result.status == "ok"
+    assert ejecutado == []  # no corrió de verdad
+    assert result.trace[0].dry_executed is False
+
+
+def test_dry_run_skip_sigue_sin_ejecutar_nada():
+    """Retrocompatibilidad: un tool sin declarar (default 'skip') sigue exactamente igual."""
+    ejecutado = []
+    tool = _tool("test.default", lambda ctx: ejecutado.append(1) or ToolResult.ok())
+    result = _run(
+        'flowchart TD\n    B(inicio)\n    N["test.default"]\n    B --> N\n',
+        registry=_registry(tool),
+        dry_run=True,
+    )
+    assert ejecutado == []
+    assert result.trace[0].dry_executed is False
 
 
 # ── Builtins ────────────────────────────────────────────────────────────
