@@ -6,6 +6,14 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-26
 
+- **El ícono de la bandeja aparece en Linux.** Nunca había aparecido, sin
+  ningún error: con appindicator/gtk, `run_detached` de pystray no corre
+  ningún loop, espera un `GLib.MainLoop` que el servidor no tiene. En Linux
+  `bandeja.iniciar` corre `icono.run` en un hilo propio (Windows y macOS
+  siguen con `run_detached`). `bot.sh` instala pystray/Pillow y enlaza el
+  `gi` del sistema, que no se instala con pip. Verificado en XFCE/X11: el
+  ícono se registra en el StatusNotifierWatcher y se ve en el panel.
+
 - **Núcleo v0.3.1-beta.16 vendorizado: core#36.** Un param con un JSON de
   varias claves (comas y comillas) se rompía en silencio al guardar desde
   las tarjetas; ahora vuelve igual (beta.15 escribía la comilla literal

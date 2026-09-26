@@ -48,9 +48,11 @@ git clone https://github.com/EasyIndustry/workflow-bot-app Bot && cd Bot
   (`~/.config/bot/instalacion.json`) con `--root` explícito: `python -m
   webapp` pelado prefiere el repo si tiene un `data/` al lado, que aparece
   con sólo correr los tests.
-- Sin ícono en la bandeja: pystray en Linux depende del escritorio y no se
-  instala. El servidor se cierra con Ctrl+C, o con el `kill` del proceso si
-  se lo abrió desde el menú.
+- **Ícono en la bandeja**: pystray va con appindicator, que necesita el
+  `gi` del sistema (`python3-gi` y `gir1.2-ayatanaappindicator3-0.1`, que
+  Ubuntu/Xubuntu traen). `bot.sh` enlaza sólo ese paquete en el runtime, si
+  está compilado para la misma versión de Python. Sin él, el servidor
+  arranca sin ícono y se cierra con Ctrl+C o con `kill`.
 - Actualizar la app o el núcleo desde Config → Actualizaciones funciona
   igual, sobre la carpeta del clon (deja `webapp.anterior/`, ignorado).
 

@@ -34,10 +34,10 @@ export PYTHONNOUSERSITE=1
 PY_STANDALONE="3.12"
 
 # Versiones fijas, las mismas de installer/packaging/build_win.sh: es donde
-# se probaron. `uvicorn` pelado, como en el `.exe`. Sin pywinpty/pywinauto
-# (sólo Windows: POSIX tiene pty en la stdlib, y el port `window` no existe
-# acá) ni pystray/pillow: la bandeja es opcional y en Linux depende de qué
-# escritorio haya; el servidor arranca igual sin ella.
+# se probaron. `uvicorn` pelado, como en el `.exe`. Sin pywinpty/pywinauto:
+# son sólo de Windows (POSIX tiene pty en la stdlib, y el port `window` no
+# existe acá). pystray/pillow son el ícono de la bandeja; en Linux además
+# necesitan el `gi` del sistema, ver `enlazar_gi`.
 DEPENDENCIAS=(
   cryptography
   fastapi==0.136.0
@@ -47,6 +47,8 @@ DEPENDENCIAS=(
   websockets
   tomli-w==1.2.0
   mcp==2.1.1
+  pystray==0.19.5
+  pillow==12.3.0
 )
 
 aviso() { printf '==> %s\n' "$*" >&2; }
@@ -141,6 +143,35 @@ dependencias() {
   printf '%s' "${lista}" > "${marca}"
 }
 
+# El ícono de la bandeja en Linux va por pystray con appindicator o gtk, y
+# los dos necesitan PyGObject (`gi`). Ese no se instala con pip: no tiene
+# wheels, compila contra las librerías del escritorio. Viene con el sistema
+# (python3-gi) y el runtime no lo ve, porque el venv excluye el site del
+# sistema a propósito. Se enlaza sólo el paquete `gi`, no dist-packages
+# entero: abrir todo el site del sistema dejaría que un paquete viejo de la
+# distro tape uno de los fijos. Y sólo si el `_gi` está compilado para esta
+# misma versión de Python. Sin `gi`, pystray no carga y el servidor
+# arranca sin ícono, como antes.
+enlazar_gi() {
+  local python="$1" sitio etiqueta candidato gi
+  sitio="$("${python}" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  if "${python}" -c 'import gi' 2>/dev/null; then
+    return 0
+  fi
+  etiqueta="$("${python}" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
+  for candidato in /usr/bin/python3 /usr/bin/python3.[0-9]*; do
+    [ -x "${candidato}" ] || continue
+    gi="$("${candidato}" -c 'import gi, os; print(os.path.dirname(gi.__file__))' 2>/dev/null)" || continue
+    [ -e "${gi}/_gi${etiqueta}" ] || continue
+    mkdir -p "${RUNTIME}/sistema"
+    ln -sfn "${gi}" "${RUNTIME}/sistema/gi"
+    printf '%s\n' "${RUNTIME}/sistema" > "${sitio}/bot-gi-del-sistema.pth"
+    "${python}" -c 'import gi' 2>/dev/null && return 0
+    rm -f "${sitio}/bot-gi-del-sistema.pth"
+  done
+  return 0
+}
+
 # "Abrir Bot" en el menú: un .desktop que llama a este mismo script. Apunta
 # al repo donde está, así que mover el repo es volver a correr `acceso`.
 acceso() {
@@ -178,6 +209,7 @@ main() {
   local python
   python="$(python_del_runtime)" || { armar_runtime; python="$(python_del_runtime)" || falla "no quedó un Python usable en ${RUNTIME}."; }
   dependencias "${python}"
+  enlazar_gi "${python}"
   cd "${PROGRAMA}"
 
   if [ "${1:-}" = "instalar" ]; then
