@@ -14,18 +14,17 @@ desarrollo o la PC de un cliente), no sólo con tests.
   `gi` del sistema, que no se instala con pip. Verificado en XFCE/X11: el
   ícono se registra en el StatusNotifierWatcher y se ve en el panel.
 
-- **Núcleo v0.3.1-beta.16 vendorizado: core#36.** Un param con un JSON de
+- **Núcleo v0.3.1-beta.17 vendorizado: core#36.** Un param con un JSON de
   varias claves (comas y comillas) se rompía en silencio al guardar desde
-  las tarjetas; ahora vuelve igual (beta.15 escribía la comilla literal
-  como `\"`, beta.16 como `#quot;`). Verificado por la API de la app
-  (`/flow/parse` → `/flow/serialize` → `/flow/parse`), que con beta.14 lo
-  devolvía roto. Queda un límite: la vista **Mermaid** todavía no dibuja
-  ese archivo y muestra su aviso, mientras la vista propia dibuja bien.
-  Probado con `mermaid.parse`: mermaid.js corta la etiqueta `["…"]` en
-  cualquier `"` cruda, incluidas las que envuelven el valor, así que
-  `message="{a}"` ya fallaba antes de #36. Dibuja bien sólo si el
-  envoltorio también va como entidad (`#quot;`/`#34;`). Pasado al núcleo
-  con los casos.
+  las tarjetas. Ahora vuelve igual, y el `.mmd` es Mermaid válido: el valor
+  citado va envuelto en `#quot;` y la comilla literal adentro es `#34;`, sin
+  ninguna comilla cruda dentro de `["…"]`. Hicieron falta tres releases:
+  beta.15 usaba `\"`, que mermaid.js no conoce, y beta.16 seguía envolviendo
+  con comilla cruda, donde mermaid.js corta la etiqueta (eso rompía también
+  `message="{a}"`, desde antes de #36). Verificado por la API de la app
+  (`/flow/parse` → `/flow/serialize` → `/flow/parse`) y con `mermaid.parse`
+  + `render` del mermaid.js embarcado: el JSON, un valor con coma y uno que
+  empieza con `{` dibujan. Los formatos anteriores se siguen leyendo.
 
 - **Bot en Linux desde el repo: `./bot.sh`.** No había forma de correrlo en
   Linux sin armar a mano un venv de desarrollo. `bot.sh` arma `.runtime/`
