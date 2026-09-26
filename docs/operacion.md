@@ -13,9 +13,12 @@
    otras PCs.
 3. Plug ins → **Plugins en línea**: elegir repo y rama, instalar lo que
    haga falta. Un repo privado necesita `PLUGINS_GITHUB_TOKEN` en Config →
-   Variables (secreta).
-4. Config → Variables: `GITHUB_TOKEN` si el repo de actualizaciones de la
-   app es privado (el público no lo necesita).
+   Variables (secreta); sin ella se usa `GITHUB_TOKEN`.
+4. Config → Variables: `GITHUB_TOKEN` (secreta). Hace falta si un repo es
+   privado, y conviene aunque sean públicos: sin token la API de GitHub da
+   60 pedidos por hora por IP, y la campana, los listados y las descargas
+   los agotan (el error dice "se agotó el cupo"). Sirve para las
+   actualizaciones y para el catálogo de plugins.
 5. Agente → **Instalar** el CLI que se use; **Iniciar sesión** deja el
    `.mcp.json` (Claude Code) o `.codex/config.toml` en la instalación.
    En la carpeta de la instalación ya hay un `AGENTS.md` (y un `CLAUDE.md`

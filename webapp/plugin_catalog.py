@@ -98,11 +98,24 @@ def guardar_configuracion(instance, *, repo: str, branch: str) -> dict:
 
 
 def token_de(instance) -> str | None:
-    """El token de GitHub, si se cargó como variable. Un repo público no lo necesita."""
+    """
+    El token de GitHub, si se cargó como variable. Un repo público no lo necesita.
+
+    Primero `PLUGINS_GITHUB_TOKEN`, que existe para un catálogo privado con un
+    token distinto al de las actualizaciones. Si no está, `GITHUB_TOKEN`: aun
+    para un repo público hace falta por el cupo de la API (60 pedidos por hora
+    sin token), y pedir cargar el mismo token dos veces era un paso de más.
+    Las actualizaciones hacen lo mismo en el otro orden (`updates.token_de`).
+    """
     try:
-        return (instance.env_vars().get(VARIABLE_TOKEN) or "").strip() or None
+        variables = instance.env_vars()
     except Exception:  # noqa: BLE001 — sin token se sigue como repo público
         return None
+    for nombre in (VARIABLE_TOKEN, "GITHUB_TOKEN"):
+        valor = (variables.get(nombre) or "").strip()
+        if valor:
+            return valor
+    return None
 
 
 # ── GitHub ──────────────────────────────────────────────────────────────
