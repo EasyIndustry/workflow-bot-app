@@ -5,7 +5,7 @@
  *
  * 1. **Las carpetas viven en el panel lateral, ramificadas.** En el legacy
  *    estaban dentro del body y se comían el espacio del flujo. En la base son
- *    una ruta materializada —`folder = "FORM/CNC4"`, en la columna TEXT que ya
+ *    una ruta materializada —`folder = "Area/Proceso"`, en la columna TEXT que ya
  *    existe— y el árbol lo arma esta vista partiendo por `/`. Consecuencia
  *    directa: una carpeta existe porque un flujo lo dice, así que **no hay
  *    carpetas vacías**.
@@ -185,7 +185,7 @@ function vigilarLista(elegido) {
 /**
  * El árbol desde las rutas materializadas.
  *
- * `folder = "FORM/CNC4"` se parte por `/` y cada tramo es un nivel. No hay tabla
+ * `folder = "Area/Proceso"` se parte por `/` y cada tramo es un nivel. No hay tabla
  * de carpetas: una carpeta existe mientras algún flujo la nombre.
  */
 function armarArbol(lista) {
@@ -1074,7 +1074,7 @@ function confirmarProblemas(problemas) {
 
 function abrirPropiedades(a) {
   const carpeta = h("input", { class: "entrada entrada--mono", type: "text", value: a.wf.folder || "",
-                               placeholder: "FORM/CNC4" });
+                               placeholder: "Area/Proceso" });
   const descripcion = h("textarea", { class: "entrada entrada--area", value: a.wf.description || "" });
   const habilitado = h("input", { type: "checkbox", checked: a.wf.state !== "disabled" });
   const fuente = selectorDeFuente(a.wf.source || "");
@@ -1155,7 +1155,7 @@ function selectorDeFuente(actual) {
 
 function nuevoFlujo() {
   const nombre = h("input", { class: "entrada", type: "text", placeholder: "mi-flujo" });
-  const carpeta = h("input", { class: "entrada entrada--mono", type: "text", placeholder: "FORM/CNC4" });
+  const carpeta = h("input", { class: "entrada entrada--mono", type: "text", placeholder: "Area/Proceso" });
   // La fuente se pide al crear porque es cuando más se escriben tarjetas, y sin
   // ella el autocompletado no tiene columnas que ofrecer hasta la primera corrida.
   const fuente = selectorDeFuente("");
