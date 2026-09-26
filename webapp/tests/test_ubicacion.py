@@ -79,7 +79,10 @@ def test_un_programa_instalado_con_data_suelto_no_secuestra_la_raiz(tmp_path):
     (instalacion / "boot.env").write_text("root=.", encoding="utf-8")
 
     assert ubicacion.es_instalacion(programa) is False
-    entorno = {"LOCALAPPDATA": str(tmp_path / "cfg")}
+    # Las dos variables, como el fixture `entorno`: con sólo LOCALAPPDATA, en
+    # Linux `carpeta_config` caía al ~/.config real y este test dejaba anotada
+    # una carpeta de pytest como la instalación de quien corría la suite.
+    entorno = {"LOCALAPPDATA": str(tmp_path / "cfg"), "XDG_CONFIG_HOME": str(tmp_path / "cfg")}
     ubicacion.registrar(instalacion, entorno)
     assert ubicacion.resolver_root(programa, entorno=entorno) == instalacion
 
