@@ -1798,7 +1798,9 @@ async def validate(body: RunBody):
     Revisa un flujo sin ejecutarlo: parseo, tools que existan, params que
     resuelvan, y qué configuración falta.
 
-    Es el dry-run: resuelve todas las variables y no toca nada.
+    Es el dry-run: resuelve todas las variables y no cambia nada. Los tools
+    que declaran `dry_run="run"` corren en sólo lectura (core#34) y su paso
+    llega con `dry_executed`.
     """
     try:
         graph, extra = _instance.diagnose(body.flow)

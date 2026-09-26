@@ -165,6 +165,7 @@ Un bot que procesa **filas de una fuente de datos** (una API) una por una, sigui
 ## Reglas
 
 - **`dry_run_flow` antes de `run_flow`**, siempre. `run_flow` ejecuta de verdad sobre esta instalación: preguntá antes salvo que te lo hayan pedido explícitamente para una fila concreta.
+- `dry_run_flow` no cambia nada, pero no es mudo: un tool que declara `ToolManifest(dry_run="run")` corre de verdad, con `fs`/`http` en sólo lectura (una escritura falla con `PortError`). Si escribís un tool que sólo lee y una decisión depende de su salida, declaralo así: si no, en seco la decisión va siempre por la primera rama. Una decisión puede leer un campo de adentro de una salida: `D{{NODO.salida.campo.0}}`.
 - Los secretos viven en Config → Variables y se referencian como `{{env.CLAVE}}`; nunca pidas ni pegues un valor en claro en un flujo, una nota o una colección.
 - Los plugins son genéricos, con nombre de herramienta y nunca de un cliente ni de un sistema externo. Una llamada HTTP guardada es una Action de `connections`, no un plugin.
 - Un flujo con el port `fs` sólo alcanza `workspace/` (`fs_root`); `data/` y `plugins/` quedan afuera a propósito.

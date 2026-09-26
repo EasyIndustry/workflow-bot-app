@@ -210,10 +210,12 @@ function contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila = 
   if (nodo.type === "decision") {
     // La variable se escribe pelada, sin llaves: el núcleo la lee por nombre
     // (`decision_value`: primero la fila, después las salidas de los nodos
-    // anteriores) y no la interpola. La lista se abre al entrar al campo.
+    // anteriores, y con puntos recorre `NODO.salida.campo` — core#35) y no la
+    // interpola. La lista se abre al entrar al campo.
     const campoVariable = campoTexto("Variable", nodo.variable || "",
       "Sin llaves. Se busca primero en la fila y después en las salidas de los nodos anteriores; "
-      + "las condiciones de las aristas comparan contra su valor.",
+      + "NODO.salida.campo entra a una salida estructurada. "
+      + "Las condiciones de las aristas comparan contra su valor.",
       (valor) => { nodo.variable = valor; alCambiar({ redibujar: false }); });
     autocompletar(campoVariable.querySelector("input"),
       () => opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila), { sinLlaves: true });
@@ -651,10 +653,10 @@ async function opcionesDeVariables(id, grafo, catalogo, columnasDeLaFila) {
 
 /**
  * Lo que una decisión puede comparar. Es menos que lo que un param puede
- * interpolar, y a propósito: `decision_value` lee la fila y después `vars` por
- * nombre pelado, así que no entran las variables de Config ni `{NODO.salida}`
- * (con dos nodos que dejan la misma salida, vale la del último que corrió, y
- * acá no hay forma de elegir).
+ * interpolar: `decision_value` lee la fila y las salidas, no las variables de
+ * Config. Desde el núcleo v0.3.1-beta.14 (core#35) sí acepta `NODO.salida`
+ * calificado, así que con dos nodos que dejan la misma salida se ofrece
+ * elegir de cuál, igual que en un param.
  */
 async function opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila) {
   const fila = columnasDeLaFila ? await Promise.resolve(columnasDeLaFila()).catch(() => null) : null;
@@ -662,7 +664,7 @@ async function opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila) {
     nombre: c.nombre,
     detalle: `columna de la fila · ${fila.fuente}` + (c.ejemplo ? ` · ej. ${c.ejemplo}` : ""),
   })) : [];
-  const salidas = salidasAguasArriba(id, grafo, catalogo).map((s) => ({ nombre: s.nombre, detalle: quienLaDeja(s) }));
+  const salidas = salidasAguasArriba(id, grafo, catalogo).flatMap(opcionesDeSalida);
   return [...columnas, ...salidas];
 }
 
@@ -672,7 +674,9 @@ function variablesDeDecision(id, grafo, catalogo, columnasDeLaFila) {
     h("span", { class: "ficha", title: "Cualquier columna de la fila de la fuente" }, ["columna de la fila"]),
   ]);
   const nota = h("div", { class: "campo__ayuda", text:
-    "Se escribe el nombre solo, sin llaves. Las variables de Config no valen acá." });
+    "Se escribe el nombre solo, sin llaves. Para un campo de adentro de una salida, "
+    + "NODO.salida.campo (un número indexa una lista: NODO.salida.opciones.0.id). "
+    + "Las variables de Config no valen acá." });
   Promise.resolve(opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila)).then((opciones) => {
     if (!opciones.length) return;
     poner(fichas, ...opciones.map((o) => h("span", { class: "ficha", title: o.detalle || "" }, [o.nombre])));

@@ -4,6 +4,27 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-09-26
+
+- **Núcleo v0.3.1-beta.14 vendorizado: core#34 y core#35, y la app los usa.**
+  - core#34: un tool que declara `ToolManifest(dry_run="run")` corre de
+    verdad en un dry run, con `fs`/`http` en sólo lectura (escribir levanta
+    `PortError`). Antes ninguna acción corría en seco, así que una decisión
+    que dependía de una salida iba siempre por la primera rama. La tabla del
+    dry run marca esos pasos como "leyó" y muestra sus salidas (son reales),
+    y de una decisión muestra el valor con el que ramificó. El pie decía
+    "no toca nada": ahora dice qué sí corre. Plug ins marca los tools que
+    "corren en seco" desde el manifest, y el `AGENTS.md` generado le dice al
+    agente que declare `dry_run="run"` en un tool que sólo lee.
+  - core#35: la `variable` de una Decisión acepta `NODO.salida.campo.0`
+    (calificada, anidada, con índice de lista). La tarjeta dejó de decir que
+    `NODO.salida` no vale ahí: ofrece la calificada cuando dos nodos dejan
+    la misma salida, como en un param, y la ayuda explica el anidado.
+  - Verificado contra una instalación de prueba en Linux, por CLI y por CDP
+    (recorrido de Workflows y Plug ins, y las once vistas importan). El
+    único test que falla, `test_la_unidad_entera_se_puede_guardar`, ya
+    fallaba con beta.12: es un caso de `D:\` que en Linux no aplica.
+
 ## 2026-09-23
 
 - **El aviso de salidas repetidas en una tarjeta va de a una línea por
