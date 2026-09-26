@@ -6,6 +6,14 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-26
 
+- **Núcleo v0.3.1-beta.15 vendorizado: core#36.** Un param con un JSON de
+  varias claves (comas y comillas) se rompía en silencio al guardar desde
+  las tarjetas; ahora vuelve igual (el valor lleva `\"`). Verificado por la
+  API de la app (`/flow/parse` → `/flow/serialize` → `/flow/parse`), que
+  con beta.14 lo devolvía roto. Queda un límite: la vista **Mermaid** no
+  dibuja ese archivo (mermaid.js no conoce `\"`; su escape es `#quot;`) y
+  muestra su aviso, mientras la vista propia dibuja bien. Avisado al núcleo.
+
 - **Bot en Linux desde el repo: `./bot.sh`.** No había forma de correrlo en
   Linux sin armar a mano un venv de desarrollo. `bot.sh` arma `.runtime/`
   una vez: un venv del `python3` del sistema (3.11 o mayor), o si no se
