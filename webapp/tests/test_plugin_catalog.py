@@ -320,3 +320,18 @@ def test_sin_con_que_comparar_no_se_inventa(tmp_path, monkeypatch, procedencia):
 
     assert r["convertidor"]["hay_nueva"] is False
     assert r["convertidor"]["upstream"] is None
+
+
+class _ConVariables:
+    def __init__(self, variables=None):
+        self._variables = variables or {}
+
+    def env_vars(self):
+        return self._variables
+
+
+def test_sin_token_propio_de_plugins_usa_el_de_github():
+    """Con GITHUB_TOKEN ya cargado, el catálogo no pide cargar el mismo token otra vez."""
+    assert cat.token_de(_ConVariables()) is None
+    assert cat.token_de(_ConVariables({"GITHUB_TOKEN": "g"})) == "g"
+    assert cat.token_de(_ConVariables({"GITHUB_TOKEN": "g", "PLUGINS_GITHUB_TOKEN": "p"})) == "p"

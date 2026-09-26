@@ -324,7 +324,17 @@ def iniciar(estado: Estado, acciones: Acciones):
     titulo = f"Bot {estado.version}".strip() + f" · {estado.url}"
     icono = pystray.Icon("bot", _imagen(), titulo, menu)
     try:
-        icono.run_detached()
+        if sys.platform in ("win32", "darwin"):
+            icono.run_detached()
+        else:
+            # En Linux pystray usa appindicator o gtk, y ahí `run_detached`
+            # no corre ningún loop: espera que quien llama ya tenga un
+            # GLib.MainLoop andando. El servidor no lo tiene, así que el
+            # ícono quedaba armado y nunca se registraba en la bandeja, sin
+            # error. `run` en un hilo propio es ese loop; `stop()` lo corta.
+            import threading
+
+            threading.Thread(target=icono.run, name="bandeja", daemon=True).start()
     except Exception as exc:  # noqa: BLE001 — sin bandeja (sesión sin escritorio) se sigue sin ícono
         print(f"Sin ícono en la bandeja: {exc}", file=sys.stderr, flush=True)
         return None

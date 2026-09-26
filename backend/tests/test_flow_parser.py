@@ -264,6 +264,33 @@ def test_valor_citado_con_pipe_no_corta_los_params():
     assert graph.nodes["N"].params == {"message": "a|b", "level": "warning"}
 
 
+def test_comilla_escapada_dentro_de_un_valor_citado_es_literal():
+    """
+    Issue #37: `#quot;` abre/cierra la cita, `#34;` es una comilla literal
+    adentro -- deja pasar un JSON con sus propias comillas.
+    """
+    graph = parse_flow(
+        'flowchart TD\n'
+        '    B(inicio)\n'
+        '    N["laya.preguntar | preguntas=#quot;{#34;a#34;: 1, #34;b#34;: 2}#quot;"]\n'
+        '    B --> N\n'
+    )
+    assert graph.runnable
+    assert graph.nodes["N"].params == {"preguntas": '{"a": 1, "b": 2}'}
+
+
+def test_cita_con_comilla_cruda_legada_sigue_funcionando():
+    """El formato original (antes de #36/#37) no se rompe: sigue siendo válido para leer."""
+    graph = parse_flow(
+        'flowchart TD\n'
+        '    B(inicio)\n'
+        '    N["core.log | message="a, b""]\n'
+        '    B --> N\n'
+    )
+    assert graph.runnable
+    assert graph.nodes["N"].params == {"message": "a, b"}
+
+
 def test_comilla_sin_cerrar_es_error():
     graph = parse_flow(
         'flowchart TD\n'

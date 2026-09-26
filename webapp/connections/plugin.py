@@ -36,7 +36,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
-from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 from backend.core import ports as port_names
 from backend.core.contract import (
@@ -182,16 +182,35 @@ def _headers_con_json(headers: dict, cuerpo: str | None) -> dict:
     return headers
 
 
+class _SinVariable(Exception):
+    """Un `{env.X}` sin valor en Config: se dice antes de mandar nada."""
+
+
 def _pedir(http, cfg: dict, *, timeout: float):
-    """Un request HTTP a partir de un schema de source/action ya resuelto."""
+    """
+    Un request HTTP a partir de un schema de source/action, con `{env.X}`
+    resuelto acá (#9). Un `{env.X}` que no existe levanta `_SinVariable` en
+    vez de salir literal a la API ajena y volver como un 401 que no explica
+    nada. Un error del port (conexión rechazada, timeout) puede repetir la
+    URL, que puede traer un secreto en la query: sale tapado.
+    """
+    cfg = {**cfg, **_resolver_env({k: cfg.get(k) for k in ("url", "headers", "payload")})}
+    if faltan := _env_faltantes({k: cfg.get(k) for k in ("url", "headers", "payload")}):
+        raise _SinVariable(_error_faltantes(faltan))
     cuerpo = _cuerpo(cfg.get("payload"))
-    return http.request(
-        cfg["url"],
-        method=cfg.get("method") or "GET",
-        headers=_headers_con_json(cfg.get("headers") or {}, cuerpo),
-        body=cuerpo,
-        timeout=timeout,
-    )
+    try:
+        return http.request(
+            cfg["url"],
+            method=cfg.get("method") or "GET",
+            headers=_headers_con_json(cfg.get("headers") or {}, cuerpo),
+            body=cuerpo,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        tapado = _tapar(str(exc))
+        if tapado == str(exc):
+            raise
+        raise RuntimeError(tapado) from None
 
 
 def _coincide(fila, termino: str) -> bool:
@@ -262,7 +281,10 @@ def _fetch_page(
             params[cfg["page_size_param"]] = tam
         peticion["url"] = _con_query(cfg["url"], params)
 
-    respuesta = _pedir(http, peticion, timeout=timeout)
+    try:
+        respuesta = _pedir(http, peticion, timeout=timeout)
+    except _SinVariable as exc:
+        return {"error": str(exc), "rows": [], "total": 0, "facets": {}}
     if not respuesta.ok:
         return {"error": f"la fuente respondió {respuesta.status}", "rows": [], "total": 0, "facets": {}}
 
@@ -299,6 +321,166 @@ def _fetch_page(
 _PATRON_VAR = re.compile(r"\{(\w+)\}")
 
 
+# ── Variables de Config: {env.CLAVE} (#9) ──────────────────────────────────
+#
+# El núcleo ya resuelve `{env.CLAVE}` en los items que un tool lee con
+# `ctx.resource()` (`Instance.resource_items`), así que una Action guardada
+# corriendo en un flujo lo recibía resuelto. Pero la grilla de una fuente y
+# los dos "Probar" mandan la config **cruda** como params, y los params
+# explícitos de una acción no pasan por esa resolución: salía literal
+# `Bearer {env.API_TOKEN}` y la API contestaba 401.
+#
+# `ToolContext` no expone las variables (a propósito: un plugin de terceros
+# no tiene por qué ver los secretos). `connections` es de esta webapp, así
+# que la webapp se las pasa a él solo, al armar la instancia (`usar_entorno`).
+# Sin eso —el plugin cargado desde la CLI del núcleo, un test— no resuelve
+# nada y un `{env.X}` da el error de "falta la variable", no un 401.
+
+_PATRON_ENV = re.compile(r"\{env\.(\w+)\}")
+_TAPADO = "•••"
+_entorno = None  # () -> (valores: dict, secretos: set[str])
+
+
+def usar_entorno(proveedor) -> None:
+    """
+    Lo llama la webapp con `proveedor() -> (valores, nombres_secretos)`.
+
+    Un callable y no los valores: una variable cargada en Config después de
+    arrancar tiene que valer en el próximo request, sin reiniciar.
+    """
+    global _entorno
+    _entorno = proveedor
+
+
+def conectar_a(instance) -> None:
+    """Lo que hace la webapp (y su servidor MCP) al armar una `Instance`."""
+    usar_entorno(lambda: (
+        instance.env_vars(),
+        {v.name for v in instance.env.list() if v.secret},
+    ))
+
+
+def _variables() -> tuple[dict, set]:
+    if _entorno is None:
+        return {}, set()
+    try:
+        valores, secretos = _entorno()
+        return dict(valores or {}), set(secretos or ())
+    except Exception:  # noqa: BLE001 — sin variables, un {env.X} queda sin resolver y se dice
+        return {}, set()
+
+
+def _resolver_env(valor):
+    """
+    `{env.CLAVE}` resuelto en url, headers y payload, con el mismo resolvedor
+    del núcleo (`RunContext.resolve`) y no una regex propia que se vuelva a
+    separar de la gramática: un `{campo}` que no es `env.` queda igual, para
+    que lo resuelva `_resolver` contra el contexto del run.
+    """
+    from backend.core.flow.context import RunContext
+
+    valores, _secretos = _variables()
+    contexto = RunContext(env=valores)
+
+    def _mapear(v):
+        if isinstance(v, str):
+            return _PATRON_ENV.sub(lambda m: contexto.resolve(m.group(0)), v)
+        if isinstance(v, dict):
+            return {k: _mapear(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [_mapear(x) for x in v]
+        return v
+
+    resuelto = _mapear(valor)
+    if isinstance(valor, dict) and isinstance(valor.get("url"), str):
+        def _valor_env(m: re.Match):
+            val = contexto.resolve(m.group(0))
+            return None if val == m.group(0) else val
+
+        resuelto["url"] = _sustituir_en_url(valor["url"], _PATRON_ENV, _valor_env)
+    return resuelto
+
+
+def _env_faltantes(valor) -> list[str]:
+    """Los `{env.X}` que siguen sin resolver: variables que no están en Config."""
+    faltan: list[str] = []
+
+    def _ver(v):
+        if isinstance(v, str):
+            for m in _PATRON_ENV.finditer(v):
+                if m.group(1) not in faltan:
+                    faltan.append(m.group(1))
+        elif isinstance(v, dict):
+            for x in v.values():
+                _ver(x)
+        elif isinstance(v, list):
+            for x in v:
+                _ver(x)
+
+    _ver(valor)
+    return faltan
+
+
+def _error_faltantes(faltan: list[str]) -> str:
+    nombres = ", ".join(faltan)
+    plural = "n las variables" if len(faltan) > 1 else " la variable"
+    return f"falta{plural} {nombres} en Config → Variables"
+
+
+def _tapar(valor):
+    """
+    Un secreto resuelto no sale en ningún lado: ni en el log del run, ni en
+    un mensaje de error, ni en la respuesta de "Probar". Se tapa por valor,
+    porque a esta altura ya está sustituido y no queda el `{env.X}` para
+    reconocerlo. Sólo los marcados secretos en Config: una variable común
+    (una URL base) se sigue viendo.
+    """
+    valores, secretos = _variables()
+    # Crudo y codificado: en la query de una URL el valor va con `quote`
+    # (ver `_sustituir_en_url`), y ahí el crudo no aparece.
+    crudos = {str(valores[n]) for n in secretos if valores.get(n) and len(str(valores[n])) >= 4}
+    ocultar = sorted(crudos | {quote(s, safe="") for s in crudos}, key=len, reverse=True)
+    if not ocultar:
+        return valor
+
+    def _mapear(v):
+        if isinstance(v, str):
+            for s in ocultar:
+                v = v.replace(s, _TAPADO)
+            return v
+        if isinstance(v, dict):
+            return {k: _mapear(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [_mapear(x) for x in v]
+        return v
+
+    return _mapear(valor)
+
+
+def _sustituir_en_url(url: str, patron: re.Pattern, valor_de) -> str:
+    """
+    Sustituye placeholders en una URL, codificando lo que cae en la query.
+
+    Un valor como `is:unread from:x` pegado crudo en `?q={q}` arma una URL con
+    espacios y dos puntos sin codificar, que el servidor ajeno lee a medias o
+    rechaza. En la query se codifica entero (`quote(safe="")`); en el camino
+    queda como estaba, porque ahí una `/` en el valor puede ser a propósito.
+    `valor_de(match) -> str | None`: None deja el placeholder literal.
+    """
+    corte = url.find("?")
+    camino, query = (url, "") if corte < 0 else (url[:corte], url[corte:])
+
+    def _crudo(m: re.Match) -> str:
+        val = valor_de(m)
+        return m.group(0) if val is None else str(val)
+
+    def _codificado(m: re.Match) -> str:
+        val = valor_de(m)
+        return m.group(0) if val is None else quote(str(val), safe="")
+
+    return patron.sub(_crudo, camino) + patron.sub(_codificado, query)
+
+
 def _resolver(valor, obtener):
     """
     Sustituye `{campo}` en url/headers/payload contra `obtener(nombre)`.
@@ -327,7 +509,10 @@ def _resolver(valor, obtener):
             return [_mapear(x) for x in v]
         return v
 
-    return _mapear(valor)
+    resuelto = _mapear(valor)
+    if isinstance(valor, dict) and isinstance(valor.get("url"), str):
+        resuelto["url"] = _sustituir_en_url(valor["url"], _PATRON_VAR, lambda m: obtener(m.group(1)))
+    return resuelto
 
 
 # ── Tool: connections.llamar — el único nodo de flujo de este plugin ──────
@@ -376,15 +561,19 @@ def _ejecutar_guardada(ctx: ToolContext, nombre: str):
          "payload": guardada.get("payload") or {}},
         lambda nombre: ctx.extras.get(nombre, ctx.var(nombre)),
     )
-    cuerpo = _cuerpo(resuelta["payload"])
-    respuesta = ctx.port(port_names.HTTP).request(
-        resuelta["url"],
-        method=guardada.get("method") or "GET",
-        headers=_headers_con_json(resuelta["headers"], cuerpo),
-        body=cuerpo,
-        timeout=float(ctx.config("connectionsTimeout") or 30.0),
-    )
-    ctx.log(f"{guardada.get('method', 'GET')} {resuelta['url']} → {respuesta.status}")
+    # `{env.X}` acá y no sólo adentro de `_pedir`: la línea del log tiene que
+    # ser la URL que salió (tapada), no la plantilla.
+    resuelta = _resolver_env(resuelta)
+    try:
+        respuesta = _pedir(
+            ctx.port(port_names.HTTP), {**resuelta, "method": guardada.get("method")},
+            timeout=float(ctx.config("connectionsTimeout") or 30.0),
+        )
+    except _SinVariable as exc:
+        return ToolResult.err(f"la conexión '{nombre}': {exc}")
+    # La línea va a la traza del run: la URL tapada, por si trae un secreto
+    # en la query (el núcleo ya la entregó resuelta desde la colección).
+    ctx.log(f"{guardada.get('method', 'GET')} {_tapar(resuelta['url'])} → {respuesta.status}")
     cuerpo_resp = respuesta.json(default=respuesta.text)
     resultado = _dig(cuerpo_resp, guardada.get("results_path") or "")
     return guardada, respuesta, cuerpo_resp, resultado
@@ -400,7 +589,10 @@ def _llamar(ctx: ToolContext) -> ToolResult:
     if not respuesta.ok:
         return ToolResult.err(
             f"la conexión '{nombre}' respondió {respuesta.status}",
-            status=respuesta.status, response=cuerpo_resp,
+            # Un error sólo se mira en la traza: si la API repite el token
+            # que recibió, sale tapado. Una respuesta ok no se toca, porque
+            # la leen los nodos que siguen.
+            status=respuesta.status, response=_tapar(cuerpo_resp),
         )
     return ToolResult.ok(response=cuerpo_resp, status=respuesta.status, result=resultado)
 
@@ -450,7 +642,10 @@ def _llamar_y_fusionar(ctx: ToolContext) -> ToolResult:
     if not respuesta.ok:
         return ToolResult.err(
             f"la conexión '{nombre}' respondió {respuesta.status}",
-            status=respuesta.status, response=cuerpo_resp,
+            # Un error sólo se mira en la traza: si la API repite el token
+            # que recibió, sale tapado. Una respuesta ok no se toca, porque
+            # la leen los nodos que siguen.
+            status=respuesta.status, response=_tapar(cuerpo_resp),
         )
     extra = cuerpo_resp if isinstance(cuerpo_resp, dict) else {}
     return ToolResult.ok(response=cuerpo_resp, status=respuesta.status, result=resultado, **extra)
@@ -515,11 +710,16 @@ def _test(ctx: ToolContext) -> ToolResult:
     if guardada is None:
         return ToolResult.err(f"no existe la conexión '{nombre}'")
 
-    respuesta = _pedir(
-        ctx.port(port_names.HTTP), guardada,
-        timeout=float(ctx.config("connectionsTimeout") or 30.0),
-    )
-    cuerpo_resp = respuesta.json(default=respuesta.text)
+    try:
+        respuesta = _pedir(
+            ctx.port(port_names.HTTP), guardada,
+            timeout=float(ctx.config("connectionsTimeout") or 30.0),
+        )
+    except _SinVariable as exc:
+        return ToolResult.err(str(exc))
+    # Lo que se muestra en "Probar": si la API devuelve el token (un eco de
+    # los headers, un error que lo repite), sale tapado.
+    cuerpo_resp = _tapar(respuesta.json(default=respuesta.text))
     if not respuesta.ok:
         return ToolResult.err(f"respondió {respuesta.status}", status=respuesta.status, response=cuerpo_resp)
     return ToolResult.ok(f"respondió {respuesta.status}", status=respuesta.status, response=cuerpo_resp)
@@ -555,15 +755,14 @@ def _probar_llamada(ctx: ToolContext) -> ToolResult:
          "payload": ctx.params.get("payload") or {}},
         variables.get,
     )
-    cuerpo = _cuerpo(resuelta["payload"])
-    respuesta = ctx.port(port_names.HTTP).request(
-        resuelta["url"],
-        method=ctx.params.get("method") or "GET",
-        headers=_headers_con_json(resuelta["headers"], cuerpo),
-        body=cuerpo,
-        timeout=float(ctx.config("connectionsTimeout") or 30.0),
-    )
-    cuerpo_resp = respuesta.json(default=respuesta.text)
+    try:
+        respuesta = _pedir(
+            ctx.port(port_names.HTTP), {**resuelta, "method": ctx.params.get("method")},
+            timeout=float(ctx.config("connectionsTimeout") or 30.0),
+        )
+    except _SinVariable as exc:
+        return ToolResult.err(str(exc))
+    cuerpo_resp = _tapar(respuesta.json(default=respuesta.text))
     resultado = _dig(cuerpo_resp, ctx.params.get("results_path") or "")
 
     if not respuesta.ok:

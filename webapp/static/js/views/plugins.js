@@ -1394,10 +1394,17 @@ async function dibujarItem(plugin, recurso, clave) {
 
 function seccionTools(plugin) {
   const ids = plugin.tools || [];
+  // `dry_run: "run"` lo declara el manifest (core#34): el tool corre de verdad
+  // en un dry run, en sólo lectura. Se marca acá porque es lo que explica por
+  // qué ese paso dice "leyó" en el dry run de un flujo.
+  const leeEnSeco = new Set((catalogo?.tools || []).filter((t) => t.dry_run === "run").map((t) => t.id));
   return [
     h("div", { class: "seccion" }, [h("span", { text: "Tools que aporta" })]),
     h("div", {}, [
-      h("div", { class: "fichas" }, ids.map((id) => h("span", { class: "ficha", text: id }))),
+      h("div", { class: "fichas" }, ids.map((id) => leeEnSeco.has(id)
+        ? h("span", { class: "ficha", title: "Sólo lee: en un dry run corre de verdad, con el disco y la red en sólo lectura." },
+            [id, " · corre en seco"])
+        : h("span", { class: "ficha", text: id }))),
       h("div", { class: "tabla__pie" },
         ["Los flujos los referencian por este id. Si se desinstala el plugin, los flujos que los usen aparecen en el diagnóstico."]),
     ]),

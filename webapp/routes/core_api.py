@@ -74,7 +74,22 @@ LOCAL_PLUGINS = {
     "connections": "webapp.connections.plugin:PLUGIN",
     "conocimiento": "webapp.conocimiento.plugin:PLUGIN",
 }
-_instance = Instance(ROOT, local_plugins=LOCAL_PLUGINS)
+
+
+def _nueva_instancia() -> Instance:
+    """
+    La instancia, con `connections` conectado a las variables de Config (#9).
+    Es el plugin de la app: la grilla y los "Probar" le mandan la config cruda,
+    y sin esto un `{env.X}` en un header salía literal a la API.
+    """
+    instancia = Instance(ROOT, local_plugins=LOCAL_PLUGINS)
+    from webapp.connections import plugin as conexiones
+
+    conexiones.conectar_a(instancia)
+    return instancia
+
+
+_instance = _nueva_instancia()
 
 
 def _url_app() -> str | None:
@@ -132,7 +147,7 @@ def _recargar_instancia(modulos: tuple[str, ...] = ()) -> None:
             del sys.modules[cargado]
     importlib.invalidate_caches()
     anterior = _instance
-    _instance = Instance(ROOT, local_plugins=LOCAL_PLUGINS)
+    _instance = _nueva_instancia()
     try:
         anterior.db.close()
     except Exception:  # noqa: BLE001 — cerrar lo viejo no puede tumbar lo nuevo
@@ -1798,7 +1813,9 @@ async def validate(body: RunBody):
     Revisa un flujo sin ejecutarlo: parseo, tools que existan, params que
     resuelvan, y qué configuración falta.
 
-    Es el dry-run: resuelve todas las variables y no toca nada.
+    Es el dry-run: resuelve todas las variables y no cambia nada. Los tools
+    que declaran `dry_run="run"` corren en sólo lectura (core#34) y su paso
+    llega con `dry_executed`.
     """
     try:
         graph, extra = _instance.diagnose(body.flow)

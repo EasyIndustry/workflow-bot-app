@@ -13,9 +13,12 @@
    otras PCs.
 3. Plug ins → **Plugins en línea**: elegir repo y rama, instalar lo que
    haga falta. Un repo privado necesita `PLUGINS_GITHUB_TOKEN` en Config →
-   Variables (secreta).
-4. Config → Variables: `GITHUB_TOKEN` si el repo de actualizaciones de la
-   app es privado (el público no lo necesita).
+   Variables (secreta); sin ella se usa `GITHUB_TOKEN`.
+4. Config → Variables: `GITHUB_TOKEN` (secreta). Hace falta si un repo es
+   privado, y conviene aunque sean públicos: sin token la API de GitHub da
+   60 pedidos por hora por IP, y la campana, los listados y las descargas
+   los agotan (el error dice "se agotó el cupo"). Sirve para las
+   actualizaciones y para el catálogo de plugins.
 5. Agente → **Instalar** el CLI que se use; **Iniciar sesión** deja el
    `.mcp.json` (Claude Code) o `.codex/config.toml` en la instalación.
    En la carpeta de la instalación ya hay un `AGENTS.md` (y un `CLAUDE.md`
@@ -23,6 +26,38 @@
    las reglas y que empiece por la tool `describe_installation`. No se
    edita a mano; lo que haya que contarle al agente va en Plug ins →
    Conocimiento → Notas.
+
+## Instalar en Linux
+
+No hay `.exe`: se corre desde un clon del repo con `bot.sh`, que arma su
+propio runtime en `.runtime/` la primera vez y no toca el Python del sistema.
+
+```bash
+git clone https://github.com/EasyIndustry/workflow-bot-app Bot && cd Bot
+./bot.sh              # sin instalación: el wizard; con una: la abre con --red
+./bot.sh instalar     # el wizard, aunque ya haya una
+./bot.sh acceso       # "Abrir Bot" en el menú de aplicaciones (y el escritorio)
+./bot.sh --root DIR   # otros argumentos van a python -m webapp
+```
+
+- **Python**: usa el `python3` del sistema si es 3.11 o mayor y puede armar
+  un venv. Si no (Debian/Ubuntu sin `python3-venv`, o un Python viejo), baja
+  el mismo CPython 3.12 portable que empaqueta el `.exe`, sin sudo.
+  `BOT_PYTHON=portable ./bot.sh` fuerza el portable.
+- **Internet**: la primera vez hace falta, para las dependencias (y para el
+  CPython portable si toca). Después arranca sin red. Las dependencias
+  se reinstalan solas sólo si cambia la lista fija de `bot.sh`.
+- Sin argumentos abre la última instalación que anotó el wizard
+  (`~/.config/bot/instalacion.json`) con `--root` explícito: `python -m
+  webapp` pelado prefiere el repo si tiene un `data/` al lado, que aparece
+  con sólo correr los tests.
+- **Ícono en la bandeja**: pystray va con appindicator, que necesita el
+  `gi` del sistema (`python3-gi` y `gir1.2-ayatanaappindicator3-0.1`, que
+  Ubuntu/Xubuntu traen). `bot.sh` enlaza sólo ese paquete en el runtime, si
+  está compilado para la misma versión de Python. Sin él, el servidor
+  arranca sin ícono y se cierra con Ctrl+C o con `kill`.
+- Actualizar la app o el núcleo desde Config → Actualizaciones funciona
+  igual, sobre la carpeta del clon (deja `webapp.anterior/`, ignorado).
 
 ## Plugins con librerías
 

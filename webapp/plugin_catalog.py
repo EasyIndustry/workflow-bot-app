@@ -38,6 +38,7 @@ from pathlib import Path
 
 from backend.core.contract import Field, ParamType, Resource
 from backend.core.resources import ResourceError
+from webapp.github_cupo import cupo_agotado
 
 REPO_POR_DEFECTO = "EasyIndustry/workflow-bot-plugins"
 RAMA_POR_DEFECTO = "cured"
@@ -97,11 +98,24 @@ def guardar_configuracion(instance, *, repo: str, branch: str) -> dict:
 
 
 def token_de(instance) -> str | None:
-    """El token de GitHub, si se cargó como variable. Un repo público no lo necesita."""
+    """
+    El token de GitHub, si se cargó como variable. Un repo público no lo necesita.
+
+    Primero `PLUGINS_GITHUB_TOKEN`, que existe para un catálogo privado con un
+    token distinto al de las actualizaciones. Si no está, `GITHUB_TOKEN`: aun
+    para un repo público hace falta por el cupo de la API (60 pedidos por hora
+    sin token), y pedir cargar el mismo token dos veces era un paso de más.
+    Las actualizaciones hacen lo mismo en el otro orden (`updates.token_de`).
+    """
     try:
-        return (instance.env_vars().get(VARIABLE_TOKEN) or "").strip() or None
+        variables = instance.env_vars()
     except Exception:  # noqa: BLE001 — sin token se sigue como repo público
         return None
+    for nombre in (VARIABLE_TOKEN, "GITHUB_TOKEN"):
+        valor = (variables.get(nombre) or "").strip()
+        if valor:
+            return valor
+    return None
 
 
 # ── GitHub ──────────────────────────────────────────────────────────────
@@ -132,6 +146,9 @@ def _pedir_json(abrir, url: str, token: str | None, que: str):
     try:
         crudo = abrir(url, None, token)
     except urllib.error.HTTPError as exc:
+        # Un 403 por cupo agotado no es un permiso: ver webapp/github_cupo.py.
+        if cupo := cupo_agotado(exc.code, exc.headers, token, VARIABLE_TOKEN):
+            raise CatalogError(f"GitHub respondió {exc.code} al {que}: {cupo}") from None
         if exc.code in (401, 403, 404):
             raise CatalogError(
                 f"GitHub respondió {exc.code} al {que}. Si el repo es privado, hace falta la variable "
@@ -332,7 +349,10 @@ def descargar_carpeta(entrada: dict, *, repo: str, branch: str, tmp: Path, abrir
     try:
         abrir(f"https://api.github.com/repos/{repo}/tarball/{branch}", archivo, token)
     except urllib.error.HTTPError as exc:
-        raise CatalogError(f'GitHub respondió {exc.code} al bajar la rama "{branch}" de {repo}.') from None
+        que = f'bajar la rama "{branch}" de {repo}'
+        if cupo := cupo_agotado(exc.code, exc.headers, token, VARIABLE_TOKEN):
+            raise CatalogError(f"GitHub respondió {exc.code} al {que}: {cupo}") from None
+        raise CatalogError(f"GitHub respondió {exc.code} al {que}.") from None
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         raise CatalogError("No se pudo bajar el catálogo: sin conexión a GitHub.", [str(exc)]) from None
 

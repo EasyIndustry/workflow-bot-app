@@ -4,6 +4,75 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-09-26
+
+- **`{env.X}` en una fuente o una Action de connections llega a la API
+  (#9).** La grilla y los dos "Probar" mandaban la config cruda como params,
+  que el núcleo no resuelve (sólo resuelve los items que un tool lee con
+  `ctx.resource()`, por eso una Action en un run ya andaba), y salía literal
+  `Bearer {env.API_TOKEN}` → 401. La webapp le pasa las variables de Config
+  a su propio plugin (`connections.conectar_a`, desde `core_api` y
+  `mcp_servidor`), que resuelve con el resolvedor del núcleo. Un secreto
+  resuelto sale tapado (`•••`, también codificado) en el log del run, en los
+  mensajes de error, en las respuestas de "Probar" y en la respuesta de un
+  error aunque la API lo repita. Un `{env.X}` que no existe dice "falta la
+  variable X en Config → Variables" sin mandar nada. De paso, un `{var}` en
+  la query de la URL se codifica (`is:unread from:x`). Verificado contra un
+  servidor HTTP local por los cuatro caminos.
+
+- **El ícono de la bandeja aparece en Linux.** Nunca había aparecido, sin
+  ningún error: con appindicator/gtk, `run_detached` de pystray no corre
+  ningún loop, espera un `GLib.MainLoop` que el servidor no tiene. En Linux
+  `bandeja.iniciar` corre `icono.run` en un hilo propio (Windows y macOS
+  siguen con `run_detached`). `bot.sh` instala pystray/Pillow y enlaza el
+  `gi` del sistema, que no se instala con pip. Verificado en XFCE/X11: el
+  ícono se registra en el StatusNotifierWatcher y se ve en el panel.
+
+- **Núcleo v0.3.1-beta.17 vendorizado: core#36.** Un param con un JSON de
+  varias claves (comas y comillas) se rompía en silencio al guardar desde
+  las tarjetas. Ahora vuelve igual, y el `.mmd` es Mermaid válido: el valor
+  citado va envuelto en `#quot;` y la comilla literal adentro es `#34;`, sin
+  ninguna comilla cruda dentro de `["…"]`. Hicieron falta tres releases:
+  beta.15 usaba `\"`, que mermaid.js no conoce, y beta.16 seguía envolviendo
+  con comilla cruda, donde mermaid.js corta la etiqueta (eso rompía también
+  `message="{a}"`, desde antes de #36). Verificado por la API de la app
+  (`/flow/parse` → `/flow/serialize` → `/flow/parse`) y con `mermaid.parse`
+  + `render` del mermaid.js embarcado: el JSON, un valor con coma y uno que
+  empieza con `{` dibujan. Los formatos anteriores se siguen leyendo.
+
+- **Bot en Linux desde el repo: `./bot.sh`.** No había forma de correrlo en
+  Linux sin armar a mano un venv de desarrollo. `bot.sh` arma `.runtime/`
+  una vez: un venv del `python3` del sistema (3.11 o mayor), o si no se
+  puede, el CPython 3.12 portable del `.exe`, sin sudo. Instala las
+  dependencias fijas del `.exe` menos las de Windows. Sin instalación abre
+  el wizard; con una, la abre con `--red`. `./bot.sh acceso` deja "Abrir
+  Bot" en el menú. Ver [operacion.md](operacion.md#instalar-en-linux).
+  Probado de punta a punta (wizard → instalar → abrir → reabrir) con un
+  `HOME` limpio, por los dos caminos. Dos cosas que se vieron al probar:
+  el portable tomaba paquetes del `~/.local` del usuario (va con
+  `PYTHONNOUSERSITE`), y la app abría el repo en vez de la instalación
+  porque los tests dejan un `data/` al lado del código (va con `--root`).
+  No verificado en otra distro que no sea esta Ubuntu.
+
+- **Núcleo v0.3.1-beta.14 vendorizado: core#34 y core#35, y la app los usa.**
+  - core#34: un tool que declara `ToolManifest(dry_run="run")` corre de
+    verdad en un dry run, con `fs`/`http` en sólo lectura (escribir levanta
+    `PortError`). Antes ninguna acción corría en seco, así que una decisión
+    que dependía de una salida iba siempre por la primera rama. La tabla del
+    dry run marca esos pasos como "leyó" y muestra sus salidas (son reales),
+    y de una decisión muestra el valor con el que ramificó. El pie decía
+    "no toca nada": ahora dice qué sí corre. Plug ins marca los tools que
+    "corren en seco" desde el manifest, y el `AGENTS.md` generado le dice al
+    agente que declare `dry_run="run"` en un tool que sólo lee.
+  - core#35: la `variable` de una Decisión acepta `NODO.salida.campo.0`
+    (calificada, anidada, con índice de lista). La tarjeta dejó de decir que
+    `NODO.salida` no vale ahí: ofrece la calificada cuando dos nodos dejan
+    la misma salida, como en un param, y la ayuda explica el anidado.
+  - Verificado contra una instalación de prueba en Linux, por CLI y por CDP
+    (recorrido de Workflows y Plug ins, y las once vistas importan). El
+    único test que falla, `test_la_unidad_entera_se_puede_guardar`, ya
+    fallaba con beta.12: es un caso de `D:\` que en Linux no aplica.
+
 ## 2026-09-23
 
 - **El aviso de salidas repetidas en una tarjeta va de a una línea por

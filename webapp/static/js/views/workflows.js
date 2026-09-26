@@ -5,7 +5,7 @@
  *
  * 1. **Las carpetas viven en el panel lateral, ramificadas.** En el legacy
  *    estaban dentro del body y se comían el espacio del flujo. En la base son
- *    una ruta materializada —`folder = "FORM/CNC4"`, en la columna TEXT que ya
+ *    una ruta materializada —`folder = "Area/Proceso"`, en la columna TEXT que ya
  *    existe— y el árbol lo arma esta vista partiendo por `/`. Consecuencia
  *    directa: una carpeta existe porque un flujo lo dice, así que **no hay
  *    carpetas vacías**.
@@ -185,7 +185,7 @@ function vigilarLista(elegido) {
 /**
  * El árbol desde las rutas materializadas.
  *
- * `folder = "FORM/CNC4"` se parte por `/` y cada tramo es un nivel. No hay tabla
+ * `folder = "Area/Proceso"` se parte por `/` y cada tramo es un nivel. No hay tabla
  * de carpetas: una carpeta existe mientras algún flujo la nombre.
  */
 function armarArbol(lista) {
@@ -892,7 +892,7 @@ function barraDryRun(a) {
 }
 
 function resumenDry(a) {
-  if (!a.dryRun) return "Resuelve todas las variables y no toca nada. Es lo que hay que mirar antes de ejecutar de verdad.";
+  if (!a.dryRun) return "Resuelve todas las variables y no cambia nada. Es lo que hay que mirar antes de ejecutar de verdad.";
   const d = a.dryRun;
   if (!d.runnable && !d.run) return "El flujo tiene errores: no se llegó a resolver nada.";
   const pasos = (d.run && d.run.trace) || [];
@@ -929,9 +929,18 @@ function detalleDry(a) {
       render: (p) => p.node_id || p.node || "—" },
     { clave: "fn", label: "Tool", ancho: "170px", mono: true },
     {
+      // Un tool que declara dry_run="run" (core#34) corre de verdad, en sólo
+      // lectura: su "ok" es un resultado, no uno asumido, y sus salidas son
+      // las que deciden las ramas de abajo. No se puede ver igual que un
+      // paso salteado.
       clave: "status", label: "", ancho: "62px",
-      render: (p) => h("span", { class: p.status === "err" ? "badge badge--error" : "badge badge--ok",
-                                 text: p.status || "ok" }),
+      render: (p) => p.dry_executed
+        ? h("span", { class: p.status === "err" ? "badge badge--error" : "badge badge--ok",
+                      title: "Corrió de verdad, en sólo lectura: el tool declara que sólo lee. "
+                        + "Sus salidas son reales.",
+                      text: p.status === "err" ? "err" : "leyó" })
+        : h("span", { class: p.status === "err" ? "badge badge--error" : "badge badge--ok",
+                      text: p.status || "ok" }),
     },
     {
       // La columna que justifica el producto: los params **ya resueltos**, con
@@ -948,7 +957,22 @@ function detalleDry(a) {
       },
     },
     { clave: "message", label: "", envuelve: true,
-      render: (p) => p.message || "—" },
+      render: (p) => {
+        // Las salidas sólo se muestran de un paso que corrió: las de uno
+        // salteado no existen, y de una decisión lo que cuenta es el valor.
+        const salidas = p.dry_executed ? Object.entries(p.outputs || {}) : [];
+        if (p.decision_value != null && p.decision_value !== "") {
+          return h("span", {}, ["valor: ", h("span", { class: "mono", text: String(p.decision_value) })]);
+        }
+        if (!salidas.length) return p.message || "—";
+        return h("div", {}, [
+          p.message ? h("div", { text: p.message }) : null,
+          ...salidas.map(([k, v]) => h("div", { style: { fontSize: "11px", lineHeight: "1.5" } }, [
+            h("span", { class: "mono", style: { color: "var(--texto-3)" }, text: `${k}=` }),
+            h("span", { class: "mono", text: typeof v === "string" ? v : JSON.stringify(v) }),
+          ])),
+        ].filter(Boolean));
+      } },
   ];
 
   return h("div", { style: { padding: "0 4px 12px" } }, [
@@ -968,8 +992,10 @@ function detalleDry(a) {
             ? "El flujo tiene errores, así que no se recorrió ningún nodo."
             : "El recorrido no pasó por ningún nodo." }),
     h("div", { class: "tabla__pie", text:
-      "Un dry run resuelve las variables y no toca nada: no escribe archivos, " +
-      "no hace requests, no mueve carpetas." }),
+      "Un dry run resuelve las variables y no cambia nada: no escribe archivos, " +
+      "no hace requests que modifiquen, no mueve carpetas. Los tools que declaran " +
+      "que sólo leen (\"leyó\") corren de verdad, con el disco y la red en sólo " +
+      "lectura, para que las decisiones tengan con qué decidir." }),
   ].filter(Boolean));
 }
 
@@ -1048,7 +1074,7 @@ function confirmarProblemas(problemas) {
 
 function abrirPropiedades(a) {
   const carpeta = h("input", { class: "entrada entrada--mono", type: "text", value: a.wf.folder || "",
-                               placeholder: "FORM/CNC4" });
+                               placeholder: "Area/Proceso" });
   const descripcion = h("textarea", { class: "entrada entrada--area", value: a.wf.description || "" });
   const habilitado = h("input", { type: "checkbox", checked: a.wf.state !== "disabled" });
   const fuente = selectorDeFuente(a.wf.source || "");
@@ -1129,7 +1155,7 @@ function selectorDeFuente(actual) {
 
 function nuevoFlujo() {
   const nombre = h("input", { class: "entrada", type: "text", placeholder: "mi-flujo" });
-  const carpeta = h("input", { class: "entrada entrada--mono", type: "text", placeholder: "FORM/CNC4" });
+  const carpeta = h("input", { class: "entrada entrada--mono", type: "text", placeholder: "Area/Proceso" });
   // La fuente se pide al crear porque es cuando más se escriben tarjetas, y sin
   // ella el autocompletado no tiene columnas que ofrecer hasta la primera corrida.
   const fuente = selectorDeFuente("");
