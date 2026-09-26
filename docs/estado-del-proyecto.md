@@ -6,6 +6,20 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-26
 
+- **`{env.X}` en una fuente o una Action de connections llega a la API
+  (#9).** La grilla y los dos "Probar" mandaban la config cruda como params,
+  que el núcleo no resuelve (sólo resuelve los items que un tool lee con
+  `ctx.resource()`, por eso una Action en un run ya andaba), y salía literal
+  `Bearer {env.API_TOKEN}` → 401. La webapp le pasa las variables de Config
+  a su propio plugin (`connections.conectar_a`, desde `core_api` y
+  `mcp_servidor`), que resuelve con el resolvedor del núcleo. Un secreto
+  resuelto sale tapado (`•••`, también codificado) en el log del run, en los
+  mensajes de error, en las respuestas de "Probar" y en la respuesta de un
+  error aunque la API lo repita. Un `{env.X}` que no existe dice "falta la
+  variable X en Config → Variables" sin mandar nada. De paso, un `{var}` en
+  la query de la URL se codifica (`is:unread from:x`). Verificado contra un
+  servidor HTTP local por los cuatro caminos.
+
 - **El ícono de la bandeja aparece en Linux.** Nunca había aparecido, sin
   ningún error: con appindicator/gtk, `run_detached` de pystray no corre
   ningún loop, espera un `GLib.MainLoop` que el servidor no tiene. En Linux

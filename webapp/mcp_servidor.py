@@ -129,6 +129,10 @@ class Extras:
         if self._instance is None:
             from backend.core.instance import Instance
             self._instance = Instance(self.root, local_plugins=self.local_plugins)
+            # Igual que la API (#9): `connections` resuelve `{env.X}` de Config.
+            from webapp.connections import plugin as conexiones
+
+            conexiones.conectar_a(self._instance)
         return self._instance
 
     def handlers(self) -> dict:

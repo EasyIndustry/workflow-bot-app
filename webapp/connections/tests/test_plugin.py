@@ -491,3 +491,93 @@ def test_una_variable_repetida_se_ofrece_una_vez_con_sus_campos():
     extras = _describir_extras({"connection": "Comentario"}, _leer(guardada))
     assert len(extras) == 1
     assert "url y payload" in extras[0].doc
+
+
+# ── {env.X}: variables de Config (#9) ────────────────────────────────────
+
+from webapp.connections import plugin as _plugin  # noqa: E402
+
+SECRETO = "s3cr3t-token-123"
+
+
+@pytest.fixture
+def con_variables():
+    """Lo que hace la webapp al armar la instancia (`conectar_a`), con un secreto y una variable común."""
+    _plugin.usar_entorno(lambda: ({"API_TOKEN": SECRETO, "BASE": "https://api.test"}, {"API_TOKEN"}))
+    yield
+    _plugin.usar_entorno(None)
+
+
+def test_la_grilla_resuelve_env_en_url_y_headers(con_variables):
+    """Lo que manda sources.js: la config cruda, con `{env.X}` sin resolver."""
+    http = FakeHttp().stub("https://api.test/items", text='[{"id": 1}]')
+    resultado = _fetch_page(
+        http, {"url": "{env.BASE}/items?key={env.API_TOKEN}",
+               "headers": {"Authorization": "Bearer {env.API_TOKEN}"}},
+        offset=0, limit=10, timeout=5,
+    )
+    assert resultado["error"] is None and resultado["rows"] == [{"id": 1}]
+    assert http.calls[0]["headers"]["Authorization"] == f"Bearer {SECRETO}"
+    assert http.calls[0]["url"] == f"https://api.test/items?key={SECRETO}"
+
+
+def test_un_env_que_no_existe_se_dice_y_no_se_manda(con_variables):
+    http = FakeHttp()
+    resultado = _fetch_page(http, {"url": "https://api.test/x", "headers": {"X": "{env.NO_EXISTE}"}},
+                            offset=0, limit=10, timeout=5)
+    assert resultado["error"] == "falta la variable NO_EXISTE en Config → Variables"
+    assert http.calls == []
+
+
+def test_probar_llamada_resuelve_env_y_tapa_el_eco(con_variables):
+    """Una API que repite el header que recibió no devuelve el secreto a la pantalla."""
+    http = FakeHttp().stub("https://api.test/uno", status=401,
+                           text=json.dumps({"vi": f"Token {SECRETO}"}))
+    resultado = _registry(http).execute_action(
+        "connections", "probar_llamada",
+        _ctx_factory({"url": "https://api.test/uno", "headers": {"Authorization": "Token {env.API_TOKEN}"}}),
+    )
+    assert http.calls[0]["headers"]["Authorization"] == f"Token {SECRETO}"
+    assert SECRETO not in json.dumps(resultado.outputs)
+    assert resultado.outputs["response"] == {"vi": "Token •••"}
+
+
+def test_el_log_del_run_no_lleva_el_secreto_de_la_query(con_variables):
+    """El núcleo entrega la Action ya resuelta; la línea de la traza sale tapada, también codificada."""
+    raro = "a+b/c=="
+    _plugin.usar_entorno(lambda: ({"K": raro}, {"K"}))
+    http = FakeHttp().stub("https://api.test/items", text="{}")
+    lineas = []
+
+    def factory(declaracion, ports=None):
+        declarados, extras = declaracion.split_params({"connection": "c"}, {})
+        return ToolContext(
+            run_id="r", case_id="1", params=declarados, extras=extras, config={}, context={},
+            log=lambda m, *_: lineas.append(m), ports=ports or {},
+            resources=lambda _col: [{"name": "c", "url": "https://api.test/items?key={env.K}"}],
+        )
+
+    resultado = _registry(http).execute("connections.llamar", factory)
+    assert resultado.status == "ok"
+    assert http.calls[0]["url"] == "https://api.test/items?key=a%2Bb%2Fc%3D%3D"
+    assert lineas == ["GET https://api.test/items?key=••• → 200"]
+
+
+def test_una_variable_comun_no_se_tapa(con_variables):
+    assert _plugin._tapar("https://api.test/x") == "https://api.test/x"
+    assert _plugin._tapar(f"Bearer {SECRETO}") == "Bearer •••"
+
+
+def test_sin_variables_conectadas_un_env_se_dice_faltante():
+    """El plugin cargado desde la CLI del núcleo o un test: sin `usar_entorno`, nada resuelve."""
+    _plugin.usar_entorno(None)
+    resultado = _fetch_page(FakeHttp(), {"url": "https://api.test/x?k={env.API_TOKEN}"},
+                            offset=0, limit=10, timeout=5)
+    assert resultado["error"] == "falta la variable API_TOKEN en Config → Variables"
+
+
+def test_un_valor_en_la_query_se_codifica_y_en_el_camino_no():
+    r = _plugin._resolver({"url": "https://x/api/{carpeta}/m?q={q}", "headers": {"H": "{q}"}},
+                          {"q": "is:unread from:x", "carpeta": "a/b"}.get)
+    assert r["url"] == "https://x/api/a/b/m?q=is%3Aunread%20from%3Ax"
+    assert r["headers"] == {"H": "is:unread from:x"}
