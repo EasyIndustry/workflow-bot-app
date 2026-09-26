@@ -6,13 +6,18 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-26
 
-- **Núcleo v0.3.1-beta.15 vendorizado: core#36.** Un param con un JSON de
+- **Núcleo v0.3.1-beta.16 vendorizado: core#36.** Un param con un JSON de
   varias claves (comas y comillas) se rompía en silencio al guardar desde
-  las tarjetas; ahora vuelve igual (el valor lleva `\"`). Verificado por la
-  API de la app (`/flow/parse` → `/flow/serialize` → `/flow/parse`), que
-  con beta.14 lo devolvía roto. Queda un límite: la vista **Mermaid** no
-  dibuja ese archivo (mermaid.js no conoce `\"`; su escape es `#quot;`) y
-  muestra su aviso, mientras la vista propia dibuja bien. Avisado al núcleo.
+  las tarjetas; ahora vuelve igual (beta.15 escribía la comilla literal
+  como `\"`, beta.16 como `#quot;`). Verificado por la API de la app
+  (`/flow/parse` → `/flow/serialize` → `/flow/parse`), que con beta.14 lo
+  devolvía roto. Queda un límite: la vista **Mermaid** todavía no dibuja
+  ese archivo y muestra su aviso, mientras la vista propia dibuja bien.
+  Probado con `mermaid.parse`: mermaid.js corta la etiqueta `["…"]` en
+  cualquier `"` cruda, incluidas las que envuelven el valor, así que
+  `message="{a}"` ya fallaba antes de #36. Dibuja bien sólo si el
+  envoltorio también va como entidad (`#quot;`/`#34;`). Pasado al núcleo
+  con los casos.
 
 - **Bot en Linux desde el repo: `./bot.sh`.** No había forma de correrlo en
   Linux sin armar a mano un venv de desarrollo. `bot.sh` arma `.runtime/`
