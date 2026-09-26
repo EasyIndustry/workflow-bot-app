@@ -67,6 +67,7 @@ from typing import Callable
 
 from backend.core.contract import Field, ParamType, Resource
 from backend.core.resources import ResourceError
+from webapp.github_cupo import cupo_agotado
 
 TIMEOUT_RED = 15
 TIMEOUT_VALIDACION = 90
@@ -330,7 +331,7 @@ def _crudos(abrir, repo: str | None, token: str | None, pagina: int, por_pagina:
             None, token,
         )
     except urllib.error.HTTPError as exc:
-        raise UpdateError(_explicar_http(exc.code, f"listar los releases de {repo}", token)) from None
+        raise UpdateError(_explicar_http(exc.code, f"listar los releases de {repo}", token, exc.headers)) from None
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         raise UpdateError(
             "No se pudo llegar a GitHub. Sin internet, se sube el archivo del release "
@@ -345,7 +346,10 @@ def _crudos(abrir, repo: str | None, token: str | None, pagina: int, por_pagina:
     return datos
 
 
-def _explicar_http(codigo: int, que: str, token: str | None) -> str:
+def _explicar_http(codigo: int, que: str, token: str | None, cabeceras=None) -> str:
+    # Un 403 por cupo agotado no es un permiso: ver webapp/github_cupo.py.
+    if cupo := cupo_agotado(codigo, cabeceras, token, VARIABLES_TOKEN[0]):
+        return f"GitHub respondió {codigo} al {que}: {cupo}"
     if codigo in (401, 403, 404):
         pista = (
             "el token no lo puede leer" if token
@@ -387,7 +391,7 @@ def descargar(tag: str, carpeta: Path, abrir=None, *, repo: str | None = None, t
     try:
         abrir(url, destino, token)
     except urllib.error.HTTPError as exc:
-        raise UpdateError(_explicar_http(exc.code, f'bajar el tag "{tag}" de {repo}', token)) from None
+        raise UpdateError(_explicar_http(exc.code, f'bajar el tag "{tag}" de {repo}', token, exc.headers)) from None
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         raise UpdateError("No se pudo bajar el release: sin conexión a GitHub.", [str(exc)]) from None
     return destino
