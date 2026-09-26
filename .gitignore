@@ -35,3 +35,6 @@ installer/build/
 # Editor
 .vscode/
 .idea/
+
+# El runtime que arma bot.sh en Linux (venv o CPython portable)
+.runtime/

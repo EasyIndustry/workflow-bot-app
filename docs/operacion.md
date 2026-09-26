@@ -24,6 +24,36 @@
    edita a mano; lo que haya que contarle al agente va en Plug ins →
    Conocimiento → Notas.
 
+## Instalar en Linux
+
+No hay `.exe`: se corre desde un clon del repo con `bot.sh`, que arma su
+propio runtime en `.runtime/` la primera vez y no toca el Python del sistema.
+
+```bash
+git clone https://github.com/EasyIndustry/workflow-bot-app Bot && cd Bot
+./bot.sh              # sin instalación: el wizard; con una: la abre con --red
+./bot.sh instalar     # el wizard, aunque ya haya una
+./bot.sh acceso       # "Abrir Bot" en el menú de aplicaciones (y el escritorio)
+./bot.sh --root DIR   # otros argumentos van a python -m webapp
+```
+
+- **Python**: usa el `python3` del sistema si es 3.11 o mayor y puede armar
+  un venv. Si no (Debian/Ubuntu sin `python3-venv`, o un Python viejo), baja
+  el mismo CPython 3.12 portable que empaqueta el `.exe`, sin sudo.
+  `BOT_PYTHON=portable ./bot.sh` fuerza el portable.
+- **Internet**: la primera vez hace falta, para las dependencias (y para el
+  CPython portable si toca). Después arranca sin red. Las dependencias
+  se reinstalan solas sólo si cambia la lista fija de `bot.sh`.
+- Sin argumentos abre la última instalación que anotó el wizard
+  (`~/.config/bot/instalacion.json`) con `--root` explícito: `python -m
+  webapp` pelado prefiere el repo si tiene un `data/` al lado, que aparece
+  con sólo correr los tests.
+- Sin ícono en la bandeja: pystray en Linux depende del escritorio y no se
+  instala. El servidor se cierra con Ctrl+C, o con el `kill` del proceso si
+  se lo abrió desde el menú.
+- Actualizar la app o el núcleo desde Config → Actualizaciones funciona
+  igual, sobre la carpeta del clon (deja `webapp.anterior/`, ignorado).
+
 ## Plugins con librerías
 
 Un plugin puede pedir librerías Python de cómputo (numpy, trimesh) en un

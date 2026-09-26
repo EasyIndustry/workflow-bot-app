@@ -33,6 +33,9 @@ python installer/instalar.py                     # el wizard
 python -m pytest webapp installer backend/tests -q
 ```
 
+En Linux, para usarlo y no para desarrollar: `./bot.sh` arma su propio
+runtime y abre el wizard o la instalación (ver `docs/operacion.md`).
+
 ## Una instalación
 
 ```
