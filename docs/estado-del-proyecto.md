@@ -14,6 +14,14 @@ desarrollo o la PC de un cliente), no sólo con tests.
   Verificado con la fuente real que fallaba: 403 → 20 filas. El arreglo de
   fondo es del núcleo (un User-Agent por defecto en `http_urllib`, para
   todos los plugins).
+- **El botón de una Action de fila pide los params que no son campos del
+  item.** Corría en el acto con `{}`, así que un param que la colección no
+  tiene (el `codigo` del paso 2 de un login OAuth) no aparecía en ningún
+  lado. Ahora, si la Action declara alguno (`accionExtras`, el mismo
+  criterio que el formulario del item), el modal muestra primero esos campos
+  y un "Ejecutar", que no deja correr con un obligatorio vacío. Sin extras
+  sigue corriendo en el acto. Visto por claude-plugins probando `oauth`;
+  verificado por CDP con un plugin de prueba.
 
 - **`{env.X}` en una fuente o una Action de connections llega a la API
   (#9).** La grilla y los dos "Probar" mandaban la config cruda como params,

@@ -880,6 +880,12 @@ function accionesDeFila(plugin, recurso) {
  */
 function botonDeFila(plugin, recurso, accion, fila, claveDe) {
   const clave = String(fila[claveDe]);
+  // Params que la Action pide y el item no tiene como campo: el núcleo arma
+  // el resto desde lo guardado, pero éstos sólo los puede dar quien aprieta.
+  // Antes el botón corría en el acto con `{}` y no había dónde cargarlos (el
+  // `codigo` del paso 2 de un login OAuth). Mismo criterio que el formulario
+  // del item (`accionExtras`), acá en un paso previo dentro del modal.
+  const extras = conBuscadores(plugin, accionExtras(accion, recurso));
 
   const abrir = () => {
     // `outputs.abrir_url`: cualquier Action de fila puede devolverlo para que
@@ -895,7 +901,9 @@ function botonDeFila(plugin, recurso, accion, fila, claveDe) {
     // abierta y huérfana para siempre. La retiene el Bot mismo, así que igual
     // no hay nada que un `opener` pueda tocar del lado de la pestaña nueva.
     let ventana = null;
-    try { ventana = window.open("about:blank", "_blank"); } catch { /* sin permiso del navegador: se sigue sin abrir nada */ }
+    const abrirVentana = () => {
+      try { ventana = window.open("about:blank", "_blank"); } catch { /* sin permiso del navegador: se sigue sin abrir nada */ }
+    };
 
     const cuerpo = h("div", { class: "cargando", text: "Ejecutando…" });
     let modal;
@@ -952,7 +960,45 @@ function botonDeFila(plugin, recurso, accion, fila, claveDe) {
       cuerpo,
       acciones: [h("button", { class: "btn", text: "Cerrar", onClick: () => modal.cerrar() })],
     });
-    correr();
+
+    if (!extras.length) {
+      abrirVentana();
+      correr();
+      return;
+    }
+    // La ventana para `abrir_url` se abre en el click de "Ejecutar", no antes:
+    // tiene que ser el mismo click que dispara la Action, o el bloqueador de
+    // popups la corta, y abrirla al mostrar el formulario la dejaría en
+    // blanco mientras se completa.
+    const form = crearFormulario(extras);
+    const error = h("div");
+    poner(cuerpo, h("div", {}, [
+      h("div", { class: "campo__ayuda", style: { padding: "0 0 8px" },
+                 text: "Esta acción pide datos que no son campos del item:" }),
+      form.elemento,
+      error,
+      h("div", { style: { marginTop: "10px" } }, [h("button", {
+        class: "btn btn--primario", text: "Ejecutar",
+        onClick: () => {
+          let params;
+          try {
+            params = form.leer();
+          } catch (e) {
+            return poner(error, aviso("error", "Revisá los datos", e.message));
+          }
+          // Un obligatorio vacío llegaba como "" y el núcleo lo daba por
+          // cargado: la Action corría sin el dato que pedía.
+          const faltan = extras.filter((p) => p.required
+            && (params[p.name] === undefined || params[p.name] === null || String(params[p.name]).trim() === ""));
+          if (faltan.length) {
+            return poner(error, aviso("error", "Faltan datos",
+              faltan.map((p) => p.label || p.name).join(", ")));
+          }
+          abrirVentana();
+          correr(params);
+        },
+      })]),
+    ]));
   };
 
   return h("button", {
