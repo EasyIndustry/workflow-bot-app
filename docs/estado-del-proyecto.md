@@ -6,6 +6,15 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-26
 
+- **El lienzo pasa a main.** El diagrama tipo n8n de la rama
+  `lienzo-n8n-main` (hasta v0.5.0-lienzo.5, probado por Leandro) entra en la
+  línea principal. Se unió a mano la tabla del dry run: el lienzo trae "sin
+  valor" (una decisión que en seco no tuvo con qué decidir) y main traía
+  "leyó" (un tool que corrió de verdad en seco, core#34): son casos
+  distintos y quedan los dos. El valor de una decisión queda sólo en la
+  columna de parámetros, como lo muestra el lienzo. Verificado por CDP: las
+  doce vistas importan, el lienzo dibuja y el dry run marca "leyó".
+
 - **Una Action recibe la vuelta del navegador (#12).** Una Action que
   declara `url_de_vuelta` y `estado_de_vuelta` los recibe completados por la
   app: la URL estable `…/api/core/vuelta/<plugin>/<action>` y un `state` de
@@ -118,6 +127,71 @@ desarrollo o la PC de un cliente), no sólo con tests.
     fallaba con beta.12: es un caso de `D:\` que en Linux no aplica.
 
 ## 2026-09-23
+
+- **El dry run del lienzo dice cuándo una decisión no tuvo valor, y deja
+  elegir qué rama probar** (rama `lienzo-n8n-main`, v0.5.0-lienzo.5). En seco
+  las acciones no corren, así que una decisión sobre lo que deja una
+  (`{status}` de una llamada) queda sin valor, y el núcleo sigue por la
+  primera rama con un warning (`executor.py`, "sin valor conocido"). El
+  lienzo le ponía un tilde verde como si hubiera evaluado, y las demás ramas
+  no se podían revisar. Ahora:
+  - esa decisión va en ámbar (`?`, "sin valor en seco") en el lienzo, en el
+    panel y en la tabla del pie, con el aviso del núcleo;
+  - la decisión abierta tiene "En seco, probar la rama": el valor elegido
+    viaja como columna de la fila del dry run (`valoresDeRamas`). No hizo
+    falta tocar el núcleo, porque `decision_value` lee primero la fila. La
+    corrida de verdad no lo manda nunca;
+  - el panel y la tabla muestran con qué valor decidió, en vez de "este
+    nodo no lleva parámetros".
+  Verificado por CDP: automática → `?` y rama 200; elegir 404 vuelve a
+  correr y va por "No encontrado". En main la tabla del pie sigue diciendo
+  "ok" en una decisión sin valor: el arreglo es de esta rama.
+
+- **La selección de texto se ve en los campos con `{variables}`.** El
+  `::selection` del campo resaltado sólo declaraba `color: transparent`, y
+  con un `::selection` declarado Chrome deja de pintar el fondo por defecto:
+  se seleccionaba sin que se viera, en todas las tarjetas (viene del
+  resaltado de variables, así que también está en main). Ahora lleva un
+  fondo azul translúcido: el campo va encima del espejo, que es el que
+  muestra las letras.
+- **El nodo abierto del lienzo se agranda** con un botón en su cabecera
+  (rama `lienzo-n8n-main`, v0.5.0-lienzo.4). No es un tamaño fijo: toma lo
+  que entra en el visor en ese momento (entre 400×420 y 900), porque un
+  720 fijo no entraba con las dos columnas y dejaba afuera justo los
+  botones para achicarlo y cerrarlo. Se mantiene al abrir otro nodo.
+  Verificado por CDP con las dos columnas y con "Solo diagrama".
+
+- **Tres bugs del lienzo, arreglados** (rama `lienzo-n8n-main`,
+  v0.5.0-lienzo.3). Verificado por CDP con mouse y teclado reales, y la
+  misma prueba contra lienzo.2 los reproduce los tres:
+  - Cambiar o quitar una arista desde el nodo abierto redibuja el lienzo
+    entero (conserva el encuadre y el scroll del panel). Antes el SVG quedaba
+    con la arista vieja, y un "+" sobre ella creaba un nodo sin entradas.
+  - Doble clic en un "+" ya no deja un `keydown` en captura colgado de
+    `document`: el menú cancela el timer que lo cuelga al cerrarse. Ese
+    listener se tragaba todos los Escape de la app hasta recargar.
+  - El zoom y el pie (Correr, Registro y su menú) no cuentan como clic en el
+    fondo: con un nodo abierto lo cerraban y rehacían la pantalla.
+
+- **La rueda sobre el nodo abierto del lienzo scrollea sus params** en vez
+  de hacer zoom (rama `lienzo-n8n-main`, v0.5.0-lienzo.2). Ctrl+rueda sigue
+  siendo zoom en cualquier lado, y al llegar al final del panel la rueda no
+  sigue de largo. Verificado por CDP con eventos de rueda reales.
+
+- **"Solo diagrama" en Workflows** (rama `lienzo-n8n-main`): un tercer botón
+  al lado de Tarjetas/Texto esconde la columna izquierda y le deja la fila
+  entera al lienzo, que ya agrega, conecta y edita los nodos en el lugar. Se
+  recuerda por navegador (`preferencias.js`, como "incluir releases de
+  prueba"). No es un `modo`: Tarjetas o Texto la vuelven a mostrar con lo que
+  había, y "Abrir en Tarjetas" desde un nodo también. Verificado por CDP.
+
+- **El lienzo estilo n8n (`lienzo-n8n`, del 17/09) se puso al día con main
+  en la rama `lienzo-n8n-main`**, para publicarlo como release opcional sin
+  meterlo en main. El nodo abierto en el lienzo ahora recibe
+  `columnasDeLaFila` (lo que main le daba a la tarjeta flotante, que la rama
+  reemplazó), y volver al flujo conserva el dry run pero nunca hereda
+  `dryCorriendo`. Los tres hallazgos graves de la revisión se arreglaron
+  después, en lienzo.3 (arriba).
 
 - **El aviso de salidas repetidas en una tarjeta va de a una línea por
   grupo de nodos, no por salida.** Dos nodos del mismo tool dejan todas sus
@@ -636,6 +710,77 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-17
 
+- **El diagrama propio se ve como n8n y el dry run se corre desde ahí.**
+  `workflows-graph.js` dibuja el flujo hacia abajo con lienzo de puntos,
+  cajas casi cuadradas con la pastilla del ícono (monograma del prefijo del
+  tool: `fs.copy_file` → "FS"; rayo para el inicio, bifurcación para la
+  decisión) y el nombre **adentro**, puertos en los bordes, curvas
+  verticales, rótulos de condición sobre el cable a la salida, zoom abajo a
+  la izquierda y "Correr en seco" abajo al medio con el botón **Registro**
+  al lado para elegir una fila de una fuente (`api.fuentes` +
+  `api.filasDeFuente`, lo mismo que Sources) y mandarla como `row` a
+  `POST /validate`. El resultado se pinta encima sin rearmar el dibujo
+  (`actualizarDryRun`): tilde/alerta en la esquina de cada nodo, aristas
+  recorridas en verde, y la tarjeta flotante muestra los params ya
+  resueltos arriba del editor. El nombre largo, el tool y los params van en
+  un tooltip HTML sobre el visor (no `<title>`: tarda y no formatea). Nada
+  de esto pasa por `dibujar()`: la barra del pie se rellena en el lugar
+  (`rellenarBarraDry`) para no perder el paneo/zoom. **Los ciclos se rompen
+  como en dagre**, no por el rótulo `loop`: con el flujo real de Toothform,
+  `N30 -->|loop| gate --> esperar --> N30` dejaba al gate sin ninguna
+  entrada "hacia adelante" y subía a la primera fila como si fuera un
+  inicio; ahora un DFS desde el inicio marca la arista que **cierra** cada
+  ciclo (`esperar --> N30`) y sólo esa se dibuja rodeando por el costado
+  (`romperCiclos`). El rótulo `loop` queda para el punteado. Y cada nodo se
+  **baja hasta justo encima de su sucesor más cercano** (lo que dagre logra al
+  rankear): los "Comentario …" que desembocan en el mismo cierre quedaban
+  arriba con un cable de media pantalla; ahora quedan al lado del cierre.
+  **Se edita sobre el lienzo**, como en n8n: al pasar por un nodo aparece un
+  "+" (menú Acción/Decisión, el nuevo queda colgado de ése); al pasar por una
+  arista, "+" para meter un nodo en el medio y "×" para quitarla; y desde un
+  puerto de salida o el "+" se arrastra un cable hasta otro nodo para
+  conectarlos, o se suelta en el vacío para crear uno ya conectado. El lienzo
+  no muta el grafo: describe el gesto (`edicion.alAgregar/alConectar/
+  alQuitarArista/alQuitarNodo/alCambiarCondicion`) y `workflows.js` decide con
+  las mismas reglas que la pila (`crearNodo`/`quitarNodo`, compartidos). El
+  encuadre sobrevive al redibujo (`a.vista`). Lo demás que se edita ahí:
+  - **El menú de Acción trae los tools instalados**, agrupados por plugin y
+    con buscador (Enter toma el primero); el nodo nace con su tool y con el
+    nombre del tool como nombre visible, en vez de vacío. Sale de
+    `GET /tools`; el lienzo no conoce ningún plugin por nombre.
+  - **La "×" del nodo lo elimina**, con confirmación que dice cuántas aristas
+    se re-cosen (el re-enganche no es obvio de reconstruir a mano y no hay
+    deshacer). El inicio no se puede borrar.
+  - **Una arista se selecciona con un clic** y sus herramientas quedan fijas:
+    llegar hasta ellas con el mouse salía del área de la línea y
+    desaparecían justo antes de poder apretarlas. Son tres: "+" (nodo en el
+    medio), lápiz (**editar la condición ahí mismo**, sin abrir la tarjeta) y
+    "×". La selección sobrevive al redibujo (`a.aristaSel`).
+  - **Doble clic en un puerto** abre la lista de destinos con buscador, sin
+    los que ya están conectados: arrastrar hasta un nodo diez filas más abajo
+    obliga a tener los dos en pantalla, y con treinta nodos eso no pasa.
+  Lo que sigue sin existir: arrastrar un nodo para moverlo (el layout es
+  automático) y reconectar una arista por su extremo.
+- **Un nodo se abre en el lienzo con sus parámetros adentro**, en vez de la
+  tarjeta flotante anclada abajo del visor: al elegirlo, su caja pasa de
+  116×100 a 400×420 y adentro va el editor de siempre
+  (`workflows-node-panel.js` → `panelDeNodo`, en un `foreignObject`); clic en
+  otro nodo, en el fondo o en su "×" y vuelve al tamaño original. El layout le
+  hace lugar de verdad —el alto de cada fila es el del nodo más alto que
+  tiene, y las medidas viajan por nodo en `posicion`—, así que no tapa a sus
+  vecinos; y si al crecer queda medio afuera, el lienzo corre lo mínimo para
+  dejarlo entero a la vista (`asegurarVisible`). La tarjeta flotante tapaba
+  una franja del dibujo justo cuando uno quiere mirarlo y nada la ataba al
+  nodo que estaba editando. Sin animaciones, por ahora. Se mantuvo todo lo que
+  había: clic para editar, buscador con `enfocarNodo`, divisor, toggle
+  Mermaid, la tabla del pie. **Verificado** en Chrome headless contra una
+  instalación de scratch (`--root` temporal) con un flujo de builtins: el
+  trace de `/validate` trae `node_id/status/params/message` y el lienzo lo
+  pinta; falta mirarlo en la QA con un flujo real y plugins instalados. Hay
+  un sandbox publicado como Artifact con el mismo `workflows-graph.js`, dos
+  flujos de ejemplo, dry run simulado y un cuadro para pegar un `.mmd` con
+  un parser **aproximado** traducido del núcleo (sólo para esa página; la
+  app sigue parseando en el backend).
 - **Núcleo v0.3.1-beta.7** (core#26): el port `fs` niega la carpeta de la
   instalación —`data/`, `plugins/` y `boot.env`— venga de donde venga la raíz,
   y la lista la arma el núcleo solo. Con eso una raíz puede contener la

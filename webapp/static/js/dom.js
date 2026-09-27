@@ -96,6 +96,8 @@ export const ICONOS = {
   cerrar: "M6 6l12 12|M18 6l-12 12",
   plegar: "M11 7l-5 5 5 5|M18 7l-5 5 5 5",
   lapiz: "M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z",
+  agrandar: "M4 9V4h5|M20 9V4h-5|M4 15v5h5|M20 15v5h-5",
+  achicar: "M9 4v5H4|M15 4v5h5|M9 20v-5H4|M15 20v-5h5",
   campana: "M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"
          + "|M13.73 21a2 2 0 0 1-3.46 0",
   base: "M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3z"
