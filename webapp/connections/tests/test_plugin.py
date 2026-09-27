@@ -590,3 +590,16 @@ def test_manda_un_user_agent_propio_salvo_que_la_conexion_declare_uno():
     _fetch_page(http, {"url": "https://api.test/b", "headers": {"user-agent": "Otro/1"}}, offset=0, limit=10, timeout=5)
     assert http.calls[0]["headers"]["User-Agent"] == _plugin.USER_AGENT
     assert http.calls[1]["headers"] == {"user-agent": "Otro/1"}
+
+
+def test_una_fuente_guarda_sus_columnas_ocultas_y_la_pagina_trae_todo():
+    """Ocultar es de la grilla: la página (y la fila que va al flujo) sigue trayendo todos los campos."""
+    from webapp.connections.plugin import SOURCES
+
+    assert "columnas_ocultas" in {f.name for f in SOURCES.fields}
+    assert SOURCES.validate_item({"name": "x", "url": "https://a", "key_field": "id",
+                                  "columnas_ocultas": ["interno"]}) == []
+    http = FakeHttp().stub("https://api.test/p", text='[{"id": "1", "interno": "ref"}]')
+    pagina = _fetch_page(http, {"url": "https://api.test/p", "columnas_ocultas": ["interno"]},
+                         offset=0, limit=10, timeout=5)
+    assert pagina["rows"] == [{"id": "1", "interno": "ref"}]

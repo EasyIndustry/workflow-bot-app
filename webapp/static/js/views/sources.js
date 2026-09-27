@@ -32,7 +32,7 @@ import { h, poner, icono, ICONOS } from "../dom.js";
 import { api } from "../api.js";
 import { irA, rutaActual } from "../router.js";
 import { tabla } from "../components/tabla.js";
-import { confirmar } from "../components/modal.js";
+import { abrirModal, confirmar } from "../components/modal.js";
 import { alClickAfuera } from "../components/click-afuera.js";
 import { aviso } from "../components/aviso.js";
 import { abrirLog } from "./log-modal.js";
@@ -588,9 +588,92 @@ function barraDeFiltros(a, fuente) {
       ? h("button", { class: "btn", text: `Limpiar filtros (${activos})`,
                       onClick: () => { a.search = ""; a.filtros = {}; a.filtrosBot = {}; a.offset = 0; cargar(a.nombre); } })
       : null,
+    botonColumnas(a, fuente),
     h("div", { style: { flex: "1" } }),
     h("span", { style: { fontSize: "11.5px", color: "var(--texto-3)" }, text: notaBusqueda }),
   ]);
+}
+
+// ── Qué columnas se ven ─────────────────────────────────────────────────
+
+/** Las columnas que la fuente no quiere ver en la grilla. */
+function ocultasDe(fuente) {
+  const lista = fuente && fuente.columnas_ocultas;
+  return new Set(Array.isArray(lista) ? lista.map(String) : []);
+}
+
+function botonColumnas(a, fuente) {
+  const n = ocultasDe(fuente).size;
+  return h("button", {
+    class: "btn", text: n ? `Columnas (${n} oculta${n === 1 ? "" : "s"})` : "Columnas",
+    title: "Elegir qué columnas se ven. Las ocultas le siguen llegando al flujo.",
+    onClick: () => abrirColumnas(a, fuente),
+  });
+}
+
+/**
+ * Las columnas que trae la fuente, con una casilla cada una. Se guarda en la
+ * propia fuente, así vale para cualquiera que la abra en esta instalación.
+ * Las que están ocultas pero no vinieron en esta página también se listan:
+ * si no, no habría cómo volver a mostrar una que dejó de venir.
+ */
+function abrirColumnas(a, fuente) {
+  const ocultas = ocultasDe(fuente);
+  const nombres = [];
+  for (const fila of a.filas || []) {
+    for (const k of Object.keys(fila || {})) if (!nombres.includes(k)) nombres.push(k);
+  }
+  for (const k of ocultas) if (!nombres.includes(k)) nombres.push(k);
+
+  const cajas = nombres.map((nombre) => {
+    const esClave = nombre === fuente.key_field;
+    const caja = h("input", { type: "checkbox", checked: esClave || !ocultas.has(nombre), disabled: esClave });
+    caja.dataset.columna = nombre;
+    return h("label", { class: "fila-control", style: { cursor: esClave ? "default" : "pointer", padding: "3px 0" },
+                        title: esClave ? "Es la clave de la fila: siempre se ve." : "" }, [
+      caja, h("span", { class: "mono", style: { fontSize: "12px" }, text: nombre }),
+      esClave ? h("span", { style: { fontSize: "11px", color: "var(--texto-3)" }, text: "· clave" }) : null,
+    ]);
+  });
+  const error = h("div");
+  const todas = (marcar) => cajas.forEach((l) => { const c = l.querySelector("input"); if (!c.disabled) c.checked = marcar; });
+
+  const { cerrar } = abrirModal({
+    titulo: `Columnas de "${fuente.name}"`,
+    sub: "Lo que no se ve le sigue llegando al flujo: sólo cambia la grilla.",
+    cuerpo: h("div", { style: { padding: "10px 14px" } }, [
+      nombres.length
+        ? h("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" } }, [
+            h("button", { class: "btn btn--chico", text: "Todas", onClick: () => todas(true) }),
+            h("button", { class: "btn btn--chico", text: "Ninguna", onClick: () => todas(false) }),
+          ])
+        : h("div", { class: "tabla__vacia", text: "Todavía no llegó ninguna fila: no hay columnas para elegir." }),
+      h("div", { style: { columns: "2 220px", columnGap: "18px" } }, cajas),
+      error,
+    ]),
+    acciones: [
+      h("button", { class: "btn", text: "Cancelar", onClick: () => cerrar() }),
+      h("button", { class: "btn btn--primario", text: "Guardar", onClick: async (ev) => {
+        const nuevas = cajas.map((l) => l.querySelector("input"))
+          .filter((c) => !c.checked && !c.disabled).map((c) => c.dataset.columna);
+        const item = Object.fromEntries(Object.entries(fuente).filter(([k]) => !k.startsWith("_")));
+        item.columnas_ocultas = nuevas;
+        ev.currentTarget.disabled = true;
+        try {
+          const guardada = await api.guardarItem("connections", "sources", fuente.name, item);
+          const limpia = Object.fromEntries(Object.entries(guardada).filter(([k]) => !k.startsWith("_")));
+          Object.assign(fuente, limpia);
+          const enLista = fuentes.find((f) => f.name === fuente.name);
+          if (enLista && enLista !== fuente) Object.assign(enLista, limpia);
+          cerrar();
+          dibujar();
+        } catch (e) {
+          ev.currentTarget.disabled = false;
+          poner(error, aviso("error", "No se pudo guardar", e.message));
+        }
+      } }),
+    ],
+  });
 }
 
 /**
@@ -733,7 +816,11 @@ function grilla(a, fuente, filas) {
   // Ninguna columna está declarada aparte: son las que trajo la fuente, sea
   // cual sea el nombre — igual que "elijas 5 columnas o 100" del diseño
   // anterior, sólo que acá siempre son todas.
-  const elegidas = filas.length ? Object.keys(filas[0]) : [];
+  // Menos las que la fuente declara ocultas (`columnas_ocultas`): es sólo lo
+  // que se dibuja, la fila entera sigue yendo al flujo al ejecutar.
+  const ocultas = ocultasDe(fuente);
+  const elegidas = (filas.length ? Object.keys(filas[0]) : [])
+    .filter((n) => !ocultas.has(n) || n === fuente.key_field);
 
   const columnas = [
     ...elegidas.map((nombre) => ({
