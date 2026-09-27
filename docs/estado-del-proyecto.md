@@ -6,6 +6,15 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-26
 
+- **connections manda un User-Agent propio.** Una fuente detrás de
+  Cloudflare daba 403 con el `{env.X}` bien resuelto: el adaptador HTTP del
+  núcleo no pone User-Agent, urllib manda `Python-urllib/3.x` y Cloudflare
+  lo corta antes de mirar el token. Parecía un problema de credenciales.
+  Ahora va `workflow-bot-app (Bot)` salvo que la conexión declare el suyo.
+  Verificado con la fuente real que fallaba: 403 → 20 filas. El arreglo de
+  fondo es del núcleo (un User-Agent por defecto en `http_urllib`, para
+  todos los plugins).
+
 - **`{env.X}` en una fuente o una Action de connections llega a la API
   (#9).** La grilla y los dos "Probar" mandaban la config cruda como params,
   que el núcleo no resuelve (sólo resuelve los items que un tool lee con

@@ -175,10 +175,20 @@ def _cuerpo(payload) -> str | None:
     return json.dumps(payload)
 
 
+# El adaptador HTTP del núcleo no pone User-Agent, y urllib manda el suyo:
+# `Python-urllib/3.x`. Cloudflare (y otros WAF) bloquean ese con un 403 antes
+# de mirar el token, así que una fuente con el `{env.X}` bien resuelto seguía
+# fallando y parecía un problema de credenciales. Uno propio, sólo si la
+# conexión no declara el suyo en los headers.
+USER_AGENT = "workflow-bot-app (Bot)"
+
+
 def _headers_con_json(headers: dict, cuerpo: str | None) -> dict:
     headers = dict(headers or {})
     if cuerpo is not None and not any(h.lower() == "content-type" for h in headers):
         headers["Content-Type"] = "application/json"
+    if not any(h.lower() == "user-agent" for h in headers):
+        headers["User-Agent"] = USER_AGENT
     return headers
 
 
