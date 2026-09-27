@@ -6,6 +6,19 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-26
 
+- **Una Action recibe la vuelta del navegador (#12).** Una Action que
+  declara `url_de_vuelta` y `estado_de_vuelta` los recibe completados por la
+  app: la URL estable `…/api/core/vuelta/<plugin>/<action>` y un `state` de
+  un solo uso (15 min), atado a plugin, Action e item. Cuando el sitio
+  externo redirige ahí, la app valida y consume el `state`, corre la misma
+  Action con la query (y el item, y otra vez `url_de_vuelta`), guarda el
+  check de la fila y lleva a la pantalla del plugin, que muestra el
+  resultado. Sin `state` válido, o ya usado, se rechaza con el motivo. La
+  query no queda en el log de accesos (filtro en `uvicorn.access`). El botón
+  de fila no pide los opcionales de una Action con vuelta: llegan al volver.
+  No sabe de OAuth ni de ningún plugin (`webapp/vueltas.py`). Verificado en
+  Chrome con un sitio externo falso que imita a un proveedor OAuth.
+
 - **Programar flujos: un flujo corre solo, cada cierto tiempo o a una hora
   (#11).** Botón "Programar" en la cabecera del flujo (no en Propiedades,
   que edita el archivo y espera a "Guardar"; esto se guarda en el acto en la

@@ -54,6 +54,39 @@ export async function montar(elShell, partes) {
   }
 
   await dibujarPlugin(elegido);
+  mostrarVueltaSiLlego(elegido);
+}
+
+// Los params de una vuelta (#12, webapp/vueltas.py): los completa la app al
+// correr la Action, así que ningún formulario los pide.
+const PARAMS_DE_VUELTA = new Set(["url_de_vuelta", "estado_de_vuelta"]);
+
+/**
+ * Cuando el navegador vuelve de un sitio externo (#12), el servidor corrió la
+ * Action y redirige acá con `?vuelta=<clave>`. Se pide el resultado una sola
+ * vez, se muestra en el mismo modal que el botón de fila, y se saca la clave
+ * de la dirección para que recargar no lo repita.
+ */
+async function mostrarVueltaSiLlego(plugin) {
+  const clave = new URLSearchParams(location.search).get("vuelta");
+  if (!clave) return;
+  try { history.replaceState(null, "", location.pathname + location.hash); } catch { /* sin history: queda en la barra */ }
+  let datos;
+  try {
+    datos = await api.resultadoDeVuelta(clave);
+  } catch (e) {
+    datos = { error: e.message };
+  }
+  const accion = (plugin.actions || []).find((a) => a.name === datos.action);
+  const cuerpo = datos.error
+    ? aviso("error", "La vuelta no se aceptó", datos.error)
+    : dibujarResultadoDeAccion(datos.result, plugin, async () => {});
+  const modal = abrirModal({
+    titulo: (accion && (accion.label || accion.name)) || datos.action || "Vuelta",
+    sub: datos.item ? `Volvió del sitio externo · ${datos.item}` : "Volvió del sitio externo",
+    cuerpo,
+    acciones: [h("button", { class: "btn", text: "Cerrar", onClick: () => modal.cerrar() })],
+  });
 }
 
 /** Si el plugin vive en plugins_dir — o sea, si se puede desinstalar desde acá. */
@@ -846,7 +879,7 @@ function accionDePrueba(plugin, recurso) {
 /** Params de la Action que no son un campo del resource: hay que pedirlos aparte. */
 function accionExtras(accion, recurso) {
   const campos = new Set((recurso.fields || []).map((f) => f.name));
-  return (accion.params || []).filter((p) => !campos.has(p.name));
+  return (accion.params || []).filter((p) => !campos.has(p.name) && !PARAMS_DE_VUELTA.has(p.name));
 }
 
 /** Los valores del formulario (y del mini-formulario de extras) que la Action pide. */
@@ -885,7 +918,11 @@ function botonDeFila(plugin, recurso, accion, fila, claveDe) {
   // Antes el botón corría en el acto con `{}` y no había dónde cargarlos (el
   // `codigo` del paso 2 de un login OAuth). Mismo criterio que el formulario
   // del item (`accionExtras`), acá en un paso previo dentro del modal.
-  const extras = conBuscadores(plugin, accionExtras(accion, recurso));
+  // Una Action con vuelta (#12) recibe sus opcionales al volver del sitio
+  // externo —el `code` de un login—: pedirlos antes sería pedirle a la
+  // persona lo que todavía no existe. Sólo se piden los obligatorios.
+  const conVuelta = (accion.params || []).some((p) => p.name === "url_de_vuelta");
+  const extras = conBuscadores(plugin, accionExtras(accion, recurso).filter((p) => !conVuelta || p.required));
 
   const abrir = () => {
     // `outputs.abrir_url`: cualquier Action de fila puede devolverlo para que

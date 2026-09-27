@@ -326,6 +326,8 @@ export const api = {
   guardarProgramacion: (flujo, datos) =>
     pedir(`/programaciones/${codificar(flujo)}`, { metodo: "PUT", cuerpo: datos }),
   borrarProgramacion: (flujo) => pedir(`/programaciones/${codificar(flujo)}`, { metodo: "DELETE" }),
+  // El resultado de una Action que corrió al volver el navegador (#12). Una sola vez.
+  resultadoDeVuelta: (clave) => pedir(`/vueltas/${codificar(clave)}`),
   runs: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return pedir("/runs" + (q ? `?${q}` : ""));

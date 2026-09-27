@@ -103,3 +103,14 @@ arranca el `lifespan` de `webapp/server.py`; montar el router solo (tests,
 MCP) no programa nada. Cada corrida pasa por `core_api._correr_programado` →
 `run_with_gate`. API: `GET/PUT/DELETE /api/core/programaciones[/{flujo}]`.
 Pantalla: `views/workflows-programar.js`.
+
+## Vueltas del navegador a una Action (#12)
+
+`webapp/vueltas.py`. Contrato para un plugin: la Action declara los params
+`url_de_vuelta` y `estado_de_vuelta`; `POST /actions/{plugin}/{action}` los
+completa (host del pedido + `/api/core/vuelta/<plugin>/<action>`, y un
+`state` de `Vueltas.emitir`). `GET /api/core/vuelta/{plugin}/{action}`
+consume el `state` (query `state`), corre la Action con la query y redirige
+a `/?vuelta=<clave>#/plugins/<plugin>`; la pantalla lee el resultado una vez
+con `GET /api/core/vueltas/{clave}`. `vueltas.tapar_en_el_log()` lo llama el
+`lifespan` de `server.py`.

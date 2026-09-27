@@ -48,6 +48,10 @@ async def _ciclo_de_vida(_app):
     # Los flujos programados (#11) corren mientras el servidor esté arriba, y
     # sólo acá: montar el router solo —los tests, el MCP— no programa nada.
     iniciar_programador()
+    # Uvicorn ya configuró sus loggers: la query de una vuelta (#12) no se loguea.
+    from webapp import vueltas
+
+    vueltas.tapar_en_el_log()
     try:
         yield
     finally:

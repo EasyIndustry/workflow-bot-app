@@ -26,6 +26,7 @@ import re
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 # Dónde está el código (el repo, o la carpeta del programa instalado).
@@ -61,6 +62,7 @@ from webapp.agent_terminal import TerminalSession  # noqa: E402
 from webapp.run_gate import RunGate, run_with_gate  # noqa: E402
 from webapp.runs_en_vuelo import RunsEnVuelo  # noqa: E402
 from webapp import programaciones  # noqa: E402
+from webapp import vueltas  # noqa: E402
 
 router = APIRouter()
 
@@ -2032,34 +2034,101 @@ class ActionBody(BaseModel):
     item: str | None = None
 
 
+def _declarada(plugin: str, action: str):
+    return next((a for a in _instance.registry.actions_of(plugin) if a.name == action), None)
+
+
+def _guardar_indicador(plugin: str, action: str, item: str | None, resultado) -> None:
+    """
+    `outputs.indicador` (en el ok y en el err) es el check persistente de la
+    fila (webapp/indicadores.py). Sólo tiene dónde guardarse si la Action
+    corrió atada a un item de una colección: `item` trae la clave y la propia
+    Action declarada dice de qué resource.
+    """
+    if not item:
+        return
+    declarada = _declarada(plugin, action)
+    indicador = (resultado.outputs or {}).get("indicador")
+    if declarada and declarada.resource and isinstance(indicador, dict):
+        indicadores.guardar(
+            _instance, plugin, declarada.resource, item,
+            str(indicador.get("estado") or ""), str(indicador.get("texto") or ""),
+        )
+
+
+# Los `state` de las vueltas (#12) y los resultados que esperan a la pantalla.
+_vueltas = vueltas.Vueltas()
+
+
 @router.post("/actions/{plugin}/{action}")
-async def run_plugin_action(plugin: str, action: str, body: ActionBody):
+async def run_plugin_action(plugin: str, action: str, body: ActionBody, request: Request):
     """
     Ejecuta la Action de un plugin. No es parte de ningún run: la dispara una
     persona desde la pantalla del plugin, y aun así vuelve como `ToolResult`.
+
+    Una Action que declara `url_de_vuelta` (#12, `webapp/vueltas.py`) recibe
+    acá su dirección de vuelta y un `state` de un solo uso, salvo que quien
+    llama ya los mande. La URL sale del host por el que entró este pedido:
+    es al que va a volver el mismo navegador.
     """
+    params = dict(body.params or {})
+    declarada = _declarada(plugin, action)
+    if declarada is not None and vueltas.declara_vuelta(declarada):
+        params.setdefault(vueltas.PARAM_URL, vueltas.url_de_vuelta(str(request.base_url), plugin, action))
+        params.setdefault(vueltas.PARAM_ESTADO, _vueltas.emitir(plugin, action, body.item))
     # Por nombre: el núcleo v0.3 hizo keyword-only a `params` e `item`, y la
     # llamada posicional rompía con TypeError toda Action — la grilla de
     # Sources no podía ni previsualizar una fuente.
     resultado, registro = await run_in_threadpool(
-        lambda: _instance.run_action(plugin, action, params=body.params, item=body.item)
+        lambda: _instance.run_action(plugin, action, params=params, item=body.item)
     )
-    # `outputs.indicador` (en el ok y en el err) es el check persistente de la
-    # fila (webapp/indicadores.py). Sólo tiene dónde guardarse si la Action
-    # corrió atada a un item de una colección: `item` trae la clave y la
-    # propia Action declarada dice de qué resource.
-    if body.item:
-        declarada = next((a for a in _instance.registry.actions_of(plugin) if a.name == action), None)
-        indicador = (resultado.outputs or {}).get("indicador")
-        if declarada and declarada.resource and isinstance(indicador, dict):
-            indicadores.guardar(
-                _instance, plugin, declarada.resource, body.item,
-                str(indicador.get("estado") or ""), str(indicador.get("texto") or ""),
-            )
+    _guardar_indicador(plugin, action, body.item, resultado)
     return {
         "result": resultado.to_dict(),
         "log": [{"message": mensaje, "level": nivel} for mensaje, nivel in registro],
     }
+
+
+@router.get("/vuelta/{plugin}/{action}")
+async def vuelta_de_una_accion(plugin: str, action: str, request: Request):
+    """
+    Adonde vuelve el navegador después del sitio externo (#12).
+
+    Valida y consume el `state`, corre la misma Action con los params de la
+    query (sin el `state`), el item al que estaba atado y la misma
+    `url_de_vuelta`, y lleva a la pantalla del plugin, que muestra el
+    resultado como si se hubiera apretado el botón. Un `state` inválido
+    también vuelve a la pantalla, con el motivo: una página de error suelta
+    dejaría a la persona sin saber adónde ir.
+    """
+    params = dict(request.query_params)
+    estado = params.pop(vueltas.QUERY_ESTADO, None)
+    destino = f"/#/plugins/{plugin}"
+    try:
+        item = _vueltas.consumir(estado, plugin, action)
+    except vueltas.VueltaError as exc:
+        clave = _vueltas.guardar_resultado({"plugin": plugin, "action": action, "error": str(exc)})
+        return RedirectResponse(f"/?vuelta={clave}{destino}", status_code=303)
+    params[vueltas.PARAM_URL] = vueltas.url_de_vuelta(str(request.base_url), plugin, action)
+    resultado, registro = await run_in_threadpool(
+        lambda: _instance.run_action(plugin, action, params=params, item=item)
+    )
+    _guardar_indicador(plugin, action, item, resultado)
+    clave = _vueltas.guardar_resultado({
+        "plugin": plugin, "action": action, "item": item,
+        "result": resultado.to_dict(),
+        "log": [{"message": mensaje, "level": nivel} for mensaje, nivel in registro],
+    })
+    return RedirectResponse(f"/?vuelta={clave}{destino}", status_code=303)
+
+
+@router.get("/vueltas/{clave}")
+def get_resultado_de_vuelta(clave: str):
+    """El resultado de una vuelta, una sola vez: la pantalla lo pide al llegar."""
+    datos = _vueltas.tomar_resultado(clave)
+    if datos is None:
+        raise HTTPException(404, "Ese resultado ya se mostró o venció.")
+    return datos
 
 
 # ── Fuentes de datos ─────────────────────────────────────────────────────
