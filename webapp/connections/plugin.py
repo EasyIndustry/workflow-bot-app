@@ -103,6 +103,14 @@ SOURCES = Resource(
             doc="Qué campo de cada fila identifica el caso (case_id) para el bot.",
         ),
         Field("default_flow", ParamType.STR, label="Flujo por defecto"),
+        # Qué columnas no dibuja la grilla. Sólo la vista: la fila entera, con
+        # todos sus campos, le sigue llegando al flujo. Se guardan las ocultas
+        # y no las visibles para que un campo nuevo de la API aparezca solo en
+        # vez de quedar escondido sin que nadie lo sepa.
+        Field(
+            "columnas_ocultas", ParamType.JSON, label="Columnas ocultas", default=[],
+            doc="Columnas que la grilla no muestra. Siguen llegando al flujo: sólo cambia lo que se ve.",
+        ),
         # Paginación externa — opcional. Vacío = se trae todo y se pagina en
         # memoria, igual que un CSV cargado entero.
         Field(

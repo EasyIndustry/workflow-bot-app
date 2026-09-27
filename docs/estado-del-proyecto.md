@@ -6,6 +6,16 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-26
 
+- **Una fuente elige qué columnas se ven en la grilla.** La API define qué
+  campos llegan, y no había forma de sacar de la vista los que no hace falta
+  mirar. Botón "Columnas" en la barra de la grilla: casillas por columna,
+  "Todas"/"Ninguna", y se guarda en la fuente (`columnas_ocultas`, que
+  también aparece en el formulario de la fuente). Se guardan las ocultas y
+  no las visibles, así un campo nuevo de la API aparece solo. La clave de la
+  fila no se puede ocultar. Es sólo la vista: la fila entera le sigue
+  llegando al flujo. Verificado por CDP: con `interno` oculto la grilla no
+  lo muestra y un run de esa fila resolvió `{interno}` igual.
+
 - **El lienzo pasa a main.** El diagrama tipo n8n de la rama
   `lienzo-n8n-main` (hasta v0.5.0-lienzo.5, probado por Leandro) entra en la
   línea principal. Se unió a mano la tabla del dry run: el lienzo trae "sin
