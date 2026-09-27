@@ -581,3 +581,12 @@ def test_un_valor_en_la_query_se_codifica_y_en_el_camino_no():
                           {"q": "is:unread from:x", "carpeta": "a/b"}.get)
     assert r["url"] == "https://x/api/a/b/m?q=is%3Aunread%20from%3Ax"
     assert r["headers"] == {"H": "is:unread from:x"}
+
+
+def test_manda_un_user_agent_propio_salvo_que_la_conexion_declare_uno():
+    """Sin esto sale `Python-urllib`, y Cloudflare lo corta con 403 antes de mirar el token."""
+    http = FakeHttp().stub("https://api.test/a", text="[]").stub("https://api.test/b", text="[]")
+    _fetch_page(http, {"url": "https://api.test/a"}, offset=0, limit=10, timeout=5)
+    _fetch_page(http, {"url": "https://api.test/b", "headers": {"user-agent": "Otro/1"}}, offset=0, limit=10, timeout=5)
+    assert http.calls[0]["headers"]["User-Agent"] == _plugin.USER_AGENT
+    assert http.calls[1]["headers"] == {"user-agent": "Otro/1"}
