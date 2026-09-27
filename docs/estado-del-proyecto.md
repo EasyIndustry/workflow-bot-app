@@ -6,6 +6,33 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-26
 
+- **Una Action recibe la vuelta del navegador (#12).** Una Action que
+  declara `url_de_vuelta` y `estado_de_vuelta` los recibe completados por la
+  app: la URL estable `…/api/core/vuelta/<plugin>/<action>` y un `state` de
+  un solo uso (15 min), atado a plugin, Action e item. Cuando el sitio
+  externo redirige ahí, la app valida y consume el `state`, corre la misma
+  Action con la query (y el item, y otra vez `url_de_vuelta`), guarda el
+  check de la fila y lleva a la pantalla del plugin, que muestra el
+  resultado. Sin `state` válido, o ya usado, se rechaza con el motivo. La
+  query no queda en el log de accesos (filtro en `uvicorn.access`). El botón
+  de fila no pide los opcionales de una Action con vuelta: llegan al volver.
+  No sabe de OAuth ni de ningún plugin (`webapp/vueltas.py`). Verificado en
+  Chrome con un sitio externo falso que imita a un proveedor OAuth.
+
+- **Programar flujos: un flujo corre solo, cada cierto tiempo o a una hora
+  (#11).** Botón "Programar" en la cabecera del flujo (no en Propiedades,
+  que edita el archivo y espera a "Guardar"; esto se guarda en el acto en la
+  base). Por intervalo o por horario con días, se pausa sin perder el
+  historial, y opcionalmente con un caso y una fila fijos. El programador
+  corre del lado del servidor (`webapp/programaciones.py`, arrancado desde
+  `server.py`), mira cada 15 s y lanza un run normal por `run_with_gate`
+  con `source="programado"`. Si la anterior sigue en vuelo, se saltea y se
+  anota; un flujo con errores o deshabilitado no corre y queda el motivo.
+  Al arrancar no recupera las perdidas: por intervalo corre una vez si se
+  pasó la hora, por horario sigue desde el próximo. No sabe de ningún
+  plugin. Verificado con el servidor real: programado desde la pantalla,
+  corrió solo y quedó en Log con origen `programado`.
+
 - **connections manda un User-Agent propio.** Una fuente detrás de
   Cloudflare daba 403 con el `{env.X}` bien resuelto: el adaptador HTTP del
   núcleo no pone User-Agent, urllib manda `Python-urllib/3.x` y Cloudflare

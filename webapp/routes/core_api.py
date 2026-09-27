@@ -26,6 +26,7 @@ import re
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 # Dónde está el código (el repo, o la carpeta del programa instalado).
@@ -60,6 +61,8 @@ from webapp import (  # noqa: E402
 from webapp.agent_terminal import TerminalSession  # noqa: E402
 from webapp.run_gate import RunGate, run_with_gate  # noqa: E402
 from webapp.runs_en_vuelo import RunsEnVuelo  # noqa: E402
+from webapp import programaciones  # noqa: E402
+from webapp import vueltas  # noqa: E402
 
 router = APIRouter()
 
@@ -121,6 +124,38 @@ _gate = RunGate()
 # Y un solo registro de lo que está corriendo, que es lo que la grilla dibuja
 # como progreso mientras `POST /run` no volvió. Ver `webapp/runs_en_vuelo.py`.
 _en_vuelo = RunsEnVuelo()
+
+
+async def _correr_programado(instance, flujo: str, case_id: str, fila: dict, actor: str | None):
+    """
+    Una corrida programada (#11): la misma que `POST /run`, por el gate y con
+    la política de actores, con `source="programado"`. Lo que `POST /run`
+    frena con un 409 —el flujo tiene errores— acá también se frena, y un flujo
+    deshabilitado no corre: "no aparece para ejecutar" vale también para el
+    programador.
+    """
+    _, extra = instance.diagnose(flujo)
+    if errores := [d.message for d in extra if d.severity.value == "error"]:
+        raise RuntimeError("el flujo tiene errores: " + "; ".join(errores))
+    if getattr(instance.workflows.get(flujo), "state", "") == "disabled":
+        raise RuntimeError("el flujo está deshabilitado")
+    return await run_with_gate(
+        instance, _gate, flujo, case_id, en_vuelo=_en_vuelo,
+        row=fila, source=programaciones.SOURCE, actor=actor,
+    )
+
+
+# Lo arranca `webapp/server.py` al levantar el servidor; los tests que montan
+# el router solo no lo arrancan, y nada corre solo en una suite.
+_programador = programaciones.Programador(lambda: _instance, _correr_programado)
+
+
+def iniciar_programador() -> None:
+    _programador.iniciar()
+
+
+async def parar_programador() -> None:
+    await _programador.parar()
 
 
 def instance() -> Instance:
@@ -1946,6 +1981,44 @@ def get_run_ticket(ticket: str):
     return _en_vuelo.consultar(ticket)
 
 
+# ── Programaciones: flujos que corren solos (#11) ───────────────────────
+
+
+class ProgramacionBody(BaseModel):
+    activa: bool = True
+    modo: str = "intervalo"
+    cada_minutos: int | None = 15
+    hora: str | None = "08:00"
+    dias: str = ""
+    case_id: str = ""
+    fila: dict = {}
+    actor: str = ""
+
+
+@router.get("/programaciones")
+def list_programaciones():
+    """Cada programación con su estado: próxima, última, resultado, salteadas."""
+    return {"items": programaciones.listar(_instance), "dias": list(programaciones.DIAS)}
+
+
+@router.put("/programaciones/{flujo}")
+def put_programacion(flujo: str, body: ProgramacionBody):
+    """Crea o reemplaza la programación de un flujo. La próxima se recalcula en el acto."""
+    try:
+        return programaciones.guardar(_instance, flujo, body.model_dump())
+    except programaciones.ProgramacionError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.delete("/programaciones/{flujo}")
+def delete_programacion(flujo: str):
+    try:
+        programaciones.borrar(_instance, flujo)
+    except programaciones.ProgramacionError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return {"ok": True}
+
+
 # ── Acciones de un plugin (botón + formulario + resultado) ──────────────
 #
 # Genérico: sirve para la Action de cualquier plugin, no sólo `connections`
@@ -1961,34 +2034,101 @@ class ActionBody(BaseModel):
     item: str | None = None
 
 
+def _declarada(plugin: str, action: str):
+    return next((a for a in _instance.registry.actions_of(plugin) if a.name == action), None)
+
+
+def _guardar_indicador(plugin: str, action: str, item: str | None, resultado) -> None:
+    """
+    `outputs.indicador` (en el ok y en el err) es el check persistente de la
+    fila (webapp/indicadores.py). Sólo tiene dónde guardarse si la Action
+    corrió atada a un item de una colección: `item` trae la clave y la propia
+    Action declarada dice de qué resource.
+    """
+    if not item:
+        return
+    declarada = _declarada(plugin, action)
+    indicador = (resultado.outputs or {}).get("indicador")
+    if declarada and declarada.resource and isinstance(indicador, dict):
+        indicadores.guardar(
+            _instance, plugin, declarada.resource, item,
+            str(indicador.get("estado") or ""), str(indicador.get("texto") or ""),
+        )
+
+
+# Los `state` de las vueltas (#12) y los resultados que esperan a la pantalla.
+_vueltas = vueltas.Vueltas()
+
+
 @router.post("/actions/{plugin}/{action}")
-async def run_plugin_action(plugin: str, action: str, body: ActionBody):
+async def run_plugin_action(plugin: str, action: str, body: ActionBody, request: Request):
     """
     Ejecuta la Action de un plugin. No es parte de ningún run: la dispara una
     persona desde la pantalla del plugin, y aun así vuelve como `ToolResult`.
+
+    Una Action que declara `url_de_vuelta` (#12, `webapp/vueltas.py`) recibe
+    acá su dirección de vuelta y un `state` de un solo uso, salvo que quien
+    llama ya los mande. La URL sale del host por el que entró este pedido:
+    es al que va a volver el mismo navegador.
     """
+    params = dict(body.params or {})
+    declarada = _declarada(plugin, action)
+    if declarada is not None and vueltas.declara_vuelta(declarada):
+        params.setdefault(vueltas.PARAM_URL, vueltas.url_de_vuelta(str(request.base_url), plugin, action))
+        params.setdefault(vueltas.PARAM_ESTADO, _vueltas.emitir(plugin, action, body.item))
     # Por nombre: el núcleo v0.3 hizo keyword-only a `params` e `item`, y la
     # llamada posicional rompía con TypeError toda Action — la grilla de
     # Sources no podía ni previsualizar una fuente.
     resultado, registro = await run_in_threadpool(
-        lambda: _instance.run_action(plugin, action, params=body.params, item=body.item)
+        lambda: _instance.run_action(plugin, action, params=params, item=body.item)
     )
-    # `outputs.indicador` (en el ok y en el err) es el check persistente de la
-    # fila (webapp/indicadores.py). Sólo tiene dónde guardarse si la Action
-    # corrió atada a un item de una colección: `item` trae la clave y la
-    # propia Action declarada dice de qué resource.
-    if body.item:
-        declarada = next((a for a in _instance.registry.actions_of(plugin) if a.name == action), None)
-        indicador = (resultado.outputs or {}).get("indicador")
-        if declarada and declarada.resource and isinstance(indicador, dict):
-            indicadores.guardar(
-                _instance, plugin, declarada.resource, body.item,
-                str(indicador.get("estado") or ""), str(indicador.get("texto") or ""),
-            )
+    _guardar_indicador(plugin, action, body.item, resultado)
     return {
         "result": resultado.to_dict(),
         "log": [{"message": mensaje, "level": nivel} for mensaje, nivel in registro],
     }
+
+
+@router.get("/vuelta/{plugin}/{action}")
+async def vuelta_de_una_accion(plugin: str, action: str, request: Request):
+    """
+    Adonde vuelve el navegador después del sitio externo (#12).
+
+    Valida y consume el `state`, corre la misma Action con los params de la
+    query (sin el `state`), el item al que estaba atado y la misma
+    `url_de_vuelta`, y lleva a la pantalla del plugin, que muestra el
+    resultado como si se hubiera apretado el botón. Un `state` inválido
+    también vuelve a la pantalla, con el motivo: una página de error suelta
+    dejaría a la persona sin saber adónde ir.
+    """
+    params = dict(request.query_params)
+    estado = params.pop(vueltas.QUERY_ESTADO, None)
+    destino = f"/#/plugins/{plugin}"
+    try:
+        item = _vueltas.consumir(estado, plugin, action)
+    except vueltas.VueltaError as exc:
+        clave = _vueltas.guardar_resultado({"plugin": plugin, "action": action, "error": str(exc)})
+        return RedirectResponse(f"/?vuelta={clave}{destino}", status_code=303)
+    params[vueltas.PARAM_URL] = vueltas.url_de_vuelta(str(request.base_url), plugin, action)
+    resultado, registro = await run_in_threadpool(
+        lambda: _instance.run_action(plugin, action, params=params, item=item)
+    )
+    _guardar_indicador(plugin, action, item, resultado)
+    clave = _vueltas.guardar_resultado({
+        "plugin": plugin, "action": action, "item": item,
+        "result": resultado.to_dict(),
+        "log": [{"message": mensaje, "level": nivel} for mensaje, nivel in registro],
+    })
+    return RedirectResponse(f"/?vuelta={clave}{destino}", status_code=303)
+
+
+@router.get("/vueltas/{clave}")
+def get_resultado_de_vuelta(clave: str):
+    """El resultado de una vuelta, una sola vez: la pantalla lo pide al llegar."""
+    datos = _vueltas.tomar_resultado(clave)
+    if datos is None:
+        raise HTTPException(404, "Ese resultado ya se mostró o venció.")
+    return datos
 
 
 # ── Fuentes de datos ─────────────────────────────────────────────────────

@@ -321,6 +321,13 @@ export const api = {
   // Ejecución e historial
   validar: (cuerpo) => pedir("/validate", { metodo: "POST", cuerpo }),
   ejecutar: (cuerpo) => pedir("/run", { metodo: "POST", cuerpo }),
+  // Flujos que corren solos (#11): una programación por flujo, en la base.
+  programaciones: () => pedir("/programaciones"),
+  guardarProgramacion: (flujo, datos) =>
+    pedir(`/programaciones/${codificar(flujo)}`, { metodo: "PUT", cuerpo: datos }),
+  borrarProgramacion: (flujo) => pedir(`/programaciones/${codificar(flujo)}`, { metodo: "DELETE" }),
+  // El resultado de una Action que corrió al volver el navegador (#12). Una sola vez.
+  resultadoDeVuelta: (clave) => pedir(`/vueltas/${codificar(clave)}`),
   runs: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return pedir("/runs" + (q ? `?${q}` : ""));
