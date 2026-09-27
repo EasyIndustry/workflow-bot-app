@@ -60,6 +60,7 @@ from webapp import (  # noqa: E402
 from webapp.agent_terminal import TerminalSession  # noqa: E402
 from webapp.run_gate import RunGate, run_with_gate  # noqa: E402
 from webapp.runs_en_vuelo import RunsEnVuelo  # noqa: E402
+from webapp import programaciones  # noqa: E402
 
 router = APIRouter()
 
@@ -121,6 +122,38 @@ _gate = RunGate()
 # Y un solo registro de lo que está corriendo, que es lo que la grilla dibuja
 # como progreso mientras `POST /run` no volvió. Ver `webapp/runs_en_vuelo.py`.
 _en_vuelo = RunsEnVuelo()
+
+
+async def _correr_programado(instance, flujo: str, case_id: str, fila: dict, actor: str | None):
+    """
+    Una corrida programada (#11): la misma que `POST /run`, por el gate y con
+    la política de actores, con `source="programado"`. Lo que `POST /run`
+    frena con un 409 —el flujo tiene errores— acá también se frena, y un flujo
+    deshabilitado no corre: "no aparece para ejecutar" vale también para el
+    programador.
+    """
+    _, extra = instance.diagnose(flujo)
+    if errores := [d.message for d in extra if d.severity.value == "error"]:
+        raise RuntimeError("el flujo tiene errores: " + "; ".join(errores))
+    if getattr(instance.workflows.get(flujo), "state", "") == "disabled":
+        raise RuntimeError("el flujo está deshabilitado")
+    return await run_with_gate(
+        instance, _gate, flujo, case_id, en_vuelo=_en_vuelo,
+        row=fila, source=programaciones.SOURCE, actor=actor,
+    )
+
+
+# Lo arranca `webapp/server.py` al levantar el servidor; los tests que montan
+# el router solo no lo arrancan, y nada corre solo en una suite.
+_programador = programaciones.Programador(lambda: _instance, _correr_programado)
+
+
+def iniciar_programador() -> None:
+    _programador.iniciar()
+
+
+async def parar_programador() -> None:
+    await _programador.parar()
 
 
 def instance() -> Instance:
@@ -1944,6 +1977,44 @@ async def run_flow_sin_esperar(body: RunBody):
 def get_run_ticket(ticket: str):
     """Qué pasa con un run pedido sin esperar: en cola, en vuelo, terminado (con el run), o desconocido."""
     return _en_vuelo.consultar(ticket)
+
+
+# ── Programaciones: flujos que corren solos (#11) ───────────────────────
+
+
+class ProgramacionBody(BaseModel):
+    activa: bool = True
+    modo: str = "intervalo"
+    cada_minutos: int | None = 15
+    hora: str | None = "08:00"
+    dias: str = ""
+    case_id: str = ""
+    fila: dict = {}
+    actor: str = ""
+
+
+@router.get("/programaciones")
+def list_programaciones():
+    """Cada programación con su estado: próxima, última, resultado, salteadas."""
+    return {"items": programaciones.listar(_instance), "dias": list(programaciones.DIAS)}
+
+
+@router.put("/programaciones/{flujo}")
+def put_programacion(flujo: str, body: ProgramacionBody):
+    """Crea o reemplaza la programación de un flujo. La próxima se recalcula en el acto."""
+    try:
+        return programaciones.guardar(_instance, flujo, body.model_dump())
+    except programaciones.ProgramacionError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.delete("/programaciones/{flujo}")
+def delete_programacion(flujo: str):
+    try:
+        programaciones.borrar(_instance, flujo)
+    except programaciones.ProgramacionError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return {"ok": True}
 
 
 # ── Acciones de un plugin (botón + formulario + resultado) ──────────────

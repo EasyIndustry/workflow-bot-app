@@ -93,3 +93,13 @@ nodos de arriba (y quién deja cada una) y los nombres de Config; las
 `{variables}` escritas se ven marcadas con `components/resaltar-variables.js`,
 un espejo detrás del input. Sondeos: Sources
 (`runs/en-vuelo`, 1.5/5 s) y Workflows (lista, 5 s).
+
+## Flujos programados (#11)
+
+`webapp/programaciones.py`: una programación por flujo en la colección
+`webapp/programaciones` (config) y `webapp/programaciones_estado` (lo que
+pasó), separadas para que editar no borre el historial. El `Programador` lo
+arranca el `lifespan` de `webapp/server.py`; montar el router solo (tests,
+MCP) no programa nada. Cada corrida pasa por `core_api._correr_programado` →
+`run_with_gate`. API: `GET/PUT/DELETE /api/core/programaciones[/{flujo}]`.
+Pantalla: `views/workflows-programar.js`.

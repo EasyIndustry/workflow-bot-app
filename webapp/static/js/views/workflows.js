@@ -28,6 +28,7 @@ import { dibujarGrafo } from "./workflows-graph.js";
 import { dibujarMermaid } from "./workflows-mermaid.js";
 import { pilaDeTarjetas, textoBuscable } from "./workflows-cards.js";
 import { tarjetaFlotante } from "./workflows-node-panel.js";
+import { abrirProgramar } from "./workflows-programar.js";
 
 let shell = null;
 let flujos = [];
@@ -472,6 +473,8 @@ function cabecera(a, errores, avisos) {
     h("div", { style: { display: "flex", gap: "7px", flexShrink: "0", alignItems: "center" } }, [
       toggle(a),
       h("button", { class: "btn", text: "Propiedades", onClick: () => abrirPropiedades(a) }),
+      h("button", { class: "btn", text: "Programar", title: "Que corra solo, cada cierto tiempo o a una hora",
+                    onClick: () => abrirProgramar(a.nombre) }),
       h("button", { class: "btn", title: "Eliminar el flujo", style: { color: "var(--rojo)" },
                     onClick: () => borrar(a) }, [icono(ICONOS.basura, 12, 2)]),
       h("button", { class: "btn btn--primario", text: "Guardar", disabled: !a.sucio,

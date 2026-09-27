@@ -38,7 +38,20 @@ sys.path.insert(0, str(WEBAPP_DIR))
 # 8010 se veía pero ninguna llamada a la API pasaba.
 PUERTO = int(os.environ.get("BOT_PORT") or 8000)
 
-from routes.core_api import router as core_router  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+
+from routes.core_api import iniciar_programador, parar_programador, router as core_router  # noqa: E402
+
+
+@asynccontextmanager
+async def _ciclo_de_vida(_app):
+    # Los flujos programados (#11) corren mientras el servidor esté arriba, y
+    # sólo acá: montar el router solo —los tests, el MCP— no programa nada.
+    iniciar_programador()
+    try:
+        yield
+    finally:
+        await parar_programador()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +70,7 @@ app = FastAPI(
     ),
     docs_url="/docs",
     redoc_url=None,
+    lifespan=_ciclo_de_vida,
 )
 
 # Sólo el propio origen. Estaba en "*" para recibir tokens de una extensión de
