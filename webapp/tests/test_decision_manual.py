@@ -1,13 +1,13 @@
 """
-Decisión manual (core#37): lo que la webapp expone alrededor de un run en
-espera.
+Decisión manual (core#37, núcleo v0.3.1-beta.18): lo que la webapp expone
+alrededor de un run en espera, contra el núcleo real.
 
-La pausa y el retomar son del núcleo. Lo que se prueba acá es lo de la app:
-que diga que no puede cuando el núcleo vendorizado no sabe pausar (en vez de
-un 500 o un botón que no hace nada), que una fila en espera no arranque otra
-corrida encima, y que el resume y el descarte lleguen al núcleo y vuelvan con
-el run. El núcleo que sí sabe se imita con una subclase de `Instance` que
-cumple el contrato del issue.
+La pausa y el retomar son del núcleo; lo que se prueba acá es lo de la app:
+que la capacidad salga del catálogo, que `resume`/`descartar` lleguen al
+núcleo y vuelvan con el run, que los errores del núcleo —todos `UserError`—
+salgan con un código que la grilla pueda distinguir, y que una fila en espera
+no arranque otra corrida encima (ni como 403, que es lo que hacía el
+`except UserError` de `/run` con `PendingDecision`).
 """
 
 from __future__ import annotations
@@ -20,108 +20,142 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from backend.core.flow.executor import RunResult  # noqa: E402
 from backend.core.instance import Instance  # noqa: E402
-from backend.core.users import UserError  # noqa: E402
 from webapp.routes import core_api  # noqa: E402
 
 FLUJO = (
     "flowchart TD\n"
-    "    SN(inicio)\n"
-    "    D1{Revisión § aprobado}\n"
-    "    N2[\"Seguir § flow.retry_gate\"]\n"
-    "    SN --> D1\n"
+    "    SN1(inicio)\n"
+    '    N1["Antes § marca.poner | x=antes-{id}"]\n'
+    "    D1{Revisión del diseño § aprobado | manual | ayuda=Mirá el PDF antes de elegir}\n"
+    '    N2["Mover § marca.poner | x=si {visto}"]\n'
+    '    N3["Rehacer § marca.poner | x=no {visto}"]\n'
+    "    SN1 --> N1\n"
+    "    N1 --> D1\n"
     "    D1 -->|si| N2\n"
+    "    D1 -->|rehacer| N3\n"
 )
 
 
-class InstanciaQuePausa(Instance):
-    """Imita el contrato de core#37: `resume` y `discard_wait`."""
-
-    llamadas: list = []
-
-    def resume(self, run_id, value, *, actor=None):
-        type(self).llamadas.append(("resume", run_id, value, actor))
-        if value not in ("si", "no"):
-            raise ValueError(f'"{value}" no es ninguna rama de la decisión')
-        if run_id == "no-espera":
-            raise UserError("El run no está esperando una decisión")
-        return RunResult(run_id=run_id, case_id="AP1", status="ok", message="ok")
-
-    def discard_wait(self, run_id, *, actor=None):
-        type(self).llamadas.append(("descartar", run_id, actor))
-        return RunResult(run_id=run_id, case_id="AP1", status="err", message="Decisión descartada")
-
-
-def _cliente(tmp_path, clase=Instance):
+def _cliente(tmp_path):
     core_api._instance.close()
-    core_api._instance = clase(tmp_path)
+    core_api._instance = Instance(tmp_path, local_plugins={"marca": "webapp.tests.plugin_marca:PLUGIN"})
+    core_api._instance.workflows.save("revision", FLUJO)
     app = FastAPI()
     app.include_router(core_api.router, prefix="/api/core")
     return TestClient(app)
 
 
-def _guardar_en_espera(case_id="AP1", source="casos", run_id="r-espera"):
-    resultado = RunResult(run_id=run_id, case_id=case_id, status=core_api.ESPERANDO,
-                          message="Esperando decisión en D1")
-    core_api._instance.runs.save(resultado, flow="f", source=source)
+def _correr(client, case_id="AP1"):
+    return client.post("/api/core/run", json={
+        "flow": "revision", "case_id": case_id, "source": "casos", "row": {"id": case_id},
+    })
 
 
-def test_sin_soporte_del_nucleo_lo_dice_en_vez_de_fingir(tmp_path):
+def test_la_capacidad_sale_del_catalogo(tmp_path):
     client = _cliente(tmp_path)
-    assert client.get("/api/core/capacidades").json() == {"decision_manual": False}
-
-    r = client.post("/api/core/runs/r1/resume", json={"value": "si"})
-    assert r.status_code == 501
-    assert "core#37" in r.json()["detail"]
-    assert client.post("/api/core/runs/r1/descartar", json={}).status_code == 501
-
-
-def test_con_soporte_resume_y_descarte_llegan_al_nucleo(tmp_path):
-    InstanciaQuePausa.llamadas = []
-    client = _cliente(tmp_path, InstanciaQuePausa)
     assert client.get("/api/core/capacidades").json() == {"decision_manual": True}
 
-    r = client.post("/api/core/runs/r-espera/resume", json={"value": "si", "actor": "ana"})
+
+def test_la_corrida_se_pausa_y_trae_lo_que_el_modal_necesita(tmp_path):
+    client = _cliente(tmp_path)
+    r = _correr(client)
     assert r.status_code == 200
-    assert r.json()["status"] == "ok"
-    assert ("resume", "r-espera", "si", "ana") in InstanciaQuePausa.llamadas
+    run = r.json()
+    assert run["status"] == "waiting"
+    espera = run["waiting"]
+    assert espera["variable"] == "aprobado"
+    assert espera["display"] == "Revisión del diseño"
+    assert espera["ayuda"] == "Mirá el PDF antes de elegir"
+    assert [(o["value"], o["to"], o["to_display"], o["to_fn"]) for o in espera["options"]] == [
+        ("si", "N2", "Mover", "marca.poner"), ("rehacer", "N3", "Rehacer", "marca.poner"),
+    ]
+    # El detalle —lo que lee el modal— trae lo mismo, y no el checkpoint.
+    detalle = client.get(f"/api/core/runs/{run['run_id']}").json()
+    assert detalle["waiting"] == espera
+    assert "checkpoint" not in detalle and "flow_text" not in str(detalle)
 
-    r = client.post("/api/core/runs/r-espera/descartar", json={"actor": "ana"})
+
+def test_retomar_sigue_por_la_rama_elegida_con_el_contexto_de_antes(tmp_path):
+    client = _cliente(tmp_path)
+    run_id = _correr(client).json()["run_id"]
+
+    r = client.post(f"/api/core/runs/{run_id}/resume", json={"value": "rehacer"})
     assert r.status_code == 200
-    assert r.json()["status"] == "err"
-    assert ("descartar", "r-espera", "ana") in InstanciaQuePausa.llamadas
-
-
-def test_un_valor_que_no_es_rama_es_400_y_un_run_que_no_espera_409(tmp_path):
-    client = _cliente(tmp_path, InstanciaQuePausa)
-    r = client.post("/api/core/runs/r-espera/resume", json={"value": "quizas"})
-    assert r.status_code == 400
-    assert "ninguna rama" in r.json()["detail"]
-
-    r = client.post("/api/core/runs/no-espera/resume", json={"value": "si"})
-    assert r.status_code == 409
+    run = r.json()
+    assert run["run_id"] == run_id
+    assert run["status"] == "ok"
+    nodos = [t["node_id"] for t in run["trace"]]
+    assert nodos == ["N1", "D1", "N3"]
+    n3 = run["trace"][-1]
+    assert n3["outputs"]["visto"] == "no antes-AP1"  # la salida de N1 sobrevivió a la pausa
+    # Terminó: ya no está en vuelo y la fila se puede volver a correr.
+    assert client.get("/api/core/runs/en-vuelo").json() == []
+    assert _correr(client).json()["status"] == "waiting"
 
 
 def test_una_fila_en_espera_no_arranca_otra_corrida(tmp_path):
     client = _cliente(tmp_path)
-    core_api._instance.workflows.save_mmd("f", FLUJO)
-    _guardar_en_espera()
+    run_id = _correr(client).json()["run_id"]
 
     for ruta in ("/api/core/run", "/api/core/runs"):
-        r = client.post(ruta, json={"flow": "f", "case_id": "AP1", "source": "casos", "row": {}})
+        r = client.post(ruta, json={"flow": "revision", "case_id": "AP1", "source": "casos", "row": {"id": "AP1"}})
         assert r.status_code == 409, ruta
         detalle = r.json()["detail"]
         assert detalle["esperando"] is True
-        assert detalle["run_id"] == "r-espera"
-        assert "decisión pendiente" in detalle["message"]
+        assert detalle["run_id"] == run_id
 
 
-def test_otra_fila_de_la_misma_fuente_corre_normal(tmp_path):
+def test_pending_decision_del_nucleo_es_409_y_no_403(tmp_path):
+    # Sin fuente la espera no se encuentra por fila (`_frenar_si_espera` mira
+    # la fuente), así que el que frena es el núcleo con PendingDecision. Antes
+    # el `except UserError` de `/run` lo devolvía como un permiso negado.
     client = _cliente(tmp_path)
-    core_api._instance.workflows.save_mmd("f", "flowchart TD\n    SN(inicio)\n")
-    _guardar_en_espera(case_id="AP1")
+    cuerpo = {"flow": "revision", "case_id": "AP9", "source": "", "row": {"id": "AP9"}}
+    run_id = client.post("/api/core/run", json=cuerpo).json()["run_id"]
+    otra = client.post("/api/core/run", json={**cuerpo, "source": "otra"})
+    assert otra.status_code == 409
+    assert otra.json()["detail"]["run_id"] == run_id
 
-    r = client.post("/api/core/run", json={"flow": "f", "case_id": "AP2", "source": "casos", "row": {}})
+
+def test_otra_fila_corre_mientras_una_espera(tmp_path):
+    client = _cliente(tmp_path)
+    _correr(client, "AP1")
+    r = _correr(client, "AP2")
     assert r.status_code == 200
-    assert r.json()["status"] == "ok"
+    assert r.json()["status"] == "waiting"  # llegó a su propia decisión: el hilo no quedó tomado
+
+
+def test_errores_del_nucleo_con_codigos_distinguibles(tmp_path):
+    client = _cliente(tmp_path)
+    run_id = _correr(client).json()["run_id"]
+
+    r = client.post(f"/api/core/runs/{run_id}/resume", json={"value": "quizas"})
+    assert r.status_code == 409
+    assert '"si"' in r.json()["detail"] and '"rehacer"' in r.json()["detail"]  # el mensaje lista las opciones
+    assert client.get(f"/api/core/runs/{run_id}").json()["status"] == "waiting"  # no tocó el run
+
+    assert client.post("/api/core/runs/no-existe/resume", json={"value": "si"}).status_code == 404
+    assert client.post("/api/core/runs/no-existe/descartar", json={}).status_code == 404
+
+
+def test_descartar_cierra_la_espera_y_la_fila_vuelve_a_correr(tmp_path):
+    client = _cliente(tmp_path)
+    run_id = _correr(client).json()["run_id"]
+
+    r = client.post(f"/api/core/runs/{run_id}/descartar", json={"actor": "local"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "err"
+    assert r.json()["error_kind"] == "discarded"
+    assert client.post(f"/api/core/runs/{run_id}/resume", json={"value": "si"}).status_code == 409
+    assert _correr(client).status_code == 200
+
+
+def test_sin_soporte_del_nucleo_lo_dice_en_vez_de_fingir(tmp_path, monkeypatch):
+    client = _cliente(tmp_path)
+    monkeypatch.setattr(core_api, "_soporta_decision_manual", lambda: False)
+    assert client.get("/api/core/capacidades").json() == {"decision_manual": False}
+    r = client.post("/api/core/runs/r1/resume", json={"value": "si"})
+    assert r.status_code == 501
+    assert "core#37" in r.json()["detail"]
+    assert client.post("/api/core/runs/r1/descartar", json={}).status_code == 501

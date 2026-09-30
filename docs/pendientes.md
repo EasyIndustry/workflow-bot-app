@@ -4,14 +4,6 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
 `estado-del-proyecto.md`.
 
 ## Depende del núcleo
-- **core#37, decisión manual**: la app ya tiene Esperando, el modal y el
-  checkbox del editor, escondidos hasta que `GET /capacidades` diga
-  `decision_manual: true` (`Instance.resume` existe). Cuando salga:
-  vendorizar, correr los diez puntos de "Qué verificar" del issue contra una
-  instalación, y ajustar la app si `waiting` o los errores de `resume`
-  (`ValueError` → 400, `UserError` → 409 en `_run_o_error`) quedaron con otra
-  forma que la del issue. Mirar también que el serializer escriba `| manual`
-  al guardar desde el editor.
 - **core#26**: que el port `fs` pueda negar subárboles adentro de una raíz,
   armados por el núcleo con lo que sabe de su instalación (su raíz, `data/`,
   `plugins/`). Sin eso, una raíz que contenga la instalación entrega la base,

@@ -46,6 +46,15 @@ from backend.core.env_store import EnvError  # noqa: E402
 from backend.core.flow import serializer  # noqa: E402
 from backend.core.flow.parser import parse_flow  # noqa: E402
 from backend.core.instance import Instance, WorkflowNotFound  # noqa: E402
+
+try:
+    # core#37. Con respaldo: la app y el núcleo se actualizan por separado, y
+    # una webapp nueva sobre un núcleo que no la trae no puede caerse al
+    # arrancar por un import.
+    from backend.core.instance import PendingDecision  # noqa: E402
+except ImportError:  # pragma: no cover — núcleo anterior a v0.3.1-beta.18
+    class PendingDecision(Exception):  # type: ignore[no-redef]
+        run_id = ""
 from backend.core.resources import ResourceError  # noqa: E402
 from backend.core.ports import PLUGIN_PORTS  # noqa: E402
 from backend.core.stores import StoreError  # noqa: E402
@@ -59,7 +68,7 @@ from webapp import (  # noqa: E402
     mcp_registration,
 )
 from webapp.agent_terminal import TerminalSession  # noqa: E402
-from webapp.run_gate import RunGate, run_with_gate  # noqa: E402
+from webapp.run_gate import RunGate, _hook_de_progreso, run_with_gate  # noqa: E402
 from webapp.runs_en_vuelo import RunsEnVuelo  # noqa: E402
 from webapp import programaciones  # noqa: E402
 from webapp import vueltas  # noqa: E402
@@ -1931,6 +1940,10 @@ async def run_flow(body: RunBody):
         )
     except WorkflowNotFound as exc:
         raise HTTPException(404, str(exc)) from None
+    except PendingDecision as exc:
+        # Antes que UserError, de la que hereda: no es un permiso negado sino
+        # una espera abierta, y la grilla la muestra como Esperando.
+        raise _pendiente(body.case_id, exc.run_id) from None
     except UserError as exc:
         # El actor no existe, está deshabilitado o no puede con algún nodo. El
         # mensaje del núcleo ya dice cuál y por qué.
@@ -2202,7 +2215,15 @@ ESPERANDO = "waiting"
 
 
 def _soporta_decision_manual() -> bool:
-    return callable(getattr(_instance, "resume", None))
+    """
+    El núcleo lo declara en su catálogo (`capabilities.manual_decisions`,
+    core#37), que es donde un cliente pregunta qué sabe hacer sin comparar
+    versiones.
+    """
+    try:
+        return bool(_instance.registry.catalog().get("capabilities", {}).get("manual_decisions"))
+    except Exception:  # noqa: BLE001 — sin catálogo, no hay con qué dibujarlo
+        return False
 
 
 @router.get("/capacidades")
@@ -2215,24 +2236,29 @@ def capacidades():
     return {"decision_manual": _soporta_decision_manual()}
 
 
+def _pendiente(case_id: str, run_id: str) -> HTTPException:
+    return HTTPException(409, {
+        "message": f'"{case_id}" tiene una decisión pendiente. Resolvela (botón Esperando) o descartala antes de volver a ejecutarla.',
+        "run_id": run_id,
+        "esperando": True,
+    })
+
+
 def _frenar_si_espera(case_id: str, source: str | None) -> None:
     """
     Una fila con una decisión pendiente no arranca otra corrida encima: la
     espera quedaría huérfana y la persona que después elige estaría
-    retomando algo que ya nadie mira. El núcleo también lo frena (core#37);
-    esto lo dice antes y con el run_id, que es lo que la grilla necesita.
+    retomando algo que ya nadie mira. El núcleo también lo frena
+    (`PendingDecision`, por caso y flujo); esto lo dice antes de encolar
+    —`POST /runs` contesta un ticket y el error llegaría tarde— y por fila,
+    que es como lo ve la grilla.
     """
     try:
         ultimos = _instance.runs.list(case_id=str(case_id), limit=1, source=source or None, include_dry=False)
-    except Exception:
+    except Exception:  # noqa: BLE001 — sin historial no hay espera que proteger
         return
     if ultimos and getattr(ultimos[0], "status", None) == ESPERANDO:
-        run_id = getattr(ultimos[0], "run_id", "")
-        raise HTTPException(409, {
-            "message": f'"{case_id}" tiene una decisión pendiente. Resolvela (botón Esperando) o descartala antes de volver a ejecutarla.',
-            "run_id": run_id,
-            "esperando": True,
-        })
+        raise _pendiente(case_id, getattr(ultimos[0], "run_id", ""))
 
 
 class ResumeBody(BaseModel):
@@ -2249,20 +2275,27 @@ def _sin_decision_manual():
                              "(llega con core#37). Actualizá el núcleo en Config → Actualizaciones.")
 
 
-def _run_o_error(llamada, run_id: str):
+def _resumen_o_404(run_id: str):
+    """
+    El núcleo contesta todo con `UserError` —que no exista, que no espere,
+    que el valor no sea una rama—; el que no existe se separa acá para que
+    sea un 404 y no un 409.
+    """
+    resumen = _instance.runs.summary(run_id)
+    if resumen is None:
+        raise HTTPException(404, f"No existe el run '{run_id}'")
+    return resumen
+
+
+def _llamar(llamada):
     try:
         return llamada()
     except WorkflowNotFound as exc:
         raise HTTPException(404, str(exc)) from None
-    except LookupError as exc:
-        raise HTTPException(404, f"No existe el run '{run_id}': {exc}") from None
-    except ValueError as exc:
-        # El valor no es ninguna de las ramas de esa decisión: el run sigue
-        # esperando, sin tocar.
-        raise HTTPException(400, str(exc)) from None
     except UserError as exc:
-        # El run no está esperando, o el actor no puede con ese flujo. El
-        # mensaje del núcleo dice cuál.
+        # El run no está esperando, el valor no es una rama (el mensaje ya
+        # lista las opciones), o el actor no puede con ese flujo. El run
+        # queda como estaba.
         raise HTTPException(409, str(exc)) from None
 
 
@@ -2272,23 +2305,38 @@ async def resume_run(run_id: str, body: ResumeBody):
     Elige la rama de una decisión manual y sigue la corrida desde ahí. Bloquea
     hasta que termine o llegue a otra decisión manual (vuelve "waiting"), y
     devuelve el run como `POST /run`.
+
+    Mientras sigue, es un run en vuelo como cualquiera: la grilla lo ve en la
+    columna Log con su paso, y se puede detener.
     """
     if not _soporta_decision_manual():
         _sin_decision_manual()
-    resultado = await run_in_threadpool(
-        _run_o_error, lambda: _instance.resume(run_id, body.value, actor=body.actor), run_id,
-    )
-    return resultado.to_dict() if hasattr(resultado, "to_dict") else resultado
+    resumen = _resumen_o_404(run_id)
+    vivo = _en_vuelo.en_vuelo_de(str(resumen.case_id), resumen.source or "")
+    if vivo is not None:
+        raise HTTPException(409, f'"{resumen.case_id}" ya se está retomando.')
+
+    ticket = _en_vuelo.empezar(str(resumen.case_id), resumen.flow, source=resumen.source or "")
+    resultado = None
+    try:
+        resultado = await run_in_threadpool(_llamar, lambda: _instance.resume(
+            run_id, body.value, actor=body.actor,
+            is_cancelled=lambda: _en_vuelo.cancelado(ticket),
+            on_step=_hook_de_progreso(_en_vuelo, ticket),
+        ))
+    finally:
+        _en_vuelo.terminar(ticket, resultado.to_dict() if resultado is not None else None)
+    return resultado.to_dict()
 
 
 @router.post("/runs/{run_id}/descartar")
 def descartar_espera(run_id: str, body: DescartarBody | None = None):
     """Cierra una espera sin seguir: el run queda como error "descartado"."""
-    if not callable(getattr(_instance, "discard_wait", None)):
+    if not _soporta_decision_manual():
         _sin_decision_manual()
+    _resumen_o_404(run_id)
     actor = body.actor if body else None
-    resultado = _run_o_error(lambda: _instance.discard_wait(run_id, actor=actor), run_id)
-    return resultado.to_dict() if hasattr(resultado, "to_dict") else resultado
+    return _llamar(lambda: _instance.discard_wait(run_id, actor=actor)).to_dict()
 
 
 @router.post("/runs/en-vuelo/{ticket}/stop")

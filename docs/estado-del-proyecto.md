@@ -6,6 +6,33 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-30
 
+- **Núcleo v0.3.1-beta.18 (core#37): decisión manual, verificada de punta a
+  punta.** Vendorizado con la mecánica de Actualizaciones. Lo que cambió en la
+  app respecto de lo armado sobre el issue:
+  - La capacidad sale de `registry.catalog()["capabilities"]["manual_decisions"]`
+    (no de si existe `Instance.resume`).
+  - El núcleo contesta todo con `UserError` (no existe, no espera, valor que
+    no es rama, permisos): el run inexistente se separa antes (`runs.summary`)
+    para que sea 404; el resto va 409 con el mensaje del núcleo, que ya lista
+    las opciones.
+  - `PendingDecision` (hereda de `UserError`) salía por el `except UserError`
+    de `/run` como **403**: ahora es 409 con el `run_id`. Se importa con
+    respaldo, para que una webapp nueva sobre un núcleo viejo no se caiga.
+  - `resume` corre como un run en vuelo (`_en_vuelo`, `on_step`,
+    `is_cancelled`): la grilla ve su progreso y se puede detener.
+  - En el dry run, el aviso de una decisión manual es otro texto ("decisión
+    manual: en seco se explora…"): el lienzo lo pinta en ámbar igual que el
+    de "sin valor conocido".
+  Verificado: los 9 tests de `test_decision_manual.py` contra el núcleo real
+  (plugin `plugin_marca.py`); los diez puntos de "Qué verificar" del issue
+  contra una instalación (`boot.env` con `plugins_dir`), incluido matar el
+  servidor entre la pausa y el `resume`, dos decisiones seguidas, y que el
+  secreto de `env` no quede en la base mientras espera; y por CDP sin mocks:
+  Ejecutar → Esperando → modal con los tooltips reales → pausa en la segunda
+  → termina `ok`; descartar; y el editor guarda `| manual | ayuda=…` (citada
+  si lleva coma) y el modal la lee igual. `backend/tests`: los mismos 7 que
+  ya fallaban en Windows con beta.17, ninguno nuevo.
+
 - **Decisión manual, del lado de la app** (rama `claude/decision-manual`),
   esperando a **core#37**: una decisión marcada `manual` pausa la corrida de
   esa fila, libera el hilo para que las demás sigan, y retoma cuando alguien
@@ -31,9 +58,7 @@ desarrollo o la PC de un cliente), no sólo con tests.
   Verificado: 5 tests nuevos (`test_decision_manual.py`) con una `Instance`
   que imita el contrato de core#37, y el recorrido por CDP con el API de runs
   simulado: botón amarillo, modal, tooltips, `resume` con el valor de la rama
-  elegida y vuelta a Ejecutar. **Falta** verificarlo contra el núcleo real
-  cuando salga core#37: la forma de `waiting` y los errores de `resume` son
-  los que propone el issue.
+  elegida y vuelta a Ejecutar. (Contra el núcleo real, arriba: beta.18.)
 
 ## 2026-09-26
 

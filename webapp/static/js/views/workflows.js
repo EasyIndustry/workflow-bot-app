@@ -789,9 +789,12 @@ function pinturaDry(a) {
   // En seco las acciones no corren, así que una decisión sobre la salida de
   // una (`{status}` de una llamada) no tiene valor: el núcleo sigue por la
   // primera rama y deja un warning con el `node_id`. Esa decisión se pinta
-  // en ámbar y con el aviso, no con un tilde como si hubiera evaluado.
+  // en ámbar y con el aviso, no con un tilde como si hubiera evaluado. Una
+  // decisión manual (core#37) tampoco decide en seco —no pausa: explora la
+  // primera rama— y el núcleo lo avisa con otro texto.
   const sinValor = new Map(logs
-    .filter((l) => l.level === "warning" && l.node_id && /sin valor conocido/.test(l.message || ""))
+    .filter((l) => l.level === "warning" && l.node_id
+      && /sin valor conocido|decisión manual: en seco/.test(l.message || ""))
     .map((l) => [l.node_id, l.message]));
   const estados = {};
   const pasos = {};
