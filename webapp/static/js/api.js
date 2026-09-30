@@ -337,6 +337,10 @@ export const api = {
   // cuenta— el paso en curso. La grilla lo consulta mientras haya algo en vuelo.
   enVuelo: () => pedir("/runs/en-vuelo"),
   detenerRun: (ticket) => pedir(`/runs/en-vuelo/${encodeURIComponent(ticket)}/stop`, { metodo: "POST" }),
+  // Decisión manual (core#37): un run "waiting" se retoma eligiendo la rama.
+  capacidades: () => pedir("/capacidades"),
+  retomarRun: (id, value) => pedir(`/runs/${codificar(id)}/resume`, { metodo: "POST", cuerpo: { value } }),
+  descartarEspera: (id) => pedir(`/runs/${codificar(id)}/descartar`, { metodo: "POST", cuerpo: {} }),
   // Correr sin esperar: vuelve un ticket; `ticket()` dice en cola / en vuelo /
   // terminado con el run. Es lo que usan otro Bot (plugin `bots`) o un agente remoto.
   correrSinEsperar: (cuerpo) => pedir("/runs", { metodo: "POST", cuerpo }),

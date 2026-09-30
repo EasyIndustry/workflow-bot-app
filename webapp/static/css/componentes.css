@@ -29,6 +29,9 @@
 .btn--primario:hover { background: var(--azul-oscuro); }
 .btn--azul { border-color: var(--azul); color: var(--azul); }
 .btn--azul:hover { background: var(--azul-fondo); }
+/* Una fila en pausa en una decisión manual: el botón es lo que hay que hacer. */
+.btn--esperando { background: var(--amarillo); border-color: var(--amarillo-oscuro); color: var(--amarillo-texto); font-weight: 600; }
+.btn--esperando:hover { background: var(--amarillo-oscuro); }
 .btn--rojo { border-color: var(--rojo-boton); color: var(--rojo-boton); }
 .btn--rojo:hover { background: var(--rojo-fondo); }
 .btn:disabled { background: var(--fondo-panel); border-color: var(--borde-2); color: var(--texto-4); cursor: default; }

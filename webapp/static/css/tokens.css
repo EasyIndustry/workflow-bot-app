@@ -37,6 +37,11 @@
   --ambar: #b06000;
   --ambar-fondo: #fef7e0;
   --ambar-borde: #f0d9a0;
+  /* Amarillo lleno para lo que espera a una persona (decisión manual): el
+     ámbar de arriba es para avisos y se lee como "algo falta configurar". */
+  --amarillo: #fbbc04;
+  --amarillo-oscuro: #f0a800;
+  --amarillo-texto: #3d2c00;
 
   --rojo: #c5221f;
   --rojo-fondo: #fce8e6;

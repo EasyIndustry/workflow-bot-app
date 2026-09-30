@@ -79,7 +79,7 @@ let abierto = null;
 // por eso son angostas y van fijas contra el borde derecho. La marca de
 // selección va última, contra el borde: se tilda después de mirar la fila.
 const COLUMNAS_BOT = [
-  { clave: "_estado", label: "Estado", ancho: "78px" },
+  { clave: "_estado", label: "Estado", ancho: "92px" },
   { clave: "_log", label: "Log", ancho: "72px" },
   { clave: "_ejec", label: "Últ. ejec.", ancho: "88px" },
   { clave: "_flujo", label: "Flujo", ancho: "150px" },
@@ -101,6 +101,9 @@ const FILTROS_BOT = {
   _estado: {
     opciones: [
       { valor: "ok", texto: "ok" }, { valor: "err", texto: "err" },
+      // "waiting" es el status del núcleo (core#37): las que esperan que
+      // alguien decida, para encontrarlas todas juntas.
+      { valor: "waiting", texto: "esperando" },
       { valor: "sin", texto: "sin correr" },
     ],
     pasa: (v, { run }) => (v === "sin" ? !run : Boolean(run) && run.status === v),
@@ -762,6 +765,11 @@ async function ejecutarTanda(a, fuente, filas) {
 
   const sinFlujo = [];
   const sinRed = [];
+  // Las que ya esperaban una decisión se saltean (el servidor igual las
+  // rechaza), y las que llegan a una decisión manual quedan esperando: no es
+  // una falla, la tanda sigue con la próxima y al final se dice cuáles.
+  const yaEsperaban = [];
+  const quedaronEsperando = [];
 
   for (const [i, fila] of seleccionadas.entries()) {
     if (a.tanda.cortado) break;
@@ -774,8 +782,13 @@ async function ejecutarTanda(a, fuente, filas) {
       sinFlujo.push(caseId);
       continue;
     }
+    if (estaEsperando(a, caseId)) {
+      yaEsperaban.push(caseId);
+      continue;
+    }
     try {
-      await api.ejecutar({ flow: flujo, case_id: caseId, source: fuente.name, row: fila });
+      const r = await api.ejecutar({ flow: flujo, case_id: caseId, source: fuente.name, row: fila });
+      if (r && r.status === ESPERANDO) quedaronEsperando.push(caseId);
     } catch (e) {
       sinRed.push(`${caseId} (${e.message})`);
       continue;
@@ -790,6 +803,12 @@ async function ejecutarTanda(a, fuente, filas) {
     anotar(a.nombre, "falta", `Sin ejecutar por falta de flujo: ${sinFlujo.join(", ")}.`);
   } else if (sinRed.length) {
     anotar(a.nombre, "error", `No se pudo ejecutar: ${sinRed.join(", ")}.`);
+  }
+  if (quedaronEsperando.length) {
+    anotar(a.nombre, "falta", `Esperan una decisión (botón Esperando): ${quedaronEsperando.join(", ")}.`);
+  }
+  if (yaEsperaban.length) {
+    anotar(a.nombre, "falta", `No se ejecutaron porque ya esperaban una decisión: ${yaEsperaban.join(", ")}.`);
   }
   redibujarQuieto();
 }
@@ -884,10 +903,20 @@ function refrescarBarraSeleccion(a, fuente, filas) {
   if (marca) marca.checked = filas.length > 0 && filas.every((f) => a.seleccion.has(claveDe(fuente, f)));
 }
 
+// Un run que llegó a una decisión manual y espera que alguien elija la rama
+// (core#37). No es una falla: la corrida está en pausa, con el hilo libre.
+const ESPERANDO = "waiting";
+
 const ESTADO = {
   ok: { clase: "badge badge--ok", texto: "ok" },
   err: { clase: "badge badge--error", texto: "err" },
+  [ESPERANDO]: { clase: "badge badge--falta", texto: "esperando" },
 };
+
+function estaEsperando(a, caseId) {
+  const run = a.ultimosRuns.get(caseId);
+  return Boolean(run && run.status === ESPERANDO);
+}
 
 /**
  * El flujo de una fila: el elegido a mano, el de la fuente, o —si ninguno— el
@@ -984,6 +1013,15 @@ function celdaBot(clave, fila, fuente, a, filas) {
 function contenidoCeldaCorrer(a, fuente, fila) {
   const caseId = claveDe(fuente, fila);
   const vivo = a.enVuelo.get(caseId);
+  if (!vivo && estaEsperando(a, caseId)) {
+    // En el lugar de Ejecutar, porque es lo que hay que hacer con esa fila:
+    // no se puede volver a correr hasta que alguien decida.
+    return h("button", {
+      class: "btn btn--chico btn--esperando", text: "Esperando",
+      title: "La corrida está en pausa en una decisión manual. Clic para elegir cómo sigue.",
+      onClick: () => abrirEspera(a, fuente, fila),
+    });
+  }
   if (!vivo) {
     return h("button", {
       class: "btn btn--chico", text: "Ejecutar",
@@ -1027,7 +1065,8 @@ async function ejecutarUna(a, fuente, fila, boton) {
   vigilarEnVuelo(a);
   try {
     const r = await api.ejecutar({ flow: flujo, case_id: caseId, source: fuente.name, row: fila });
-    if (r.status !== "ok") {
+    // Llegar a una decisión manual no es fallar: la fila queda en Esperando.
+    if (r.status !== "ok" && r.status !== ESPERANDO) {
       anotar(a.nombre, "error", `${caseId}: el flujo "${flujo}" falló — ${r.message || r.status}.`);
     }
   } catch (e) {
@@ -1038,6 +1077,133 @@ async function ejecutarUna(a, fuente, fila, boton) {
   boton.textContent = original;
   boton.disabled = false;
   dibujar();
+}
+
+// El catálogo de tools, para decir en el tooltip de cada rama qué hace el nodo
+// al que lleva. Cambia sólo al instalar un plugin: se pide una vez.
+let _catalogo = null;
+function catalogoDeTools() {
+  if (!_catalogo) _catalogo = api.tools().catch(() => ({ tools: [] }));
+  return _catalogo;
+}
+
+/**
+ * Lo que el núcleo dejó dicho de la decisión en la que el run está parado
+ * (`waiting`, core#37): la variable, la ayuda y una opción por rama. Viene en
+ * el detalle del run; el resumen de la grilla no lo trae.
+ */
+function esperaDe(detalle) {
+  if (!detalle) return null;
+  return detalle.waiting || (detalle.data && detalle.data.waiting) || null;
+}
+
+/** "Mover a producción · fs.move — Mueve un archivo…", para el tooltip de una rama. */
+function descripcionDeRama(opcion, porId) {
+  const destino = opcion.to_display || opcion.to || "?";
+  const tool = opcion.to_fn ? porId.get(opcion.to_fn) : null;
+  return [
+    `Sigue en: ${destino}`,
+    opcion.to_fn ? `Tool: ${opcion.to_fn}` : "",
+    tool && tool.doc ? tool.doc : "",
+  ].filter(Boolean).join("\n");
+}
+
+/**
+ * El modal de una fila en espera: qué variable hay que definir y un botón por
+ * cada rama de la decisión, con el valor ya puesto — la persona no escribe
+ * nada, elige. El tooltip de cada botón dice a qué nodo lleva y qué hace.
+ * Elegir retoma la corrida en el servidor desde esa rama, con el mismo run.
+ */
+async function abrirEspera(a, fuente, fila) {
+  const caseId = claveDe(fuente, fila);
+  const run = a.ultimosRuns.get(caseId);
+  if (!run) return;
+
+  let detalle = null;
+  let catalogo = { tools: [] };
+  try {
+    [detalle, catalogo] = await Promise.all([api.run(run.run_id), catalogoDeTools()]);
+  } catch (e) {
+    anotar(a.nombre, "error", `${caseId}: no se pudo leer la decisión pendiente — ${e.message}`);
+    return dibujar();
+  }
+  const espera = esperaDe(detalle);
+  const porId = new Map((catalogo.tools || []).map((t) => [t.id, t]));
+  const opciones = (espera && espera.options) || [];
+
+  const estado = h("div", { class: "campo__ayuda", style: { minHeight: "16px" } });
+  const botones = [];
+  const trabar = (valor) => { for (const b of botones) b.disabled = valor; };
+
+  const terminar = async (promesa, verbo) => {
+    trabar(true);
+    estado.style.color = "var(--texto-3)";
+    estado.textContent = `${verbo}…`;
+    try {
+      const r = await promesa;
+      cerrar();
+      if (r && r.status === ESPERANDO) {
+        anotar(a.nombre, "falta", `${caseId}: siguió y quedó esperando otra decisión.`);
+      } else if (r && r.status !== "ok" && verbo !== "Descartando") {
+        anotar(a.nombre, "error", `${caseId}: siguió y falló — ${r.message || r.status}.`);
+      }
+    } catch (e) {
+      trabar(false);
+      estado.style.color = "var(--rojo)";
+      estado.textContent = e.message;
+      return;
+    }
+    await refrescarRun(a, fuente.name, caseId);
+    if (vigente()) dibujar();
+  };
+
+  for (const o of opciones) {
+    botones.push(h("button", {
+      class: "btn btn--primario", text: o.condition || o.value,
+      title: descripcionDeRama(o, porId),
+      onClick: () => terminar(api.retomarRun(run.run_id, o.value), "Siguiendo"),
+    }));
+  }
+
+  const descartar = h("button", {
+    class: "btn btn--chico", text: "Descartar la espera", style: { color: "var(--rojo)" },
+    title: "Cierra la corrida sin seguir: queda como error y la fila se puede volver a ejecutar.",
+    onClick: () => terminar(api.descartarEspera(run.run_id), "Descartando"),
+  });
+  botones.push(descartar);
+
+  const dato = (rotulo, valor, mono = false) => h("div", { style: { display: "flex", gap: "10px", fontSize: "12px", lineHeight: "1.7" } }, [
+    h("span", { style: { flex: "0 0 110px", color: "var(--texto-3)" }, text: rotulo }),
+    h("span", { class: mono ? "mono" : "", style: { minWidth: "0", wordBreak: "break-word" }, text: valor }),
+  ]);
+
+  const cuerpo = h("div", { style: { padding: "14px 16px", display: "flex", flexDirection: "column", gap: "10px" } }, [
+    espera
+      ? h("div", {}, [
+          dato("Hay que definir", espera.variable || "—", true),
+          dato("Fila", caseId, true),
+          dato("Flujo", run.flow || detalle.flow || "—"),
+          espera.ayuda ? dato("Qué mirar", espera.ayuda) : null,
+        ])
+      : h("div", { style: { fontSize: "12.5px" }, text:
+          "El run está en pausa, pero el núcleo no dejó qué decisión espera. Se puede descartar y volver a ejecutar." }),
+    opciones.length
+      ? h("div", {}, [
+          h("div", { style: { fontSize: "11px", color: "var(--texto-3)", marginBottom: "6px" },
+                     text: "Elegí cómo sigue (pasá el mouse por cada opción para ver a dónde lleva):" }),
+          h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } }, botones.slice(0, -1)),
+        ])
+      : null,
+    estado,
+  ]);
+
+  const { cerrar } = abrirModal({
+    titulo: espera && espera.display ? espera.display : "Decisión pendiente",
+    sub: "Decisión manual · la corrida está en pausa hasta que elijas",
+    cuerpo,
+    izquierda: descartar,
+    acciones: [h("button", { class: "btn", text: "Cerrar", onClick: () => cerrar() })],
+  });
 }
 
 /** Pide el run más reciente de una fila y lo mete en el mapa que ya está en memoria. */
