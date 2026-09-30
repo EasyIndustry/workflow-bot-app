@@ -221,10 +221,12 @@ function contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila = 
       () => opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila), { sinLlaves: true });
     partes.push(campoVariable);
     // Las mismas variables que un param, para la ayuda de una decisión manual,
-    // menos los secretos de Config: la ayuda se muestra en pantalla a quien
-    // resuelve la espera, y un {env.TOKEN} ahí es un secreto a la vista.
+    // menos las de Config: el núcleo no resuelve `{env.*}` en la ayuda
+    // (core#38) —viaja a la pantalla y queda en el run, y un secreto ahí
+    // estaría a la vista—, así que ofrecerlas sería prometer un valor que
+    // llega literal.
     const variables = async () => (await opcionesDeVariables(id, grafo, catalogo, columnasDeLaFila))
-      .filter((o) => o.detalle !== "secreto de Config");
+      .filter((o) => !String(o.nombre).startsWith("env."));
     variables.esNodo = (nombre) => Object.prototype.hasOwnProperty.call(grafo.nodes, nombre);
     partes.push(campoManual(nodo, alCambiar, variables));
     partes.push(subtitulo("Variables que puede comparar", "de la fila y de los nodos anteriores"));
@@ -369,7 +371,8 @@ function campoManual(nodo, alCambiar, variables) {
       c.ayuda_con_variables
         ? "Se muestra en el modal de Esperando, arriba de los botones: qué tiene que revisar la persona antes de elegir. "
           + "Acepta {variables} —columnas de la fila y salidas de los nodos anteriores, como {NODO.salida}—: "
-          + "tipeá { para elegirlas, y se reemplazan con los valores de esa corrida al pausar."
+          + "tipeá { para elegirlas, y se reemplazan con los valores de esa corrida al pausar. "
+          + "Las de Config ({env.…}) no: quedan escritas tal cual."
         : "Se muestra en el modal de Esperando, arriba de los botones: qué tiene que revisar la persona antes de elegir.",
       (valor) => { nodo.ayuda = valor; alCambiar({ redibujar: false }); });
     ayuda.hidden = !nodo.manual;

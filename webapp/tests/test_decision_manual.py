@@ -176,3 +176,72 @@ def test_sin_soporte_del_nucleo_lo_dice_en_vez_de_fingir(tmp_path, monkeypatch):
     assert r.status_code == 501
     assert "core#37" in r.json()["detail"]
     assert client.post("/api/core/runs/r1/descartar", json={}).status_code == 501
+
+
+# ── core#38: {variables} en la ayuda ────────────────────────────────────
+
+
+def _grafo(client):
+    datos = client.get("/api/core/workflows/revision/graph").json()
+    return datos.get("graph", datos)
+
+
+def _con_ayuda(client, ayuda):
+    """El flujo de siempre con otra ayuda, guardado como lo hace el editor: grafo → /flow/serialize → PUT."""
+    grafo = _grafo(client)
+    grafo["nodes"]["D1"]["ayuda"] = ayuda
+    r = client.post("/api/core/flow/serialize", json=grafo)
+    assert r.status_code == 200
+    assert r.json()["problems"] == [], r.json()["problems"]
+    contenido = r.json()["content"]
+    assert client.put("/api/core/workflows/revision", json={"content": contenido}).status_code == 200
+    return contenido
+
+
+def test_la_ayuda_trae_las_variables_resueltas_al_pausar(tmp_path):
+    client = _cliente(tmp_path)
+    assert client.get("/api/core/capacidades").json()["ayuda_con_variables"] is True
+
+    _con_ayuda(client, "N1 dejó {N1.visto} para el caso {id} ({visto}). Falta {no_existe}.")
+    espera = _correr(client).json()["waiting"]
+    assert espera["ayuda"] == "N1 dejó antes-AP1 para el caso AP1 (antes-AP1). Falta {no_existe}."
+    assert espera["ayuda_plantilla"] == "N1 dejó {N1.visto} para el caso {id} ({visto}). Falta {no_existe}."
+
+
+def test_env_en_la_ayuda_no_se_resuelve(tmp_path):
+    client = _cliente(tmp_path)
+    core_api._instance.env.save("TOKEN", "sEcReTo-38", secret=True)
+    _con_ayuda(client, "Token {env.TOKEN}")
+    run = _correr(client).json()
+    assert run["waiting"]["ayuda"] == "Token {env.TOKEN}"
+    assert "sEcReTo-38" not in str(client.get(f"/api/core/runs/{run['run_id']}").json())
+
+
+def test_las_llaves_de_la_ayuda_sobreviven_a_guardar_desde_el_editor(tmp_path):
+    client = _cliente(tmp_path)
+    contenido = _con_ayuda(client, "Revisá {N1.visto}, con cuidado")
+    assert "#123;" in contenido and "#125;" in contenido  # Mermaid no acepta llaves crudas en un rombo
+    grafo = _grafo(client)
+    assert grafo["nodes"]["D1"]["ayuda"] == "Revisá {N1.visto}, con cuidado"
+    assert grafo["diagnostics"] == []
+
+
+def test_la_segunda_decision_resuelve_con_lo_que_corrio_despues_del_primer_resume(tmp_path):
+    client = _cliente(tmp_path)
+    core_api._instance.workflows.save("dos", (
+        "flowchart TD\n"
+        "    SN1(inicio)\n"
+        "    D1{Primera § a | manual}\n"
+        '    N1["Medio § marca.poner | x=eligio-{a}"]\n'
+        "    D2{Segunda § b | manual | ayuda=Antes se eligió #123;visto#125;}\n"
+        '    N2["Fin § marca.poner | x={a}-{b}"]\n'
+        "    SN1 --> D1\n"
+        "    D1 -->|si| N1\n"
+        "    N1 --> D2\n"
+        "    D2 -->|ok| N2\n"
+    ))
+    run = client.post("/api/core/run", json={"flow": "dos", "case_id": "Z1", "source": "casos", "row": {}}).json()
+    assert run["waiting"]["node_id"] == "D1"
+    segunda = client.post(f"/api/core/runs/{run['run_id']}/resume", json={"value": "si"}).json()
+    assert segunda["waiting"]["node_id"] == "D2"
+    assert segunda["waiting"]["ayuda"] == "Antes se eligió eligio-si"
