@@ -1923,6 +1923,7 @@ async def run_flow(body: RunBody):
     """
     _frenar_si_tiene_errores(body.flow)
     _frenar_si_ya_corre(body.case_id, body.source)
+    _frenar_si_espera(body.case_id, body.source)
     try:
         resultado = await run_with_gate(
             _instance, _gate, body.flow, body.case_id, en_vuelo=_en_vuelo,
@@ -1958,6 +1959,7 @@ async def run_flow_sin_esperar(body: RunBody):
     son mejores que un ticket que termina en error dos segundos después.
     """
     _frenar_si_tiene_errores(body.flow)
+    _frenar_si_espera(body.case_id, body.source)
     ticket = _en_vuelo.reservar(body.case_id, body.flow, source=body.source)
 
     async def correr() -> None:
@@ -2186,6 +2188,107 @@ def _frenar_si_ya_corre(case_id: str, source: str | None) -> None:
                        f"Esperá a que termine, o detenelo desde la grilla.",
             "ticket": vivo["ticket"],
         })
+
+
+# ── Decisión manual (core#37) ───────────────────────────────────────────
+#
+# Una decisión marcada `manual` pausa la corrida de esa fila: el run queda
+# guardado con status "waiting" y el hilo se libera, así las demás filas
+# siguen. Alguien elige la rama y el núcleo retoma desde ahí, con el mismo
+# run_id. Todo eso es del núcleo; acá sólo se expone, y si el núcleo
+# vendorizado no lo tiene se dice en vez de fingirlo.
+
+ESPERANDO = "waiting"
+
+
+def _soporta_decision_manual() -> bool:
+    return callable(getattr(_instance, "resume", None))
+
+
+@router.get("/capacidades")
+def capacidades():
+    """
+    Lo que el núcleo vendorizado sabe hacer y la UI necesita saber antes de
+    dibujar un control: el checkbox "manual" de una decisión no se muestra
+    si el núcleo no puede pausar, porque sería un control que no hace nada.
+    """
+    return {"decision_manual": _soporta_decision_manual()}
+
+
+def _frenar_si_espera(case_id: str, source: str | None) -> None:
+    """
+    Una fila con una decisión pendiente no arranca otra corrida encima: la
+    espera quedaría huérfana y la persona que después elige estaría
+    retomando algo que ya nadie mira. El núcleo también lo frena (core#37);
+    esto lo dice antes y con el run_id, que es lo que la grilla necesita.
+    """
+    try:
+        ultimos = _instance.runs.list(case_id=str(case_id), limit=1, source=source or None, include_dry=False)
+    except Exception:
+        return
+    if ultimos and getattr(ultimos[0], "status", None) == ESPERANDO:
+        run_id = getattr(ultimos[0], "run_id", "")
+        raise HTTPException(409, {
+            "message": f'"{case_id}" tiene una decisión pendiente. Resolvela (botón Esperando) o descartala antes de volver a ejecutarla.',
+            "run_id": run_id,
+            "esperando": True,
+        })
+
+
+class ResumeBody(BaseModel):
+    value: str
+    actor: str | None = None
+
+
+class DescartarBody(BaseModel):
+    actor: str | None = None
+
+
+def _sin_decision_manual():
+    raise HTTPException(501, "El núcleo instalado no puede pausar ni retomar una corrida en una decisión manual "
+                             "(llega con core#37). Actualizá el núcleo en Config → Actualizaciones.")
+
+
+def _run_o_error(llamada, run_id: str):
+    try:
+        return llamada()
+    except WorkflowNotFound as exc:
+        raise HTTPException(404, str(exc)) from None
+    except LookupError as exc:
+        raise HTTPException(404, f"No existe el run '{run_id}': {exc}") from None
+    except ValueError as exc:
+        # El valor no es ninguna de las ramas de esa decisión: el run sigue
+        # esperando, sin tocar.
+        raise HTTPException(400, str(exc)) from None
+    except UserError as exc:
+        # El run no está esperando, o el actor no puede con ese flujo. El
+        # mensaje del núcleo dice cuál.
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.post("/runs/{run_id}/resume")
+async def resume_run(run_id: str, body: ResumeBody):
+    """
+    Elige la rama de una decisión manual y sigue la corrida desde ahí. Bloquea
+    hasta que termine o llegue a otra decisión manual (vuelve "waiting"), y
+    devuelve el run como `POST /run`.
+    """
+    if not _soporta_decision_manual():
+        _sin_decision_manual()
+    resultado = await run_in_threadpool(
+        _run_o_error, lambda: _instance.resume(run_id, body.value, actor=body.actor), run_id,
+    )
+    return resultado.to_dict() if hasattr(resultado, "to_dict") else resultado
+
+
+@router.post("/runs/{run_id}/descartar")
+def descartar_espera(run_id: str, body: DescartarBody | None = None):
+    """Cierra una espera sin seguir: el run queda como error "descartado"."""
+    if not callable(getattr(_instance, "discard_wait", None)):
+        _sin_decision_manual()
+    actor = body.actor if body else None
+    resultado = _run_o_error(lambda: _instance.discard_wait(run_id, actor=actor), run_id)
+    return resultado.to_dict() if hasattr(resultado, "to_dict") else resultado
 
 
 @router.post("/runs/en-vuelo/{ticket}/stop")

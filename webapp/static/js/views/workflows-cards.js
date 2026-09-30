@@ -220,6 +220,7 @@ function contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila = 
     autocompletar(campoVariable.querySelector("input"),
       () => opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila), { sinLlaves: true });
     partes.push(campoVariable);
+    partes.push(campoManual(nodo, alCambiar));
     partes.push(subtitulo("Variables que puede comparar", "de la fila y de los nodos anteriores"));
     partes.push(variablesDeDecision(id, grafo, catalogo, columnasDeLaFila));
     partes.push(...aristas(id, grafo, alCambiar));
@@ -333,6 +334,56 @@ function subtitulo(texto, suave) {
 
 function nota(texto) {
   return h("div", { style: { padding: "10px 13px", fontSize: "11.5px", color: "var(--texto-3)", lineHeight: "1.5" }, text: texto });
+}
+
+// Lo que sabe hacer el núcleo vendorizado (`GET /capacidades`). Se pide una
+// vez: cambia sólo al actualizar el núcleo, y eso reinicia la app.
+let _capacidades = null;
+function capacidades() {
+  if (!_capacidades) _capacidades = api.capacidades().catch(() => ({}));
+  return _capacidades;
+}
+
+/**
+ * "Decide una persona": la corrida se pausa en esta decisión y la fila queda
+ * en Esperando hasta que alguien elige la rama desde Sources (core#37). Se
+ * dibuja sólo si el núcleo sabe pausar —un checkbox que no pausa sería un
+ * control que no hace nada— salvo que el nodo ya venga marcado, que entonces
+ * se muestra igual para poder desmarcarlo.
+ */
+function campoManual(nodo, alCambiar) {
+  const hueco = h("div");
+  capacidades().then((c) => {
+    if (!c.decision_manual && !nodo.manual) return;
+
+    const ayuda = campoTexto("Qué mirar", nodo.ayuda || "",
+      "Se muestra en el modal de Esperando, arriba de los botones: qué tiene que revisar la persona antes de elegir.",
+      (valor) => { nodo.ayuda = valor; alCambiar({ redibujar: false }); });
+    ayuda.hidden = !nodo.manual;
+
+    const casilla = h("input", {
+      type: "checkbox", checked: Boolean(nodo.manual),
+      onChange: (e) => {
+        nodo.manual = e.target.checked;
+        ayuda.hidden = !nodo.manual;
+        alCambiar({ redibujar: true });
+      },
+    });
+    poner(hueco,
+      h("div", { class: "campo" }, [
+        h("div", { class: "campo__etiqueta" }, [h("div", { class: "campo__nombre", text: "Manual" })]),
+        h("div", { class: "campo__control" }, [
+          h("label", { style: { display: "flex", alignItems: "center", gap: "7px", fontSize: "12.5px" } },
+            [casilla, "Decide una persona"]),
+          h("div", { class: "campo__ayuda", text: c.decision_manual
+            ? "La corrida de la fila se pausa acá y queda en Esperando; las demás filas siguen. "
+              + "Quien la resuelve elige entre las condiciones de las aristas, con un botón por cada una."
+            : "El núcleo instalado no sabe pausar una corrida (llega con core#37): así marcada, esta decisión no va a esperar a nadie." }),
+        ]),
+      ]),
+      ayuda);
+  });
+  return hueco;
 }
 
 function campoTexto(rotulo, valor, ayuda, alEscribir) {

@@ -4,6 +4,37 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-09-30
+
+- **Decisión manual, del lado de la app** (rama `claude/decision-manual`),
+  esperando a **core#37**: una decisión marcada `manual` pausa la corrida de
+  esa fila, libera el hilo para que las demás sigan, y retoma cuando alguien
+  elige la rama. El núcleo (hasta v0.3.1-beta.17) no puede: `_walk` recorre
+  en una sola pasada y el run se guarda al terminar, `ok`/`err`. core#37
+  pide el status `waiting`, el checkpoint en la base (sin `env`), el
+  `Instance.resume`/`discard_wait` con el mismo `run_id` y la sintaxis
+  `D1{Nombre § variable | manual | ayuda=…}`. Lo de la app:
+  - `GET /capacidades` (`decision_manual`), `POST /runs/{id}/resume` y
+    `/descartar`: con un núcleo que no sabe, 501 con el porqué, nunca un 500.
+  - `POST /run` y `POST /runs` frenan con 409 una fila cuyo último run está
+    esperando (`_frenar_si_espera`), con el `run_id`.
+  - Sources: la fila en espera muestra **Esperando** en amarillo (token
+    `--amarillo`, no el ámbar de los avisos) en el lugar de Ejecutar, y el
+    badge "esperando" en Estado, que también filtra. El modal dice la
+    variable a definir, la fila, el flujo y "Qué mirar", con un botón por rama
+    que ya lleva el valor. El tooltip de cada uno dice a qué nodo sigue, su
+    tool y el doc del tool. La tanda saltea las que ya esperaban y avisa
+    cuáles quedaron esperando.
+  - Editor: la decisión tiene "Manual · Decide una persona" y "Qué mirar",
+    **sólo si el núcleo lo soporta** (o si el nodo ya venía marcado). En el
+    lienzo se lee "decisión manual".
+  Verificado: 5 tests nuevos (`test_decision_manual.py`) con una `Instance`
+  que imita el contrato de core#37, y el recorrido por CDP con el API de runs
+  simulado: botón amarillo, modal, tooltips, `resume` con el valor de la rama
+  elegida y vuelta a Ejecutar. **Falta** verificarlo contra el núcleo real
+  cuando salga core#37: la forma de `waiting` y los errores de `resume` son
+  los que propone el issue.
+
 ## 2026-09-26
 
 - **Una fuente elige qué columnas se ven en la grilla.** La API define qué

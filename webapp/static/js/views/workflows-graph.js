@@ -1209,7 +1209,7 @@ function nodo(id, datos, pos, { alClic, estado, paso, seleccionado, puertos, too
   const color = COLORES[tipo] || COLORES.action;
   const etiqueta = datos.display || datos.label || datos.variable || datos.fn || id;
   const secundaria = tipo === "action" ? (datos.fn || "sin tool")
-    : tipo === "decision" ? "decisión"
+    : tipo === "decision" ? (datos.manual ? "decisión manual" : "decisión")
     : tipo === "start" ? "inicio" : "sin definir";
 
   // La caja del inicio tiene el borde de arriba redondeado entero, el nodo
