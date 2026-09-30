@@ -220,7 +220,15 @@ function contenido(id, grafo, manifest, catalogo, alCambiar, columnasDeLaFila = 
     autocompletar(campoVariable.querySelector("input"),
       () => opcionesDeDecision(id, grafo, catalogo, columnasDeLaFila), { sinLlaves: true });
     partes.push(campoVariable);
-    partes.push(campoManual(nodo, alCambiar));
+    // Las mismas variables que un param, para la ayuda de una decisión manual,
+    // menos las de Config: el núcleo no resuelve `{env.*}` en la ayuda
+    // (core#38) —viaja a la pantalla y queda en el run, y un secreto ahí
+    // estaría a la vista—, así que ofrecerlas sería prometer un valor que
+    // llega literal.
+    const variables = async () => (await opcionesDeVariables(id, grafo, catalogo, columnasDeLaFila))
+      .filter((o) => !String(o.nombre).startsWith("env."));
+    variables.esNodo = (nombre) => Object.prototype.hasOwnProperty.call(grafo.nodes, nombre);
+    partes.push(campoManual(nodo, alCambiar, variables));
     partes.push(subtitulo("Variables que puede comparar", "de la fila y de los nodos anteriores"));
     partes.push(variablesDeDecision(id, grafo, catalogo, columnasDeLaFila));
     partes.push(...aristas(id, grafo, alCambiar));
@@ -351,15 +359,28 @@ function capacidades() {
  * control que no hace nada— salvo que el nodo ya venga marcado, que entonces
  * se muestra igual para poder desmarcarlo.
  */
-function campoManual(nodo, alCambiar) {
+function campoManual(nodo, alCambiar, variables) {
   const hueco = h("div");
   capacidades().then((c) => {
     if (!c.decision_manual && !nodo.manual) return;
 
+    // Con {variables} sólo si el núcleo las resuelve al pausar (core#38):
+    // antes, `{N1.fallidos}` llegaría literal al modal —y el serializer ni
+    // siquiera deja guardar una `}` en la ayuda—.
     const ayuda = campoTexto("Qué mirar", nodo.ayuda || "",
-      "Se muestra en el modal de Esperando, arriba de los botones: qué tiene que revisar la persona antes de elegir.",
+      c.ayuda_con_variables
+        ? "Se muestra en el modal de Esperando, arriba de los botones: qué tiene que revisar la persona antes de elegir. "
+          + "Acepta {variables} —columnas de la fila y salidas de los nodos anteriores, como {NODO.salida}—: "
+          + "tipeá { para elegirlas, y se reemplazan con los valores de esa corrida al pausar. "
+          + "Las de Config ({env.…}) no: quedan escritas tal cual."
+        : "Se muestra en el modal de Esperando, arriba de los botones: qué tiene que revisar la persona antes de elegir.",
       (valor) => { nodo.ayuda = valor; alCambiar({ redibujar: false }); });
     ayuda.hidden = !nodo.manual;
+    if (c.ayuda_con_variables) {
+      const entrada = ayuda.querySelector("input");
+      autocompletar(entrada, variables);
+      resaltarVariables(entrada, opcionesDeResaltado(variables));
+    }
 
     const casilla = h("input", {
       type: "checkbox", checked: Boolean(nodo.manual),

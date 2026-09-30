@@ -6,6 +6,34 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-30
 
+- **Núcleo v0.3.1-beta.19 (core#38): "Qué mirar" con `{variables}`,
+  verificado.** El núcleo resuelve la ayuda con el contexto de la corrida al
+  pausar (`waiting.ayuda`, y `waiting.ayuda_plantilla` con el original), deja
+  literal lo que no resuelve, y **nunca** resuelve `{env.*}` en la ayuda (viaja
+  a la pantalla y queda en el run). Las llaves se guardan como `#123;`/`#125;`
+  para que Mermaid dibuje el rombo. Por lo de `{env.*}`, la lista del editor
+  deja afuera todas las de Config, no sólo los secretos. Verificado: 14 tests
+  en `test_decision_manual.py` (resuelta, literal, `env` sin resolver y sin
+  el secreto en el run, llaves que sobreviven a `/flow/serialize` → PUT →
+  `/graph`, y la segunda decisión con lo que corrió después del primer
+  `resume`); y por CDP sin mocks: elegir `{visto}` del autocompletado,
+  guardar, ejecutar la fila y leer en el modal "Mirá el log: 3 fallidos en
+  dos antes de elegir". `backend/tests`: los mismos 7 de Windows, ninguno
+  nuevo.
+
+- **"Qué mirar" con `{variables}`, esperando a core#38.** Se pidió poder
+  poner en la ayuda de una decisión manual la salida de otro nodo
+  (`{N1.fallidos}`). Resolverla es del núcleo, que es el único con el
+  contexto de la corrida al pausar: hoy `waiting_payload` devuelve la ayuda
+  tal cual, y el serializer ni siquiera deja guardar una `}` en ella (cortaría
+  el rombo `D1{…}`). En la app, el campo pasa a tener el autocompletado y el
+  resaltado de un param, **sólo** con la capacidad
+  `manual_decision_help_vars` del catálogo (`/capacidades` →
+  `ayuda_con_variables`); sin ella queda como antes. La lista no ofrece los
+  secretos de Config: la ayuda se muestra en pantalla. Verificado por CDP con
+  la capacidad simulada (ofrece `{visto}` de N1, no `{env.TOKEN}`) y sin ella
+  (ni lista ni resaltado).
+
 - **Núcleo v0.3.1-beta.18 (core#37): decisión manual, verificada de punta a
   punta.** Vendorizado con la mecánica de Actualizaciones. Lo que cambió en la
   app respecto de lo armado sobre el issue:
