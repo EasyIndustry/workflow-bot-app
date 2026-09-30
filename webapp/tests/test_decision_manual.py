@@ -54,7 +54,24 @@ def _correr(client, case_id="AP1"):
 
 def test_la_capacidad_sale_del_catalogo(tmp_path):
     client = _cliente(tmp_path)
-    assert client.get("/api/core/capacidades").json() == {"decision_manual": True}
+    assert client.get("/api/core/capacidades").json()["decision_manual"] is True
+
+
+def test_la_ayuda_con_variables_espera_a_que_el_nucleo_la_declare(tmp_path, monkeypatch):
+    # core#38: el editor ofrece {variables} en "Qué mirar" sólo si el núcleo
+    # las resuelve al pausar. Sale del catálogo, como `manual_decisions`.
+    client = _cliente(tmp_path)
+    catalogo = core_api._instance.registry.catalog()
+    esperado = bool(catalogo["capabilities"].get("manual_decision_help_vars"))
+    assert client.get("/api/core/capacidades").json()["ayuda_con_variables"] is esperado
+
+    original = core_api._instance.registry.catalog
+    def con_la_capacidad():
+        datos = original()
+        datos["capabilities"] = {**datos["capabilities"], "manual_decision_help_vars": True}
+        return datos
+    monkeypatch.setattr(core_api._instance.registry, "catalog", con_la_capacidad)
+    assert client.get("/api/core/capacidades").json()["ayuda_con_variables"] is True
 
 
 def test_la_corrida_se_pausa_y_trae_lo_que_el_modal_necesita(tmp_path):
@@ -154,7 +171,7 @@ def test_descartar_cierra_la_espera_y_la_fila_vuelve_a_correr(tmp_path):
 def test_sin_soporte_del_nucleo_lo_dice_en_vez_de_fingir(tmp_path, monkeypatch):
     client = _cliente(tmp_path)
     monkeypatch.setattr(core_api, "_soporta_decision_manual", lambda: False)
-    assert client.get("/api/core/capacidades").json() == {"decision_manual": False}
+    assert client.get("/api/core/capacidades").json()["decision_manual"] is False
     r = client.post("/api/core/runs/r1/resume", json={"value": "si"})
     assert r.status_code == 501
     assert "core#37" in r.json()["detail"]

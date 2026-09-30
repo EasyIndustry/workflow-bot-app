@@ -2214,16 +2214,19 @@ def _frenar_si_ya_corre(case_id: str, source: str | None) -> None:
 ESPERANDO = "waiting"
 
 
-def _soporta_decision_manual() -> bool:
+def _capacidad(clave: str) -> bool:
     """
-    El núcleo lo declara en su catálogo (`capabilities.manual_decisions`,
-    core#37), que es donde un cliente pregunta qué sabe hacer sin comparar
-    versiones.
+    Lo que el núcleo declara en su catálogo (`capabilities`), que es donde un
+    cliente pregunta qué sabe hacer sin comparar versiones.
     """
     try:
-        return bool(_instance.registry.catalog().get("capabilities", {}).get("manual_decisions"))
+        return bool(_instance.registry.catalog().get("capabilities", {}).get(clave))
     except Exception:  # noqa: BLE001 — sin catálogo, no hay con qué dibujarlo
         return False
+
+
+def _soporta_decision_manual() -> bool:
+    return _capacidad("manual_decisions")  # core#37
 
 
 @router.get("/capacidades")
@@ -2233,7 +2236,14 @@ def capacidades():
     dibujar un control: el checkbox "manual" de una decisión no se muestra
     si el núcleo no puede pausar, porque sería un control que no hace nada.
     """
-    return {"decision_manual": _soporta_decision_manual()}
+    return {
+        "decision_manual": _soporta_decision_manual(),
+        # core#38: la ayuda de una decisión manual acepta {variables} y el
+        # núcleo las resuelve con el contexto de la corrida al pausar. Hasta
+        # entonces el editor no las ofrece: el serializer ni siquiera deja
+        # guardar una `}` en la ayuda.
+        "ayuda_con_variables": _capacidad("manual_decision_help_vars"),
+    }
 
 
 def _pendiente(case_id: str, run_id: str) -> HTTPException:

@@ -6,6 +6,19 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-09-30
 
+- **"Qué mirar" con `{variables}`, esperando a core#38.** Se pidió poder
+  poner en la ayuda de una decisión manual la salida de otro nodo
+  (`{N1.fallidos}`). Resolverla es del núcleo, que es el único con el
+  contexto de la corrida al pausar: hoy `waiting_payload` devuelve la ayuda
+  tal cual, y el serializer ni siquiera deja guardar una `}` en ella (cortaría
+  el rombo `D1{…}`). En la app, el campo pasa a tener el autocompletado y el
+  resaltado de un param, **sólo** con la capacidad
+  `manual_decision_help_vars` del catálogo (`/capacidades` →
+  `ayuda_con_variables`); sin ella queda como antes. La lista no ofrece los
+  secretos de Config: la ayuda se muestra en pantalla. Verificado por CDP con
+  la capacidad simulada (ofrece `{visto}` de N1, no `{env.TOKEN}`) y sin ella
+  (ni lista ni resaltado).
+
 - **Núcleo v0.3.1-beta.18 (core#37): decisión manual, verificada de punta a
   punta.** Vendorizado con la mecánica de Actualizaciones. Lo que cambió en la
   app respecto de lo armado sobre el issue:

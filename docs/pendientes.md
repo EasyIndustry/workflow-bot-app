@@ -4,6 +4,12 @@ Lo que queda, con el porqué. Sacar de acá lo que se hace y anotarlo en
 `estado-del-proyecto.md`.
 
 ## Depende del núcleo
+- **core#38, `{variables}` en la ayuda de una decisión manual**: la app ya
+  ofrece el autocompletado en "Qué mirar", escondido hasta que el catálogo
+  declare `manual_decision_help_vars`. Cuando salga: confirmar el nombre de
+  la capacidad (es el que propuso el issue; si el núcleo eligió otro, cambiar
+  `_capacidad(...)` en `/capacidades`), que se pueda guardar una ayuda con
+  `{N1.salida}` desde el editor, y que el modal la muestre resuelta.
 - **core#26**: que el port `fs` pueda negar subárboles adentro de una raíz,
   armados por el núcleo con lo que sabe de su instalación (su raíz, `data/`,
   `plugins/`). Sin eso, una raíz que contenga la instalación entrega la base,
