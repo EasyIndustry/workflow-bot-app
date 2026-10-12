@@ -6,6 +6,23 @@ desarrollo o la PC de un cliente), no sólo con tests.
 
 ## 2026-10-12
 
+- **Instalar las librerías de un plugin ya no revienta con el truststore.**
+  Con v0.5.0-beta.17, instalar un plugin con `requirements.txt` fallaba en la
+  PC de un cliente con `RecursionError` adentro de
+  `pip/_vendor/truststore`: el `sitecustomize.py` del runtime inyecta
+  truststore en `ssl` en todo proceso, también en el `python -m pip` de
+  `webapp/librerias.py`, y pip >= 24.2 inyecta el suyo encima; el setter de
+  `verify_mode` de `ssl.py` termina llamándose a sí mismo. `comando_pip`
+  agrega `--use-deprecated=legacy-certs` cuando el pip del intérprete es
+  >= 24.2 (uno más viejo no conoce la opción): pip usa el `ssl` del proceso,
+  que ya valida con los certificados de Windows. Llega por Actualizaciones,
+  sin instalador nuevo. Reproducido en Linux con un `.pth` que inyecta
+  truststore 0.10.4 y pip 25.2; con el arreglo instala, y con pip 24.0 el
+  argv queda como antes. Si vuelve a pasar, `_explicar` lo dice en castellano
+  con el destrabe a mano (renombrar el `sitecustomize.py` mientras se
+  instala). Pendiente para el próximo instalador: que el `sitecustomize` no
+  inyecte en el proceso de pip, para no depender de una opción
+  `--use-deprecated` que pip puede sacar.
 - **HTTPS con los certificados de Windows (v0.5.0-beta.17).** Buscar
   actualizaciones fallaba en PCs de empresa con `CERTIFICATE_VERIFY_FAILED`
   aunque el navegador entrara a GitHub: Python valida con su propia lista, no
