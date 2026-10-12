@@ -4,6 +4,23 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-10-12
+
+- **HTTPS con los certificados de Windows (v0.5.0-beta.17).** Buscar
+  actualizaciones fallaba en PCs de empresa con `CERTIFICATE_VERIFY_FAILED`
+  aunque el navegador entrara a GitHub: Python valida con su propia lista, no
+  con la del sistema, y no ve la raíz que agrega un antivirus o proxy que
+  inspecciona HTTPS (lo mismo se vio en otro proyecto con el mismo
+  actualizador). El runtime del `.exe` suma `truststore==0.10.4` y un
+  `sitecustomize.py` que lo inyecta en todo proceso del Bot: actualizador,
+  catálogo de plugins, instalar agentes y las Actions/fuentes HTTPS que pasan
+  por el puerto del núcleo. Probado en Linux con el mismo `sitecustomize`:
+  `ssl.SSLContext` pasa a ser el de truststore en el proceso y en un
+  subproceso, `updates._abrir_url` y `plugin_catalog._abrir_url` contra
+  GitHub andan, y vencido/autofirmado/host equivocado (badssl.com) se siguen
+  rechazando. **Falta verificar en una PC Windows afectada.** Llega sólo con
+  el instalador nuevo, no por Actualizaciones.
+
 ## 2026-09-30
 
 - **Núcleo v0.3.1-beta.19 (core#38): "Qué mirar" con `{variables}`,

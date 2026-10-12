@@ -79,6 +79,16 @@ El `.exe` trae un CPython relocalizable y instala en el perfil del usuario:
 los plugins se descubren con entry points en un site-packages real, y el
 instalador corre igual con o sin administrador.
 
+## HTTPS con los certificados del sistema, desde el runtime
+En Windows la lista de certificados de Python no es la del equipo, y donde
+un antivirus o un proxy inspecciona HTTPS toda consulta a GitHub fallaba con
+`CERTIFICATE_VERIFY_FAILED`. El runtime del `.exe` trae `truststore` y un
+`sitecustomize.py` que lo inyecta en `ssl` al arrancar cualquier proceso. Va
+ahí y no en `webapp/` porque así alcanza también a los subprocesos
+(`backend.core`, pip) y al puerto HTTP del núcleo, que no se edita acá. Sigue
+validando: un certificado vencido o de otro host se rechaza igual. Si la
+librería no carga, queda el contexto de siempre en vez de no arrancar.
+
 ## La migración entre Bots empuja, no tira
 Desde #3 un secreto no sale por la API de nadie, así que el único que puede
 leer los de una instalación es la instalación misma. Por eso la migración

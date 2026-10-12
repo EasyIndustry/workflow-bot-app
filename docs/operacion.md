@@ -91,6 +91,13 @@ runtime\python.exe -m webapp --revertir-webapp
 desde una consola en la carpeta del programa. Si ni eso importa, renombrar
 `webapp/` ↔ `webapp.anterior/` a mano.
 
+Si buscar actualizaciones dice `CERTIFICATE_VERIFY_FAILED` y el navegador de
+la misma PC entra a GitHub, es el runtime de antes de v0.5.0-beta.17, que
+valida HTTPS con la lista de Python y no con la de Windows (un antivirus o un
+proxy que inspecciona HTTPS). No se arregla por Actualizaciones: es otra
+librería en el runtime, y la consulta es justo lo que falla. Se corre a mano el
+`BotSetup` de v0.5.0-beta.17 o posterior, una vez por PC.
+
 ## Publicar una versión
 
 ```bash

@@ -38,3 +38,4 @@ installer/build/
 
 # El runtime que arma bot.sh en Linux (venv o CPython portable)
 .runtime/
+.claude/scratch/

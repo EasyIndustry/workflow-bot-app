@@ -107,11 +107,31 @@ SITE="${CARGA}/runtime/Lib/site-packages"
 # pystray + pillow son el ícono de la bandeja (webapp/bandeja.py): sin ellos
 # el servidor arranca igual, pero sin forma de cerrarlo que no sea el
 # Administrador de tareas.
-python3 -m pip install cryptography fastapi==0.136.0 uvicorn==0.45.0 python-dotenv==1.2.2 python-multipart==0.0.32 websockets pywinpty tomli-w==1.2.0 pywinauto==0.6.8 pystray==0.19.5 pillow==12.3.0 mcp==2.1.1 \
+# truststore es lo del sitecustomize de más abajo: validar HTTPS con los
+# certificados de Windows.
+python3 -m pip install cryptography fastapi==0.136.0 uvicorn==0.45.0 python-dotenv==1.2.2 python-multipart==0.0.32 websockets pywinpty tomli-w==1.2.0 pywinauto==0.6.8 pystray==0.19.5 pillow==12.3.0 mcp==2.1.1 truststore==0.10.4 \
   --target "${SITE}" \
   --platform win_amd64 --python-version "${PY_VERSION}" \
   --only-binary=:all: --upgrade -q
 rm -rf "${SITE}/bin"
+
+# HTTPS con los certificados del sistema, no con la lista propia de Python.
+# En Windows esa lista no es la del equipo: Python no baja las raíces que a
+# Windows le faltan ni ve las que agrega la empresa (un antivirus o un proxy
+# que inspecciona HTTPS), y buscar actualizaciones moría con
+# CERTIFICATE_VERIFY_FAILED en PCs donde el navegador entraba a GitHub sin
+# problema. Va en un sitecustomize del runtime y no en webapp/ porque así
+# alcanza a todo proceso del Bot: la app, el MCP, los `python -m backend.core`
+# que lanza, pip y el puerto HTTP del núcleo (las Actions y fuentes de un
+# flujo), que no se edita acá. Si truststore no carga, queda el contexto de
+# siempre: peor un HTTPS que falla que un Bot que no arranca.
+cat > "${SITE}/sitecustomize.py" <<'PY'
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+PY
 
 # Que el árbol esté completo, verificado contra los metadatos de cada paquete.
 # Es el chequeo que habría atajado lo de `cffi`: la falta no se nota en el
