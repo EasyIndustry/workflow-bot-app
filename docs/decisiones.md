@@ -164,3 +164,19 @@ texto cifrado, porque si no hay que descifrar para saber cómo parsear.
 
 Lo que esto **no** arregla: la API sigue sin autenticación para escribir y
 ejecutar (#4). El sobre protege una migración, no el Bot.
+
+## El runtime de C++ va app-local, no el VC_redist
+Las librerías de un plugin con DLL de C++ (rtree, que trimesh necesita) piden
+`msvcp140.dll`, y en una PC sin el Visual C++ Redistributable no cargan. El
+VC_redist se instala con administrador, y quien usa los Bots no lo es: el
+plugin quedaba frenado en el cartel de UAC hasta que alguien con permisos
+pasara por la máquina. La decisión es que el `.exe` traiga `msvcp140.dll` en
+`runtime\`, el directorio de la aplicación, que Windows busca primero para
+toda DLL que se carga en el proceso; Microsoft permite este despliegue
+app-local. Sale de la wheel `msvc-runtime` (archivos de Microsoft, firmados,
+versión y hash fijos) y no de la copia que trae numpy, que es más vieja que
+el toolset con el que está compilado rtree. Consecuencia: no se actualiza por
+Windows Update como la del sistema; cuando un plugin traiga una DLL compilada
+con un toolset más nuevo, se sube la versión en `build_win.sh` (y el
+`MINIMO` del chequeo) y sale con el instalador siguiente.
+

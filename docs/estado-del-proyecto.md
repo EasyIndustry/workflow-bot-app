@@ -4,6 +4,25 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-10-14
+
+- **`msvcp140.dll` en `runtime\` (próximo instalador).** El plugin
+  keep-form, y cualquiera que use trimesh, necesita rtree, que en Windows
+  carga `spatialindex_c-64.dll` y ésa pide `MSVCP140.DLL` (Visual C++
+  Redistributable). En BOT.1 no estaba instalado: `import rtree.index` caía
+  con `OSError` y fallaban los 44 modelos de BZ219. Instalar el VC_redist pide
+  administrador, que los usuarios de los Bots no son. `build_win.sh` copia
+  `msvcp140.dll` a `runtime\`, al lado de `python.exe` y `Bot.exe`, desde la
+  wheel `msvc-runtime==14.44.35112` (archivos del redistributable firmados
+  por Microsoft, con hash fijo), y sube `vcruntime140*.dll` a esa versión si
+  los del CPython son más viejos. El build se corta si `msvcp140.dll` falta,
+  no es x64 o es anterior a 14.44 (el toolset con el que está enlazado
+  rtree 1.4.1), o si `vcruntime140` es más vieja que ella. Llega **sólo con el
+  instalador nuevo**, no por Actualizaciones, como el `sitecustomize` de
+  truststore; mientras tanto vale el parche a mano en BOT.1 y BOT.2. Probado
+  el paso del build en Linux; falta verlo en una PC sin el VC_redist. Ver
+  `docs/decisiones.md`.
+
 ## 2026-10-12
 
 - **HTTPS con los certificados de Windows (v0.5.0-beta.17).** Buscar

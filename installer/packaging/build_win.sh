@@ -182,6 +182,95 @@ if faltan:
 print(f"    {len(presentes)} paquetes, árbol completo: {', '.join(sorted(presentes))}")
 PY
 
+# msvcp140.dll (la biblioteca estándar de C++ de Microsoft) al lado de
+# python.exe y Bot.exe. Las librerías de un plugin que traen DLL de C++
+# —rtree, que trimesh necesita— la piden, y en una PC sin el Visual C++
+# Redistributable `import rtree.index` caía con OSError. Instalar el
+# VC_redist pide administrador y quien usa los Bots no lo es: quedaba frenado
+# en el cartel de UAC. Una copia a mano al lado de la DLL de rtree anduvo,
+# pero se perdía con cada actualización del runtime. En runtime/ la encuentra
+# cualquier DLL que se cargue en el proceso: es el directorio de la
+# aplicación, que LoadLibraryEx busca primero, también desde ctypes con ruta
+# completa. Microsoft permite este despliegue app-local de los archivos del
+# redistributable.
+#
+# De `msvc-runtime` (los archivos del redistributable, firmados por
+# Microsoft, en una wheel) y no de la que trae numpy en numpy.libs: ésa es
+# la 14.40, y el rtree de PyPI está enlazado con el toolset 14.44. Una
+# msvcp140 más vieja que el toolset que compiló la DLL que la usa es
+# justamente lo que Microsoft no garantiza. Versión y hash fijos.
+echo "==> msvcp140.dll (Visual C++ runtime, app-local)"
+VCRT="${TRABAJO}/descargas/vcrt"
+mkdir -p "${VCRT}"
+echo "msvc-runtime==14.44.35112 --hash=sha256:32f9c706009e16ccc319d6947ce3bffe20e5192bee52b18cf48313f9e7bedfbe" > "${VCRT}/requirements.txt"
+python3 -m pip download -r "${VCRT}/requirements.txt" --require-hashes --no-deps \
+  --platform win_amd64 --python-version "${PY_VERSION}" --only-binary=:all: -d "${VCRT}" -q
+python3 - "${VCRT}" "${CARGA}/runtime" <<'PY'
+import pathlib, struct, sys, zipfile
+
+origen, runtime = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+# El toolset más nuevo con el que se sabe que está compilada una DLL que la
+# usa (rtree 1.4: 14.44). Subirlo si aparece una más nueva.
+MINIMO = (14, 44)
+
+def pe(datos):
+    """Arquitectura y versión de archivo (VS_FIXEDFILEINFO) de un PE."""
+    cab = struct.unpack_from("<I", datos, 0x3C)[0]
+    if datos[cab:cab + 4] != b"PE\0\0":
+        return None, None
+    maquina = struct.unpack_from("<H", datos, cab + 4)[0]
+    i = datos.find(struct.pack("<I", 0xFEEF04BD))
+    if i < 0:
+        return maquina, None
+    ms, ls = struct.unpack_from("<II", datos, i + 8)
+    return maquina, (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
+
+[rueda] = origen.glob("msvc_runtime-*.whl")
+with zipfile.ZipFile(rueda) as z:
+    def de_la_rueda(nombre):
+        [ruta] = [n for n in z.namelist() if n.endswith(f".data/data/Scripts/{nombre}")]
+        return z.read(ruta)
+
+    # vcruntime140*.dll ya viene con CPython, y msvcp140 depende de ella. Se
+    # reemplaza sólo si la de la rueda es más nueva: el runtime de C es
+    # compatible hacia atrás, así que una más nueva no le hace mal a
+    # python.exe, y una más vieja que msvcp140 sí podría.
+    for nombre in ("vcruntime140.dll", "vcruntime140_1.dll"):
+        nueva = de_la_rueda(nombre)
+        actual = runtime / nombre
+        if not actual.is_file() or (pe(actual.read_bytes())[1] or (0,)) < pe(nueva)[1]:
+            actual.write_bytes(nueva)
+            print(f"    {nombre} -> {'.'.join(map(str, pe(nueva)[1]))}")
+    (runtime / "msvcp140.dll").write_bytes(de_la_rueda("msvcp140.dll"))
+
+# Verificación, no confianza: lo que quedó en runtime/, leído del disco.
+errores = []
+versiones = {}
+for nombre in ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+    ruta = runtime / nombre
+    if not ruta.is_file():
+        errores.append(f"falta runtime/{nombre}")
+        continue
+    maquina, version = pe(ruta.read_bytes())
+    if maquina != 0x8664:
+        errores.append(f"runtime/{nombre} no es x64 (máquina {maquina!r})")
+    if version is None:
+        errores.append(f"runtime/{nombre} no dice su versión")
+    if version is not None:
+        versiones[nombre] = version
+msvcp = versiones.get("msvcp140.dll")
+if msvcp and msvcp[:2] < MINIMO:
+    errores.append(f"msvcp140.dll {'.'.join(map(str, msvcp))} es más vieja que {MINIMO[0]}.{MINIMO[1]}")
+for nombre in ("vcruntime140.dll", "vcruntime140_1.dll"):
+    if msvcp and nombre in versiones and versiones[nombre] < msvcp:
+        errores.append(f"{nombre} {'.'.join(map(str, versiones[nombre]))} es más vieja que msvcp140.dll")
+if errores:
+    print("ERROR: el runtime de C++ no quedó bien:")
+    print("\n".join(f"  {e}" for e in errores))
+    sys.exit(1)
+print("    " + ", ".join(f"{n} {'.'.join(map(str, v))}" for n, v in versiones.items()))
+PY
+
 # La versión del runtime, publicada con el release: la versión exacta de
 # Python y de cada librería base. Es la referencia contra la que el catálogo
 # de plugins cura las librerías que un plugin pide en su requirements.txt
