@@ -12,7 +12,8 @@ desarrollo o la PC de un cliente), no sólo con tests.
   `socket` y `sqlite_file`, y viene la descripción no técnica del motor en
   `backend/docs/descripcion/`. Suite: 1256 verdes; el único rojo
   (`test_la_unidad_entera_se_puede_guardar`, ruta de Windows) ya fallaba en
-  Linux con beta.19. Falta verificarlo en una instalación Windows.
+  Linux con beta.19. **Verificado**: corriendo en una instalación Windows
+  (lo confirmó Leandro el mismo día).
 - **Descripción no técnica de la app** (`docs/descripcion/`): qué es, cómo
   funciona, cómo se usa pantalla por pantalla, instalación, actualización y
   qué no hace, con capturas de una instalación de prueba con datos inventados.
