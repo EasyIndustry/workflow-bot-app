@@ -18,7 +18,7 @@ Este documento no repite lo que dice aquel: qué es un flujo, qué queda
 registrado, quién puede hacer qué, cómo se comporta ante errores y qué
 límites trae el motor están explicados ahí. Acá se cuenta la aplicación que
 una persona usa para operarlo. Los términos del glosario del motor (flujo,
-corrida, caso, paso, complemento, herramienta, actor, traza, bitácora,
+corrida, ítem, paso, complemento, herramienta, actor, traza, bitácora,
 ensayo sin efectos, decisión manual) se usan con el mismo significado.
 
 ## Índice
@@ -34,7 +34,7 @@ ensayo sin efectos, decisión manual) se usan con el mismo significado.
 ## 1. En una frase
 
 El Bot es la **aplicación que se abre en el navegador para operar el motor
-bot-core**: muestra una lista de casos traída de otro sistema y deja
+bot-core**: muestra una lista de ítems traída de otro sistema y deja
 ejecutar un flujo sobre cada uno, ver qué pasó y decidir cuando el flujo lo
 pide.
 
@@ -72,7 +72,7 @@ flowchart TD
 ```mermaid
 %% nombre: como-funciona
 flowchart LR
-    S["Fuente<br/>otro sistema"] --> G["Grilla<br/>una fila por caso"]
+    S["Fuente<br/>otro sistema"] --> G["Grilla<br/>una fila por ítem"]
     G --> R["Corrida<br/>el flujo sobre una fila"]
     R --> T["Traza y bitácora<br/>qué pasó"]
     R -. si el flujo lo pide .-> D["Decisión manual<br/>elige una persona"]
@@ -81,14 +81,14 @@ flowchart LR
 
 1. **La fuente.** El Bot se conecta a otro sistema (hoy, por su interfaz web
    o API) y trae una lista: pedidos, órdenes, archivos, lo que sea. Cada
-   elemento de la lista es un **caso**.
-2. **La grilla.** Esa lista se muestra como una tabla, una fila por caso, con
+   elemento de la lista es un **ítem**.
+2. **La grilla.** Esa lista se muestra como una tabla, una fila por ítem, con
    las columnas que trae el sistema de origen más el estado de la última
    corrida de cada fila.
 3. **La corrida.** Sobre una fila (o sobre varias seleccionadas) se ejecuta
    un flujo. El motor lo recorre paso a paso con los datos de esa fila.
 4. **El registro.** Cada corrida deja su traza y suma líneas a la bitácora
-   del caso. Desde la grilla se ve, fila por fila, cómo terminó cada una.
+   del ítem. Desde la grilla se ve, fila por fila, cómo terminó cada una.
 5. **Las decisiones.** Si el flujo tiene un punto donde decide una persona,
    la fila queda **esperando** hasta que alguien elige el camino desde la
    pantalla.
@@ -120,7 +120,7 @@ izquierda.
   fuente, escribir un flujo y cargar los secretos, con un botón que lleva a
   cada pantalla.
 
-### 4.2 Sources: la grilla de casos
+### 4.2 Sources: la grilla de ítems
 
 Es la pantalla del día a día. Cada fuente conectada aparece a la izquierda;
 al elegir una se ve su grilla.
@@ -132,7 +132,7 @@ al elegir una se ve su grilla.
   cada una y elegir cuáles se muestran con **Columnas**.
 - **Estado:** cómo terminó la última corrida de esa fila: *ok*, *err*
   (con error) o *esperando* (una decisión manual).
-- **Log:** abre la bitácora del caso.
+- **Log:** abre la bitácora del ítem.
 - **Últ. ejec.:** cuándo corrió por última vez.
 - **Flujo:** qué flujo se va a ejecutar sobre esa fila. Cada fuente tiene uno
   por defecto, y se puede cambiar fila por fila.
@@ -154,12 +154,12 @@ que dejó quien escribió el flujo ("Qué mirar"). Cada botón es un camino
 posible. **Descartar la espera** cierra la corrida sin seguir. La elección
 queda registrada con el nombre de quien la hizo.
 
-#### La bitácora de un caso
+#### La bitácora de un ítem
 
 El botón **Log** muestra todo lo que le pasó a esa fila, de la corrida más
 vieja a la más nueva:
 
-![La bitácora de un caso: cada línea, con hora y paso](img/pantalla-log.png){width=16cm}
+![La bitácora de un ítem: cada línea, con hora y paso](img/pantalla-log.png){width=16cm}
 
 Cada línea tiene la hora, el paso del flujo que la escribió y el mensaje. Las
 advertencias se marcan en amarillo y los errores en rojo. En el ejemplo se ve
@@ -352,7 +352,7 @@ flowchart TD
   sólo desde la misma PC. No está pensado para exponerse a internet.
 - No trae complementos ni integraciones con ningún sistema: todos se instalan
   aparte, desde el catálogo que elige la organización.
-- No contiene reglas de negocio. Qué se hace con cada caso lo definen los
+- No contiene reglas de negocio. Qué se hace con cada ítem lo definen los
   flujos de cada instalación.
 - No modifica el sistema de origen por sí solo: la grilla sólo lee. Si un
   flujo escribe en otro sistema, es porque un paso de ese flujo lo hace.
@@ -363,7 +363,7 @@ flowchart TD
 
 ## 7. Glosario de la aplicación
 
-Los términos del motor (flujo, corrida, caso, paso, complemento, herramienta,
+Los términos del motor (flujo, corrida, ítem, paso, complemento, herramienta,
 actor, traza, bitácora, ensayo sin efectos, decisión manual, Mermaid) están
 en el glosario de `que-es-bot-core.md`. Estos son los propios de la
 aplicación:
@@ -371,13 +371,13 @@ aplicación:
 | Término | Qué significa |
 |---|---|
 | Instalación | La carpeta de una PC con la configuración, la base de datos y la carpeta de trabajo de un Bot. |
-| Fuente (Source) | La conexión a otro sistema de donde sale la lista de casos. |
-| Grilla | La tabla que muestra los casos de una fuente, una fila por caso. |
+| Fuente (Source) | La conexión a otro sistema de donde sale la lista de ítems. |
+| Grilla | La tabla que muestra los ítems de una fuente, una fila por ítem. |
 | Action | Una llamada a otro sistema guardada con nombre, que un paso de un flujo puede usar. |
 | Tanda | Varias filas ejecutadas una detrás de otra con el mismo flujo. |
 | Programar | Hacer que un flujo corra solo, a intervalos o en ciertos días y horarios. |
 | Correr en seco (Dry run) | El ensayo sin efectos del motor, lanzado desde la pantalla del flujo. |
-| Registro de eventos (Log) | La bitácora de un caso, como se ve en la pantalla. |
+| Registro de eventos (Log) | La bitácora de un ítem, como se ve en la pantalla. |
 | Secreto | Una contraseña o clave guardada cifrada, que no se vuelve a mostrar. |
 | Variable | Un valor de configuración que usan los flujos, visible y editable. |
 | Catálogo (Plugins en línea) | El repositorio de complementos de donde se instalan. |
