@@ -47,6 +47,7 @@ from .flow.parser import DecisionNode, Diagnostic, FlowGraph, Severity, parse_fl
 from .jsonio import dumps
 from .log_store import MODO_EXPIRACION, LogStore
 from .ports import CryptoPort, StoragePort
+from .redact import redact_run, secret_set
 from .registry import ToolRegistry
 from .resources import ResourceError, TableStore, store_for
 from .schema import MIGRATIONS, SCHEMA
@@ -617,14 +618,15 @@ class Instance:
                 )
 
         empezado = self._ahora()
+        config, env = self.effective_config(), self.env_vars()
 
         resultado = execute_flow(
             texto,
             case_id=case_id,
             registry=self.registry,
             row=row or {},
-            config=self.effective_config(),
-            env=self.env_vars(),
+            config=config,
+            env=env,
             load_flow=self.load_workflow,
             is_cancelled=is_cancelled,
             on_step=on_step,
@@ -632,6 +634,9 @@ class Instance:
             policy=policy,
             dry_run=dry_run,
         )
+        # Antes de guardar y antes de devolver: la traza tiene los params ya
+        # resueltos, con cualquier `{env.SECRETO}` en claro adentro.
+        redact_run(resultado, self.secret_values(env=env, config=config))
 
         if persist:
             try:
@@ -720,6 +725,7 @@ class Instance:
         if not self.waits.take(run_id):
             raise UserError(f"El run {run_id} ya se está retomando o se descartó")
 
+        config, env = self.effective_config(), self.env_vars()
         previo = self.runs.get(run_id) or {}
         logs_previos = [
             LogEntry(t=l.to_dict()["t"], message=l.message, level=l.level, node_id=l.node_id, ts=l.ts)
@@ -734,14 +740,15 @@ class Instance:
             decided_by=policy.actor,
             prior_trace=[NodeTrace.from_dict(t) for t in previo.get("trace") or []],
             prior_logs=logs_previos,
-            config=self.effective_config(),
-            env=self.env_vars(),
+            config=config,
+            env=env,
             load_flow=self.load_workflow,
             is_cancelled=is_cancelled,
             on_step=on_step,
             resources=self.resource_items,
             policy=policy,
         )
+        redact_run(resultado, self.secret_values(env=env, config=config))
         self._guardar_retomado(resultado, resumen, n_logs_previos=len(logs_previos))
         return resultado
 
@@ -802,13 +809,22 @@ class Instance:
         except (StoreError, OSError):
             pass
 
-    def list_waiting(self, *, limit: int = 50, case_id: str | None = None) -> list[dict]:
+    def list_waiting(
+        self,
+        *,
+        limit: int = 50,
+        case_id: str | None = None,
+        flow: str | None = None,
+        offset: int = 0,
+    ) -> list[dict]:
         """
         Los runs pausados en una decisión manual, cada uno con su `waiting`
         (nodo, ayuda, opciones): lo que hace falta para preguntar y retomar.
         """
         filas = []
-        for r in self.runs.list(status=STATUS_WAITING, limit=limit, case_id=case_id):
+        for r in self.runs.list(
+            status=STATUS_WAITING, limit=limit, case_id=case_id, flow=flow, offset=offset
+        ):
             datos = self.runs.get(r.run_id) or {}
             filas.append({**r.to_dict(), "waiting": datos.get("waiting")})
         return filas
@@ -940,8 +956,13 @@ class Instance:
         actor: str | None = None,
         include_dry: bool = True,
         status: str | None = None,
+        flow: str | None = None,
+        offset: int = 0,
     ) -> list[dict]:
-        """Runs ya ejecutados, resumidos -- "qué corrió y cómo terminó" sin abrir cada traza."""
+        """
+        Runs ya ejecutados, resumidos -- "qué corrió y cómo terminó" sin abrir
+        cada traza. Del más nuevo al más viejo; `offset` pagina.
+        """
         resumenes = self.runs.list(
             case_id=case_id,
             limit=limit,
@@ -950,20 +971,34 @@ class Instance:
             actor=actor,
             include_dry=include_dry,
             status=status,
+            flow=flow,
+            offset=offset,
         )
         return [r.to_dict() for r in resumenes]
 
-    def run_detail(self, run_id: str) -> dict | None:
+    def run_detail(
+        self, run_id: str, *, trace_offset: int = 0, trace_limit: int | None = None
+    ) -> dict | None:
         """
         Un run con su log pegado de vuelta.
 
         El blob de `runs` guarda el trace y no el log —el log vive en su propia
         tabla, una fila por línea— así que se junta al leer.
+
+        `trace_offset`/`trace_limit` recortan la traza, para quien la lee por
+        partes (un run con cien reintentos tiene cien nodos); `trace_total`
+        dice cuántos hay en total. Sin ellos, la traza entera, como siempre.
         """
         datos = self.runs.get(run_id)
         if datos is None:
             return None
         datos["logs"] = [linea.to_dict() for linea in self.logs.for_run(run_id)]
+        if trace_offset or trace_limit is not None:
+            traza = datos.get("trace") or []
+            desde = max(0, int(trace_offset))
+            hasta = None if trace_limit is None else desde + max(0, int(trace_limit))
+            datos["trace_total"] = len(traza)
+            datos["trace"] = traza[desde:hasta]
         return datos
 
     def case_log(self, case_id: str, limit: int = 500) -> dict:
@@ -989,6 +1024,36 @@ class Instance:
         valores = dict(self.env.resolve())
         valores.update(_env_vars_del_entorno())
         return valores
+
+    def secret_values(self, *, env: dict | None = None, config: dict | None = None) -> frozenset[str]:
+        """
+        Los valores en claro de todo lo declarado secreto: lo que la traza y el
+        log de un run nunca pueden guardar ni devolver (ver `redact.py`).
+
+        Tres fuentes, y en las tres decide quien declara, no el núcleo: las
+        variables `secret` de la tabla `env` (con el valor que ve el flujo, así
+        que un `BOTENV_` que la pisa también se tapa), los `Setting` y los
+        `Field` de un `Resource` marcados `secret`. Una variable que sólo
+        existe como `BOTENV_` del proceso no está declarada en ningún lado:
+        es una variable, no un secreto.
+
+        `env`/`config` son los que ya se resolvieron para el run, para no
+        descifrar todo dos veces.
+        """
+        env = self.env_vars() if env is None else env
+        config = self.effective_config() if config is None else config
+        valores = [env[n] for n in self.env.secret_names() if n in env]
+        valores += [config[k] for k in self.registry.secret_setting_keys() if k in config]
+        for plugin in self.registry.plugins:
+            if plugin.manifest is None:
+                continue
+            for recurso in plugin.manifest.resources:
+                campos = [f.name for f in recurso.fields if f.secret]
+                if not campos:
+                    continue
+                for item in self.resource_items(plugin.name, recurso.name):
+                    valores += [item[c] for c in campos if c in item]
+        return secret_set(valores)
 
     def env_usage(self) -> dict[str, int]:
         """

@@ -194,6 +194,10 @@ def list_ports(**_) -> dict:
                   "click(window, control, button='left'), "
                   "type_text(window, control, text), read_text(window, control=None), "
                   "read_state(window, control) -> 'on'/'off'/'indeterminate'/None",
+        p.SOCKET: "connect(host, port, tls=False) -> SocketConnection, "
+                  "send(conn, data: bytes), recv(conn, size) -> bytes, close(conn)",
+        p.SQLITE_FILE: "query(path, sql, params) -> list[dict], one(path, sql, params), "
+                       "columns(path, table) -- siempre de sólo lectura",
     }
     return {
         "pedibles_por_un_plugin": [
@@ -381,16 +385,29 @@ def list_runs(
     source: str | None = None,
     only_failed: bool = False,
     limit: int = 50,
+    status: str | None = None,
+    actor: str | None = None,
+    flow: str | None = None,
+    offset: int = 0,
     root: str | None = None,
 ) -> dict:
-    """Runs ya ejecutados, resumidos: qué corrió y cómo terminó cada uno."""
-    argv = ["runs", "--json", "--limit", str(limit)]
+    """
+    Runs ya ejecutados, resumidos: qué corrió y cómo terminó cada uno. Del
+    más nuevo al más viejo; `offset` pagina. Sólo lee: no pide actor.
+    """
+    argv = ["runs", "--json", "--limit", str(limit), "--offset", str(offset)]
     if case_id:
         argv += ["--case", case_id]
     if source:
         argv += ["--source", source]
     if only_failed:
         argv.append("--only-failed")
+    if status:
+        argv += ["--status", status]
+    if actor:
+        argv += ["--actor", actor]
+    if flow:
+        argv += ["--flow", flow]
     return {"runs": _cli(*argv, root=root)}
 
 
@@ -433,9 +450,23 @@ def resume_run(
     return resumen
 
 
-def get_run(run_id: str, root: str | None = None) -> dict:
-    """La traza completa de un run ya ejecutado, nodo por nodo, con sus params resueltos."""
-    return _cli("trace", run_id, "--json", root=root)
+def get_run(
+    run_id: str,
+    offset: int = 0,
+    limit: int | None = None,
+    root: str | None = None,
+) -> dict:
+    """
+    La traza de un run ya ejecutado, nodo por nodo, con sus params resueltos
+    -- los secretos, tapados con `***`. `offset`/`limit` la recortan, y
+    entonces `trace_total` dice cuántos nodos tiene entera.
+    """
+    argv = ["trace", run_id, "--json"]
+    if offset:
+        argv += ["--offset", str(offset)]
+    if limit is not None:
+        argv += ["--limit", str(limit)]
+    return _cli(*argv, root=root)
 
 
 def get_case_log(case_id: str, limit: int = 500, root: str | None = None) -> dict:

@@ -3,6 +3,10 @@
 Motor de workflows con trazas, sin interfaz. Se escribe un flujo en Mermaid, el
 núcleo lo parsea, lo ejecuta y deja registro de qué pasó en cada nodo.
 
+Qué es y cómo se usa, sin detalle técnico: [docs/descripcion/que-es-bot-core.md](docs/descripcion/que-es-bot-core.md)
+(también en `.docx`, con los diagramas como imágenes; se regenera con
+`python backend/docs/descripcion/generar.py`).
+
 ```bash
 python -m backend.core doctor                       # ¿levanta todo?
 python -m backend.core tools                        # catálogo de tools
@@ -54,6 +58,8 @@ Los ports con adapter incluido:
 | `storage` | `SqliteStorageAdapter` | `sqlite3` |
 | `crypto` | `FernetCryptoAdapter` | `cryptography` |
 | `geometry` | `NullGeometryAdapter` (`available=False`) | — |
+| `socket` | `TcpSocketAdapter` | `socket` + `ssl` |
+| `sqlite_file` | `ExternalSqliteAdapter` | `sqlite3` |
 
 `browser` maneja un navegador real (navegar, clickear, leer lo que la pantalla
 ya muestra) pero **no** sabe de sesiones: perfil persistente y login son
@@ -93,6 +99,29 @@ este port pueda cargar igual (un port sin ningún adapter atado no carga) y
 falle explícito recién si un tool intenta usarlo de verdad. Una instalación
 que necesite cómputo geométrico escribe o instala su propio adapter y lo
 inyecta con `Instance(root, adapters={**build_default_adapters(), "geometry": ...})`.
+
+`socket` (issue #39) es TCP crudo con TLS opcional —`connect`, `send`, `recv`,
+`close`— y nada de protocolo de aplicación encima. Nace de un pedido de port
+para leer bases SQL externas (Postgres, MySQL) sin que un plugin importe el
+driver directo; un port que hablara SQL no cerraba porque, a diferencia de
+`http`, SQL no es un protocolo único —cada motor tiene su propio driver
+nativo—. Bajar un nivel sí cierra: TCP es un protocolo fijo igual que HTTP, así
+que el adapter se escribe una sola vez con `socket`/`ssl` de la stdlib, sin
+ninguna librería curada ni driver bundleado. Un plugin que quiera hablarle a
+Postgres (o a cualquier otro protocolo binario) implementa ese protocolo en
+Python puro sobre `send`/`recv`, igual que `UrllibHttpAdapter` implementa HTTP
+sin ninguna librería externa. `recv` devuelve hasta `size` bytes, nunca
+garantiza esa cantidad exacta —mismo comportamiento que `socket.recv`—: armar
+mensajes completos a partir del stream es trabajo del plugin, no del port.
+
+`sqlite_file` (issue #40) es sólo lectura contra **cualquier** archivo
+`.sqlite`/`.db` externo que el flujo indique por `path` —nada que ver con
+`storage`, que es sólo el `bot.db` del propio núcleo—. Nace de separar del
+`socket` de arriba el caso que no necesitaba nada de eso: SQLite es un archivo
+local, sin red ni protocolo de cable, así que se abre directo con `sqlite3` de
+la stdlib —cero dependencia nueva—, en modo `ro` de verdad (no una convención
+que un `INSERT` pudiera esquivar). Mismo límite honesto que `storage`: abstrae
+la *conexión*, no el *dialecto*.
 
 ## Escribir un plugin
 
@@ -386,20 +415,31 @@ pip install mcp
 python -m backend.mcp      # habla por stdio
 ```
 
-Expone el motor a un agente para **escribir** flujos y plugins. No es una
-interfaz de operación: no ejecuta flujos de verdad.
+Expone el motor a un agente para **escribir** flujos y plugins, y para
+**leer** qué corrió y por qué falló. Ejecutar de verdad (`run_flow`,
+`resume_run`) pide `root` explícito y un actor con permisos; leer corridas no
+pide actor.
 
 | Tool | Qué hace |
 |---|---|
+| `describe_installation` | la foto de la instalación en una llamada: el primer paso si no se la conoce |
 | `list_tools` | el catálogo, con params tipados y outputs |
 | `list_plugins` | plugins cargados, sus settings, colecciones y ports |
 | `list_resource_items` | items guardados de una colección ("sources"), secrets tapados |
+| `write_resource_item` / `delete_resource_item` | ABM de un item; un `secret` nunca vuelve en claro |
+| `describe_extra_params` | los params extra que ofrece un tool según lo que el nodo ya eligió |
 | `list_ports` | qué puede declarar un plugin, y qué le da cada port |
 | `check_flow` | valida un `.mmd`: severidad, línea y nodo |
 | `dry_run_flow` | recorre entero con un row, sin ejecutar un solo tool |
+| `list_flows` / `get_flow` | flujos guardados; uno con su contenido y diagnósticos |
+| `save_flow` | guarda un `.mmd` en la instalación, sin ejecutarlo |
 | `load_plugin` | ¿el núcleo acepta este plugin? sin ejecutarlo |
+| `install_plugin` | copia a `plugins_dir` un plugin que `load_plugin` ya aceptó |
 | `run_action` | ejecuta una `Action` declarada por un plugin. `item=` resuelve params desde un item guardado |
 | `run_flow` | ejecución real. `root` obligatorio, y el actor limita qué puede |
+| `list_runs` | runs ya ejecutados, resumidos. Filtra por caso, status, actor, flujo y origen; `offset` pagina |
+| `get_run` | la traza de un run, nodo por nodo, con los secretos tapados. `offset`/`limit` la recortan |
+| `get_case_log` | el registro de una fila, cruzando todos sus runs |
 | `list_waiting_runs` | runs pausados en una decisión manual, con sus opciones (issue #37) |
 | `resume_run` | retoma uno por la rama elegida. Mismas guardas que `run_flow` |
 | `list_users` | qué puede cada actor, para entender una denegación |
@@ -483,10 +523,6 @@ eso es para lo que existe el `ClockPort`.
 - **El `StoragePort` abstrae la conexión, no el dialecto.** El SQL sigue escrito
   en los stores del núcleo, así que portar a Postgres exige revisar las
   sentencias (`ON CONFLICT`, `AUTOINCREMENT`), no sólo escribir otro adapter.
-- **Los campos `secret` de un `Resource` no se cifran en reposo.** Se declaran y
-  el catálogo los marca, y las referencias `{env.CLAVE}` sí se resuelven en el
-  servidor al ejecutar; pero el cifrado a nivel item todavía no está. Sólo la
-  tabla `env` cifra.
 - **No hay panel de plugin (nivel 3 de UI).** Están el esquema y las acciones;
   el iframe con puente acotado queda para cuando el esquema no alcance.
 - **Los permisos de port son por plugin, no por tool.** Denegar de más es la
