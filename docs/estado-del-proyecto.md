@@ -4,6 +4,22 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-10-29
+
+- **Núcleo v1.0.0, el primer estable.** Vendorizado con la mecánica de
+  Actualizaciones desde v0.3.1-beta.19. Los secretos ya no quedan en claro en
+  la traza ni en el log del run, `list_runs` filtra y pagina, llegan los ports
+  `socket` y `sqlite_file`, y viene la descripción no técnica del motor en
+  `backend/docs/descripcion/`. Suite: 1256 verdes; el único rojo
+  (`test_la_unidad_entera_se_puede_guardar`, ruta de Windows) ya fallaba en
+  Linux con beta.19. Falta verificarlo en una instalación Windows.
+- **Descripción no técnica de la app** (`docs/descripcion/`): qué es, cómo
+  funciona, cómo se usa pantalla por pantalla, instalación, actualización y
+  qué no hace, con capturas de una instalación de prueba con datos inventados.
+  `.md` como fuente y `.docx` generado, con el mismo formato que la del
+  núcleo, a la que nombra en vez de copiar. Se pidió para presentar el Bot a
+  quien lo evalúa sin programar; sin nombres de cliente, como todo el repo.
+
 ## 2026-10-12
 
 - **HTTPS con los certificados de Windows (v0.5.0-beta.17).** Buscar
