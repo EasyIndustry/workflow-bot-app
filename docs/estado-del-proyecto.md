@@ -4,8 +4,61 @@ Qué hay hecho y verificado, por fecha. Lo más nuevo arriba. "Verificado"
 quiere decir corrido de verdad en una instalación Windows (la QA de
 desarrollo o la PC de un cliente), no sólo con tests.
 
+## 2026-10-29
+
+- **Núcleo v1.0.0, el primer estable.** Vendorizado con la mecánica de
+  Actualizaciones desde v0.3.1-beta.19. Los secretos ya no quedan en claro en
+  la traza ni en el log del run, `list_runs` filtra y pagina, llegan los ports
+  `socket` y `sqlite_file`, y viene la descripción no técnica del motor en
+  `backend/docs/descripcion/`. Suite: 1256 verdes; el único rojo
+  (`test_la_unidad_entera_se_puede_guardar`, ruta de Windows) ya fallaba en
+  Linux con beta.19. **Verificado**: corriendo en una instalación Windows
+  (lo confirmó Leandro el mismo día).
+- **Descripción no técnica de la app** (`docs/descripcion/`): qué es, cómo
+  funciona, cómo se usa pantalla por pantalla, instalación, actualización y
+  qué no hace, con capturas de una instalación de prueba con datos inventados.
+  `.md` como fuente y `.docx` generado, con el mismo formato que la del
+  núcleo, a la que nombra en vez de copiar. Se pidió para presentar el Bot a
+  quien lo evalúa sin programar; sin nombres de cliente, como todo el repo.
+
+## 2026-10-14
+
+- **`msvcp140.dll` en `runtime\` (próximo instalador).** El plugin
+  keep-form, y cualquiera que use trimesh, necesita rtree, que en Windows
+  carga `spatialindex_c-64.dll` y ésa pide `MSVCP140.DLL` (Visual C++
+  Redistributable). En BOT.1 no estaba instalado: `import rtree.index` caía
+  con `OSError` y fallaban los 44 modelos de BZ219. Instalar el VC_redist pide
+  administrador, que los usuarios de los Bots no son. `build_win.sh` copia
+  `msvcp140.dll` a `runtime\`, al lado de `python.exe` y `Bot.exe`, desde la
+  wheel `msvc-runtime==14.44.35112` (archivos del redistributable firmados
+  por Microsoft, con hash fijo), y sube `vcruntime140*.dll` a esa versión si
+  los del CPython son más viejos. El build se corta si `msvcp140.dll` falta,
+  no es x64 o es anterior a 14.44 (el toolset con el que está enlazado
+  rtree 1.4.1), o si `vcruntime140` es más vieja que ella. Llega **sólo con el
+  instalador nuevo**, no por Actualizaciones, como el `sitecustomize` de
+  truststore; mientras tanto vale el parche a mano en BOT.1 y BOT.2. Probado
+  el paso del build en Linux; falta verlo en una PC sin el VC_redist. Ver
+  `docs/decisiones.md`.
+
 ## 2026-10-12
 
+- **Instalar las librerías de un plugin ya no revienta con el truststore.**
+  Con v0.5.0-beta.17, instalar un plugin con `requirements.txt` fallaba en la
+  PC de un cliente con `RecursionError` adentro de
+  `pip/_vendor/truststore`: el `sitecustomize.py` del runtime inyecta
+  truststore en `ssl` en todo proceso, también en el `python -m pip` de
+  `webapp/librerias.py`, y pip >= 24.2 inyecta el suyo encima; el setter de
+  `verify_mode` de `ssl.py` termina llamándose a sí mismo. `comando_pip`
+  agrega `--use-deprecated=legacy-certs` cuando el pip del intérprete es
+  >= 24.2 (uno más viejo no conoce la opción): pip usa el `ssl` del proceso,
+  que ya valida con los certificados de Windows. Llega por Actualizaciones,
+  sin instalador nuevo. Reproducido en Linux con un `.pth` que inyecta
+  truststore 0.10.4 y pip 25.2; con el arreglo instala, y con pip 24.0 el
+  argv queda como antes. Si vuelve a pasar, `_explicar` lo dice en castellano
+  con el destrabe a mano (renombrar el `sitecustomize.py` mientras se
+  instala). Pendiente para el próximo instalador: que el `sitecustomize` no
+  inyecte en el proceso de pip, para no depender de una opción
+  `--use-deprecated` que pip puede sacar.
 - **HTTPS con los certificados de Windows (v0.5.0-beta.17).** Buscar
   actualizaciones fallaba en PCs de empresa con `CERTIFICATE_VERIFY_FAILED`
   aunque el navegador entrara a GitHub: Python valida con su propia lista, no

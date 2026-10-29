@@ -10,6 +10,12 @@ sesión arranca de cero, leer en este orden.
 | [operacion.md](operacion.md) | ¿Cómo se instala, actualiza, publica un release y opera desde otra PC? |
 | [decisiones.md](decisiones.md) | ¿Por qué está hecho así? Las decisiones que no se deducen del código |
 | [pendientes.md](pendientes.md) | ¿Qué queda? Lista corta, con el porqué de cada uno |
+| [descripcion/que-es-workflow-bot-app.md](descripcion/que-es-workflow-bot-app.md) | ¿Qué es y cómo se usa, para alguien que no programa? Con capturas; el `.docx` se genera con `descripcion/generar.py` |
+
+La descripción no técnica del motor es otro documento, mantenido en su repo:
+`backend/docs/descripcion/que-es-bot-core.md`. La de la app lo nombra, no lo
+copia: cada uno se actualiza con su propio release. Si cambia una pantalla,
+se rehace la captura con `descripcion/capturas.py` (contra una instalación con datos inventados) y se corre `generar.py`.
 
 Reglas de escritura del repo: [`../CLAUDE.md`](../CLAUDE.md). El núcleo
 (`backend/`) tiene la suya en `backend/README.md` y `backend/docs/`.

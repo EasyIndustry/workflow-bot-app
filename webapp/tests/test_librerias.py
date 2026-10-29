@@ -193,3 +193,63 @@ def test_pip_sin_version_dice_que_python_es_y_apunta_al_programa():
     import sys
     assert sys.version.split()[0] in mensaje
     assert "programa instalado" in mensaje
+
+
+def test_pip_con_truststore_propio_usa_el_ssl_del_proceso(tmp_path):
+    """
+    pip >= 24.2 trae su truststore; en el runtime del `.exe`, con el del
+    sitecustomize ya inyectado, eso terminaba en RecursionError. La opción va
+    junto a las demás, antes del `-r`.
+    """
+    cmd = librerias.comando_pip(tmp_path / "r.txt", wheels=[], sin_red=False, python="py", certs_del_proceso=True)
+    assert "--use-deprecated=legacy-certs" in cmd
+    assert cmd.index("--use-deprecated=legacy-certs") < cmd.index("-r")
+    assert "--use-deprecated=legacy-certs" not in librerias.comando_pip(tmp_path / "r.txt", wheels=[], sin_red=False)
+
+
+@pytest.mark.parametrize("version, espera", [
+    ("24.0", False), ("24.1.2", False), ("24.2", True), ("25.2", True), ("26.0.1", True), ("26.0b1", True),
+])
+def test_legacy_certs_solo_con_pip_que_lo_conoce(monkeypatch, version, espera):
+    """Un pip < 24.2 rechaza `--use-deprecated=legacy-certs` con "invalid choice"."""
+    monkeypatch.setattr(librerias.metadata, "version", lambda nombre: version)
+    assert librerias._pip_trae_truststore(None) is espera
+
+    def run(cmd, **kw):
+        assert cmd[0] == "otro-python"
+        return _Completado(0, version + "\n")
+
+    monkeypatch.setattr(librerias.subprocess, "run", run)
+    assert librerias._pip_trae_truststore("otro-python") is espera
+
+
+def test_si_no_se_sabe_la_version_de_pip_no_se_agrega(monkeypatch):
+    def run(cmd, **kw):
+        raise OSError("no existe")
+
+    monkeypatch.setattr(librerias.subprocess, "run", run)
+    assert librerias._pip_trae_truststore("no-existe") is False
+
+
+def test_instalar_pasa_legacy_certs_segun_el_pip(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path, wheels=True)
+    llamadas = []
+
+    def correr(cmd, **kw):
+        llamadas.append(cmd)
+        return _Completado(0, "ok")
+
+    monkeypatch.setattr(librerias, "_estado_en_subproceso", lambda reqs, py: [])
+    monkeypatch.setattr(librerias, "_pip_trae_truststore", lambda py: True)
+    librerias.instalar_requisitos(plugin / "requirements.txt", ruta_plugin=plugin, correr=correr)
+    assert "--use-deprecated=legacy-certs" in llamadas[0]
+
+
+def test_recursion_de_truststore_se_explica():
+    lineas = [
+        '  File "C:\\Bot\\runtime\\Lib\\site-packages\\pip\\_vendor\\truststore\\_api.py", line 300, in verify_mode',
+        "  [Previous line repeated 959 more times]",
+        "RecursionError: maximum recursion depth exceeded",
+    ]
+    [mensaje] = librerias._explicar(lineas)
+    assert "truststore" in mensaje and "sitecustomize.py" in mensaje
