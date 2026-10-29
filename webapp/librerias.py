@@ -191,23 +191,62 @@ def carpetas_de_wheels(ruta_plugin: Path | None, root: Path | None) -> list[Path
     return [c for c in candidatas if c.is_dir() and any(c.glob("*.whl"))]
 
 
-def comando_pip(archivo: Path, *, wheels: list[Path], sin_red: bool, python: str | None = None) -> list[str]:
+def comando_pip(
+    archivo: Path, *, wheels: list[Path], sin_red: bool, python: str | None = None,
+    certs_del_proceso: bool = False,
+) -> list[str]:
     """
     El argv de pip, completo y sin sorpresas: sólo wheels, con hash
     obligatorio, sin preguntar, y sin la comprobación de versión de pip que
     sale a la red por su cuenta.
+
+    `certs_del_proceso` agrega `--use-deprecated=legacy-certs`: que pip use el
+    `ssl` del proceso en vez de su truststore propio (ver `_pip_trae_truststore`).
     """
     comando = [
         python or sys.executable, "-m", "pip", "install",
         "--only-binary", ":all:", "--require-hashes",
         "--disable-pip-version-check", "--no-input", "--no-color",
-        "-r", str(archivo),
     ]
+    if certs_del_proceso:
+        comando.append("--use-deprecated=legacy-certs")
+    comando += ["-r", str(archivo)]
     for carpeta in wheels:
         comando += ["--find-links", str(carpeta)]
     if sin_red:
         comando.append("--no-index")
     return comando
+
+
+def _pip_trae_truststore(python: str | None) -> bool:
+    """
+    Si el pip de ese intérprete es >= 24.2, que valida HTTPS con su propio
+    truststore (`pip._vendor.truststore`) salvo que se le pida lo contrario.
+
+    En el runtime del `.exe` eso revienta: el `sitecustomize.py` ya inyectó
+    truststore en `ssl` al arrancar el proceso, el de pip se importa después y
+    toma al `SSLContext` inyectado como "el original", y el setter de
+    `verify_mode` de `ssl.py` se llama a sí mismo hasta un `RecursionError`.
+    Con `--use-deprecated=legacy-certs` pip usa el `ssl` del proceso, que ya
+    valida con los certificados de Windows. Un pip más viejo no conoce la
+    opción ("invalid choice"), por eso se pregunta la versión; si no se puede
+    saber, no se agrega: pip sin poder correr va a fallar igual, con su error.
+    """
+    try:
+        if python is None or python == sys.executable:
+            version = metadata.version("pip")
+        else:
+            r = subprocess.run(
+                [python, "-c", "from importlib import metadata; print(metadata.version('pip'))"],
+                capture_output=True, text=True, timeout=15, shell=False,
+            )
+            if r.returncode != 0:
+                return False
+            version = r.stdout.strip()
+        mayor, menor = (int("".join(c for c in x if c.isdigit()) or 0) for x in version.split(".")[:2])
+    except (metadata.PackageNotFoundError, OSError, subprocess.TimeoutExpired, ValueError):
+        return False
+    return (mayor, menor) >= (24, 2)
 
 
 def instalar_requisitos(
@@ -235,7 +274,8 @@ def instalar_requisitos(
             f"`{WHEELS}/` de la instalación.",
             [f"Copiá las wheels ({', '.join(r['name'] for r in requisitos)}) a {Path(root) / WHEELS if root else WHEELS} y volvé a intentar."],
         )
-    comando = comando_pip(archivo, wheels=wheels, sin_red=sin_red, python=python)
+    comando = comando_pip(archivo, wheels=wheels, sin_red=sin_red, python=python,
+                          certs_del_proceso=_pip_trae_truststore(python))
     correr = correr or subprocess.run
     try:
         completado = correr(comando, capture_output=True, text=True, timeout=TIMEOUT, shell=False)
@@ -269,6 +309,10 @@ def _explicar(lineas: list[str], python: str | None = None) -> list[str]:
             f"Si esto es el servidor de desarrollo, las librerías se instalan desde el programa instalado, "
             f"que es el runtime contra el que el catálogo cura el plugin. Sin internet: wheels en la carpeta `wheels/`."
         ]
+    if "RecursionError" in texto and "truststore" in texto:
+        return ["pip chocó con el truststore que el runtime inyecta para usar los certificados de Windows. "
+                "Actualizar la app (Config → Actualizaciones) lo corrige; mientras tanto, renombrar "
+                "`runtime\\Lib\\site-packages\\sitecustomize.py` a `.off`, instalar el plugin y devolverle el nombre."]
     if "Access is denied" in texto or "Permission denied" in texto or "WinError 5" in texto:
         return ["No se pudo escribir en el runtime. Si el servidor está corriendo con esa librería cargada, cerrarlo y volver a intentar."]
     return []
